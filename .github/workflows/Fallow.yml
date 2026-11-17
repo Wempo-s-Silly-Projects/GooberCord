@@ -1,0 +1,17 @@
+name: Fallow analysis
+on: [push, pull_request]
+permissions:
+  contents: read
+  id-token: write
+  pull-requests: write
+  checks: write
+jobs:
+  fallow:
+    runs-on: ubuntu-26.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: fallow-rs/fallow@v3
+        with:
+          format: sarif
+          comment: true
+          review-comments: true
