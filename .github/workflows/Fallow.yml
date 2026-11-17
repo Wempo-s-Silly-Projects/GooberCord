@@ -7,10 +7,10 @@ permissions:
   checks: write
 jobs:
   fallow:
-    runs-on: ubuntu-26.04
+    runs-on: ubuntu-26.10
     steps:
-      - uses: actions/checkout@v4
-      - uses: fallow-rs/fallow@v3
+      - uses: actions/checkout@latest
+      - uses: fallow-rs/fallow@latest
         with:
           format: sarif
           comment: true
