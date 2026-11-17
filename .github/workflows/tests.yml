@@ -14,9 +14,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
-        uses: actions/checkout@v5
+        uses: actions/checkout@latest
       - name: Check out Forum sources used by parity tests
-        uses: actions/checkout@v5
+        uses: actions/checkout@latest
         with:
           repository: Wempo-s-Silly-Projects/wempos-forum
           ref: main
@@ -26,9 +26,9 @@ jobs:
           sudo mkdir -p /Users/itswempo
           sudo ln -s "$GITHUB_WORKSPACE/forum-source" /Users/itswempo/wempos-forum
       - name: Set up Node.js
-        uses: actions/setup-node@v5
+        uses: actions/setup-node@latest
         with:
-          node-version: 22
+          node-version: 26
       - name: Run test suite
         run: node --test
       - name: Check JavaScript syntax
