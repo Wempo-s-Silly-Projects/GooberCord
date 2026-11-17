@@ -9,8 +9,8 @@ jobs:
   fallow:
     runs-on: ubuntu-26.10
     steps:
-      - uses: actions/checkout@latest
-      - uses: fallow-rs/fallow@latest
+      - uses: actions/checkout@main
+      - uses: fallow-rs/fallow@main
         with:
           format: sarif
           comment: true
