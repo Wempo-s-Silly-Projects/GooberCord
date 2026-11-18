@@ -109,10 +109,13 @@ CREATE TABLE gc_fleet_boosts (
   thread_excerpt TEXT NOT NULL,
   created_at INTEGER NOT NULL,
   rendered_channel_id INTEGER NULL REFERENCES gc_channels(id) ON DELETE SET NULL,
-  rendered_message_id INTEGER NULL REFERENCES gc_messages(id) ON DELETE SET NULL,
-  rendered_at INTEGER NULL,
-  CHECK((rendered_channel_id IS NULL) = (rendered_message_id IS NULL)
-        AND (rendered_message_id IS NULL) = (rendered_at IS NULL))
+  rendered_message_id INTEGER NULL REFERENCES gc_messages(id) ON DELETE SET NULL
+  -- No pair CHECK between the stamps: the card's deletion SET-NULLs
+  -- rendered_message_id while rendered_channel_id (its own FK, a live
+  -- channel) stays — a both-or-neither CHECK would refuse every card delete
+  -- at its own action (the 0029 scoping pin found exactly that while
+  -- probing). Pending stays defined as rendered_message_id IS NULL; the
+  -- surviving channel stamp names the boost's render target.
 );
 
 -- One boost renders at most one card into one channel: the partial index

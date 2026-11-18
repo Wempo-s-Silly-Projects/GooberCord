@@ -51,7 +51,11 @@ CREATE TABLE IF NOT EXISTS gc_fleet_boosts (
   created_at INTEGER NOT NULL,
   rendered_channel_id INTEGER NULL,
   rendered_message_id INTEGER NULL,
-  rendered_at INTEGER NULL
+  -- no rendered_at column (the card message row carries the render
+  -- timestamp) and no pair CHECK: the card's SET-NULL deletion action
+  -- clears rendered_message_id while rendered_channel_id stays — a
+  -- both-or-neither CHECK would refuse every card delete at its own
+  -- action (the scoping pin found both while probing)
 );
 ```
 
@@ -60,7 +64,9 @@ CREATE TABLE IF NOT EXISTS gc_fleet_boosts (
   `(forum_post_id, rendered_channel_id)` where `rendered_message_id IS NOT
   NULL`). Duplicate render returns the existing card, not a second copy.
 - NULL `rendered_message_id` = pending mirror. GC renders PENDING rows for
-  the target channel and stamps the rendered ids back.
+  the target channel and stamps the rendered ids back. The render timestamp
+  rides the card message row (the boost carries no rendered_at column — a
+  SET-NULL deletion action can never clear a plain column).
 - Retract: DELETE the forum boost row → the GC mirror pass, on its next
   run, deletes the stamped card message by `rendered_message_id` (the card
   is the boost's shadow, not an independent message).
@@ -71,8 +77,10 @@ CREATE TABLE IF NOT EXISTS gc_fleet_boosts (
   in the shared schema — the surviving name after the forum-ledger
   rebuilds (forum 0002 + 0034; GC code reads it at api/coins.mjs:179) —
   and the GC ledger vendors it IF NOT EXISTS per the 0002 pattern so its
-  own-chain fresh-DB apply keeps FK-valid. The stamp pair is
-  CHECK-guarded both-or-neither.)
+  own-chain fresh-DB apply keeps FK-valid. The stamps carry no
+  rendered_at and no inter-column CHECK (the SET-NULL deletion actions
+  cannot clear a plain column and would break a pair CHECK at its own
+  action).)
 
 ### 2.3 Forum side (mint)
 

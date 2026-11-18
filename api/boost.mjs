@@ -95,8 +95,7 @@ const BOOST_PENDING_SQL =
 const BOOST_STAMP_SQL =
   "UPDATE gc_fleet_boosts SET rendered_channel_id = ?, " +
     "rendered_message_id = (SELECT id FROM gc_messages WHERE channel_id = ? " +
-      "AND author_id = ? AND client_message_id = ? ORDER BY id DESC LIMIT 1), " +
-    "rendered_at = ? " +
+      "AND author_id = ? AND client_message_id = ? ORDER BY id DESC LIMIT 1) " +
   "WHERE id = ? AND rendered_message_id IS NULL";
 
 async function consumeBoosts(env, channel, user, forumOrigin) {
@@ -112,8 +111,7 @@ async function consumeBoosts(env, channel, user, forumOrigin) {
     );
     if (!cardResult?.created) continue; // already rendered by a concurrent caller — skip the stamp
     await env.GOOBER_DB.prepare(BOOST_STAMP_SQL)
-      .bind(channel.id, channel.id, Number(boost.author_id), clientMessageId,
-        cardResult.message.created_at, boost.id)
+      .bind(channel.id, channel.id, Number(boost.author_id), clientMessageId, boost.id)
       .run();
     rendered.push({ boostId: boost.id, messageId: Number(cardResult.message.id) });
   }

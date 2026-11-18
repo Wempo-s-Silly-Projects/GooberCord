@@ -27,7 +27,9 @@
 // the gc_ prefix (tests/migration-scoping.test.mjs's creation law) and its
 // deletion law is pinned in-schema: the author CASCADEs, the rendered
 // card/channel SET-NULLs back to pending, and the partial UNIQUE index plus
-// the both-or-neither stamp CHECK make one boost render at most one card.
+// the partial UNIQUE index make one boost render at most one card; the
+// stamps carry deliberately NO CHECK — the SET-NULL deletion actions cannot
+// clear a plain column and would break a pair CHECK at its own action.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -80,12 +82,13 @@ test("no other gc_ table is touched and every DROP/RENAME operates on the rebuil
 });
 
 test("the gc_channels copy lists every column explicitly and preserves ids", () => {
-  const copy = migrationStatements()[4];
+  // Whitespace-normalized: the migration wraps the column list.
+  const copy = migrationStatements()[4].replace(/\s+/g, " ");
   const expected =
     "id, server_id, name, kind, position, created_at, " +
     "last_message_id, last_message_at, is_spoiler, category_id, " +
     "slowmode_seconds, icon_media_id";
-  assert.match(copy, new RegExp(`${expected}\\b[^;]*${expected}\\b`, "s"),
+  assert.match(copy, new RegExp(`${expected}\\b[^;]*${expected}\\b`),
     "the copy lists the identical column set on both sides — no renumbering");
 });
 
@@ -108,10 +111,10 @@ test("the rebuild's single delta is the kind widening: the rest of the shape mat
   ]) {
     assert.ok(rebuild.includes(fragment), `gc_channels rebuild missing: ${fragment}`);
   }
-  // Exactly the two original CHECKs, both carrying the widened kind (the
-  // kind CHECK and the paired scope CHECK) — no third constraint rides along.
-  assert.equal((rebuild.match(/CHECK\(/g) || []).length, 2);
-  assert.match(rebuild, /'announcement' AND server_id IS NOT NULL/);
+  // Exactly the table's three original CHECKs (name, kind, scope), both kind
+  // clauses carrying the widened row — no fourth constraint rides along.
+  assert.equal((rebuild.match(/CHECK\(/g) || []).length, 3);
+  assert.match(rebuild, /'announcement'\) AND server_id IS NOT NULL/);
   // The canary carries no CHECK of its own.
   const canary = migrationStatements()[1];
   assert.equal((canary.match(/CHECK\(/g) || []).length, 0);
@@ -132,7 +135,10 @@ test("gc_fleet_boosts pins the twin contract's deletion law and idempotency", ()
   assert.match(create, /author_id INTEGER NOT NULL REFERENCES users\(id\) ON DELETE CASCADE/);
   assert.match(create, /rendered_channel_id INTEGER NULL REFERENCES gc_channels\(id\) ON DELETE SET NULL/);
   assert.match(create, /rendered_message_id INTEGER NULL REFERENCES gc_messages\(id\) ON DELETE SET NULL/);
-  assert.match(create, /CHECK\(\(rendered_channel_id IS NULL\) = \(rendered_message_id IS NULL\)/);
+  // Deliberately NO inter-column CHECK on the stamps (the SET-NULL card
+  // delete would refuse at its own action otherwise) — the create carries
+  // zero CHECK clauses of its own.
+  assert.equal((create.match(/CHECK\(/g) || []).length, 0);
   const index = migrationStatements()[10];
   assert.match(index, /ON gc_fleet_boosts\(forum_post_id, rendered_channel_id\)/);
   assert.match(index, /WHERE rendered_message_id IS NOT NULL/);
@@ -189,7 +195,9 @@ test("the rebuild preserves rows and ids and the widened kind round-trips", () =
       VALUES (12, 3, 'ann', 'text', 0, 1), (13, 3, 'general', 'text', 1, 2);
   `);
   db.exec(MIGRATION);
-  const rows = db.prepare("SELECT id, kind, slowmode_seconds FROM gc_channels ORDER BY id").all();
+  // node:sqlite rows are null-prototype objects — spread to plain for deepEqual.
+  const rows = db.prepare("SELECT id, kind, slowmode_seconds FROM gc_channels ORDER BY id").all()
+    .map((row) => ({ ...row }));
   assert.deepEqual(rows, [
     { id: 12, kind: "text", slowmode_seconds: 0 },
     { id: 13, kind: "text", slowmode_seconds: 0 },
@@ -212,29 +220,36 @@ test("the boost table enforces the one-card idempotency and the stamp-pair CHECK
   db.exec(`
     INSERT INTO users VALUES (1, 'wempos', NULL, 'member'), (2, 'other', NULL, 'member');
     INSERT INTO gc_servers VALUES (3);
-    INSERT INTO gc_channels (id, server_id, name, kind, position, created_at)
-      VALUES (13, 3, 'news', 'announcement', 0, 1);
   `);
   db.exec(MIGRATION);
   const boostColumns = db.prepare("PRAGMA table_info(gc_fleet_boosts)").all().map((c) => c.name);
   assert.deepEqual(boostColumns, [
     "id", "forum_post_id", "author_id", "thread_title", "thread_excerpt",
-    "created_at", "rendered_channel_id", "rendered_message_id", "rendered_at",
+    "created_at", "rendered_channel_id", "rendered_message_id",
   ]);
+  // The announcement channel rides in AFTER the rebuild (the pre-widen CHECK
+  // could never admit it).
+  db.exec(`
+    INSERT INTO gc_channels (id, server_id, name, kind, position, created_at)
+      VALUES (13, 3, 'news', 'announcement', 0, 1);
+  `);
   db.exec(`
     INSERT INTO users (id, username) VALUES (3, 'author');
     INSERT INTO gc_fleet_boosts (id, forum_post_id, author_id, thread_title, thread_excerpt, created_at)
       VALUES (1, 4242, 3, 't', 'e', 9), (2, 4242, 3, 't2', 'e2', 10);
   `);
-  db.exec("UPDATE gc_fleet_boosts SET rendered_channel_id = 13, rendered_message_id = 77, rendered_at = 10 WHERE id = 1");
+  db.exec("UPDATE gc_fleet_boosts SET rendered_channel_id = 13, rendered_message_id = 77 WHERE id = 1");
   // A SECOND boost claiming the same (post, channel) render is un-representable.
   assert.throws(() => db.exec(
-    "UPDATE gc_fleet_boosts SET rendered_channel_id = 13, rendered_message_id = 88, rendered_at = 11 WHERE id = 2",
+    "UPDATE gc_fleet_boosts SET rendered_channel_id = 13, rendered_message_id = 88 WHERE id = 2",
   ));
-  // A ragged stamp (message cleared, timestamps left) is un-representable.
-  assert.throws(() => db.exec(
-    "UPDATE gc_fleet_boosts SET rendered_channel_id = 13, rendered_message_id = NULL, rendered_at = 10 WHERE id = 1",
-  ));
+  // A ragged stamp stays REPRESENTABLE by design (no inter-column CHECK): a
+  // card delete SET-NULLs the message while the channel stamp survives —
+  // pending is defined by rendered_message_id IS NULL alone.
+  db.exec(
+    "UPDATE gc_fleet_boosts SET rendered_channel_id = 13, rendered_message_id = NULL WHERE id = 1",
+  );
+  assert.equal(db.prepare("SELECT rendered_message_id FROM gc_fleet_boosts WHERE id = 1").get().rendered_message_id, null);
 });
 
 // The FK-action pins ride an FK-ENFORCING runner — the actions themselves are
@@ -258,17 +273,23 @@ test("the author CASCADE deletes the boost and the card SET-NULLs back to pendin
   db.exec(`
     INSERT INTO gc_channels (id, server_id, name, kind, position, created_at)
       VALUES (13, 3, 'news', 'announcement', 0, 1);
+    -- The FK-enforcing boost insert needs its parent row (the vendored posts copy).
+    INSERT INTO posts (id, author_id, body, created_at) VALUES (4242, 1, 'hello', 5);
     INSERT INTO gc_fleet_boosts (id, forum_post_id, author_id, thread_title, thread_excerpt, created_at)
       VALUES (1, 4242, 1, 't', 'e', 9);
   `);
-  db.exec("UPDATE gc_fleet_boosts SET rendered_channel_id = 13, rendered_message_id = 77, rendered_at = 10 WHERE id = 1");
+  // The stamped card id must exist: the FK-enforcing runner checks the stamp pair.
+  db.exec("INSERT INTO gc_messages (id, channel_id, author_id, body, client_message_id, created_at) VALUES (77, 13, 1, '[Forum boost] t', 'boost-1-c13', 9)");
+  db.exec("UPDATE gc_fleet_boosts SET rendered_channel_id = 13, rendered_message_id = 77 WHERE id = 1");
   assert.equal(db.prepare("SELECT COUNT(*) AS c FROM gc_fleet_boosts").get().c, 1);
-  // The card dies → the stamp SET-NULLs: the boost is pending again, never ghosting.
+  // The card dies → the message stamp SET-NULLs; the channel stamp SURVIVES
+  // (its own FK, a live channel — no inter-column CHECK refuses the delete).
+  // The boost is pending again by rendered_message_id IS NULL, pointing at
+  // the channel it was rendered into, never ghosting.
   db.exec("DELETE FROM gc_messages WHERE id = 77");
   const boost = db.prepare("SELECT * FROM gc_fleet_boosts WHERE id = 1").get();
-  assert.equal(boost.rendered_channel_id, null);
+  assert.equal(boost.rendered_channel_id, 13);
   assert.equal(boost.rendered_message_id, null);
-  assert.equal(boost.rendered_at, null);
   // The author dies → the boost dies with them (t64 §2 idiom).
   db.exec("DELETE FROM users WHERE id = 1");
   assert.equal(db.prepare("SELECT COUNT(*) AS c FROM gc_fleet_boosts").get().c, 0);
