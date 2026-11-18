@@ -1184,7 +1184,7 @@ test("api/filter.mjs is the forum's filter matcher verbatim after the ruled subs
   const GOOBER_PROJECT = "GooberCord";
   const HERE = path.dirname(new URL(import.meta.url).pathname);
   const goober = readFileSync(path.resolve(HERE, "../api/filter.mjs"), "utf-8");
-  const forum = readFileSync("/Users/itswempo/wempos-forum/api/filter.mjs", "utf-8")
+  const forum = readFileSync(path.join(process.env.GC_FORUM_DIR || "/Users/itswempo/wempos-forum", "api/filter.mjs"), "utf-8")
     .replaceAll(FORUM_PROJECT, GOOBER_PROJECT);
   assert.equal(goober, forum);
 });

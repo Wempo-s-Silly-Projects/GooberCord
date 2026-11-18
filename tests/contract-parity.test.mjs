@@ -40,7 +40,7 @@
 // EITHER direction fails here — copy a framework change in, or carry an
 // app-side fix upstream to the framework; never edit the vendored file in
 // place.
-const KITSKEY_DIR = "/Users/itswempo/project-designer/experience";
+const KITSKEY_DIR = (process.env.GC_KITSKEY_DIR || "/Users/itswempo/project-kitskey") + "/experience";
 const VENDORED_FILES = [
   ["http.mjs", "http.mjs"],
   ["db.mjs", "db.mjs"],
@@ -66,7 +66,7 @@ import assert from "node:assert/strict";
 
 const HERE = path.dirname(new URL(import.meta.url).pathname);
 const GOOBER_CORE = path.resolve(HERE, "../api/core");
-const FORUM_CORE = "/Users/itswempo/wempos-forum/api/core";
+const FORUM_CORE = (process.env.GC_FORUM_DIR || "/Users/itswempo/wempos-forum") + "/api/core";
 
 // The substitution allow-list (ruled shape, same as GooberCord main's
 // extension 027fc28): every pair is a named constant; the project-name pair

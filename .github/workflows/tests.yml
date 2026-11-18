@@ -14,22 +14,27 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
-        uses: actions/checkout@main
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
       - name: Check out Forum sources used by parity tests
-        uses: actions/checkout@main
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           repository: Wempo-s-Silly-Projects/wempos-forum
           ref: main
-          path: forum-source
-      - name: Restore the parity-test source path
-        run: |
-          sudo mkdir -p /Users/itswempo
-          sudo ln -s "$GITHUB_WORKSPACE/forum-source" /Users/itswempo/wempos-forum
+          path: .test-sibs/wempos-forum
+      - name: Check out Kitskey sources used by parity tests
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          repository: Wempo-s-Silly-Projects/project-kitskey
+          ref: main
+          path: .test-sibs/project-kitskey
       - name: Set up Node.js
-        uses: actions/setup-node@main
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
         with:
           node-version: 26
       - name: Run test suite
+        env:
+          GC_FORUM_DIR: ${{ github.workspace }}/.test-sibs/wempos-forum
+          GC_KITSKEY_DIR: ${{ github.workspace }}/.test-sibs/project-kitskey
         run: node --test
       - name: Check JavaScript syntax
         run: |

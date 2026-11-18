@@ -36,7 +36,8 @@ const stylesheet = path.join(here, "..", "public", "styles.css");
 // The forum repo is the sibling working copy checked out next to this one —
 // the same dependency the vendored-kit parity tests lean on.
 const forumStylesheet = path.join(
-  path.dirname(path.dirname(here)), "wempos-forum", "public", "styles.css",
+  process.env.GC_FORUM_DIR || path.resolve(path.dirname(path.dirname(here)), "wempos-forum"),
+  "public", "styles.css",
 );
 
 // firstRuleBlock(css, selector): the bytes of the FIRST line-anchored rule whose
