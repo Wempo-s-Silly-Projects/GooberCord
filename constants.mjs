@@ -386,6 +386,21 @@ export const GC_GOOBER_DAY_SECONDS = 86400;
 export const GC_GOOBER_DAY_TAGLINE_MAX = 64;
 export const GC_GOOBER_DAY_MIN_VOTES_FOR_CARD = 1;
 
+// Server Seasons (T84, wave 4 — docs/drafts/t84-server-seasons-spec.md §3):
+// the mod-configured calendar's caps. Pure numbers only — the finish's
+// Campfire-pool split REUSES the jobs lane's GC_JOB_POOL_SHARE_PERCENT /
+// GC_JOB_MEMBER_SHARE_PERCENT (one sink share law, one declaration; a
+// season-named share re-declaration would break the caps law).
+export const GC_SEASON_WEEK_SECONDS = 604800;
+export const GC_SEASON_MAX_WEEKS = 12;
+export const GC_SEASON_NAME_MAX = 64;
+export const GC_SEASON_METER_GOAL_MAX = 100000;
+export const GC_SEASON_REWARD_COINS = 250;
+// The color seat is an enum of the EXISTING accent tokens (the slate: "a
+// color accent on the existing token set") — the client paints
+// var(--<token>), never raw hex from a client.
+export const GC_SEASON_COLOR_TOKENS = ["green", "coral", "yellow", "blue"];
+
 // Goober+ (owner decisions: ONE bundle, MONTHLY renewal, a grace window,
 // boosts stay free, GIFT Goober+ in). The price buys gc_plus_state term
 // extensions; the coin spend itself is gc_coin_ledger's negative row.
