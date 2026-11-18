@@ -31,8 +31,9 @@
 //   * identity is the shared users row (t64 G1) and deletions cascade
 //     (gc_fleet_boosts.author_id + gc_messages.author_id, per 0029) — a
 //     deleted member's boost and its card die together.
-import { HttpError, json } from "./core/http.mjs";
+import { HttpError, json, rateLimit } from "./core/http.mjs";
 import { requireUser } from "./core/auth.mjs";
+import { activeBanRow } from "./accounts.mjs";
 import { channelForUser, enforceChannelBits, insertMirroredCardMessage } from "./messages.mjs";
 
 // The forum's canonical origin (the card's provenance link target): the
@@ -103,6 +104,21 @@ async function consumeBoosts(env, channel, user, forumOrigin) {
     .bind(MAX_CONSUME_PER_CALL).all();
   const boostRows = pending?.results ?? [];
   const rendered = [];
+  if (boostRows.length) {
+    // R6 ruling (module law, the T58 activeBanRow idiom): the boost's author
+    // IS the card's writer, so the ban law rides BEFORE any render — an
+    // actively banned author refuses the whole call with 409 (fail-closed:
+    // nothing renders, the caller re-fires the consume once the mod lane
+    // moves; no partial render, no half-queue). A forum-only author carries
+    // no GC bans row → activeBanRow answers null → the render proceeds —
+    // identity stays the shared users row (t64 G1). Rides at the END of the
+    // gate order: kind FIRST, then the member gate, then SEND, then this
+    // writer-law ban gate.
+    for (const boost of boostRows) {
+      const authorBan = await activeBanRow(env, Number(boost.author_id));
+      if (authorBan) throw new HttpError(409, "A banned member's boost cannot render.");
+    }
+  }
   for (const boost of boostRows) {
     const clientMessageId = `boost-${boost.id}-c${channel.id}`;
     const card = renderBoostCard(boost, forumOrigin);
@@ -123,7 +139,10 @@ async function consumeBoosts(env, channel, user, forumOrigin) {
 // Gate order: kind FIRST (the 404/409 answers precede every member read),
 // then the membership read (channelForUser is the one member gate —
 // a non-member shares the unknown-channel 404), then the channel's SEND bit
-// (the mirror is a render into the room; the room's send law still applies).
+// (the mirror is a render into the room; the room's send law still applies),
+// then the message writer bucket (R5), then the author-ban screen (R6, the
+// T58 activeBanRow idiom) inside the consume pass — before the first card
+// insert.
 export async function handleConsumeBoostsRoute(request, env, serverId, channelId) {
   const session = await requireUser(request, env);
   const user = session.user;
@@ -145,6 +164,11 @@ export async function handleConsumeBoostsRoute(request, env, serverId, channelId
     throw new HttpError(404, "This channel does not exist or you cannot view it.");
   }
   await enforceChannelBits(env, memberChannel, Number(user.id), ["SEND"]);
+
+  // R5 rider: the render IS a message write, so the consume rides the ONE
+  // message writer bucket — the send path's exact idiom (T30:
+  // rateLimit(request, env, "message", "user:" + id)).
+  await rateLimit(request, env, "message", "user:" + user.id);
 
   const forumOrigin = env.FORUM_PUBLIC_ORIGIN ?? FORUM_ORIGIN_DEFAULT;
   const rendered = await consumeBoosts(env, memberChannel, user, forumOrigin);

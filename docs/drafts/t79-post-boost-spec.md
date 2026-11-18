@@ -33,6 +33,17 @@ member sees the same community from both rooms.
   author, and already-rendered card messages die through the same
   `gc_messages.author_id` CASCADE t64 records — no ghost cards, no orphan
   boost rows.
+- **Contract amendment (the 0029 scoping pin's findings, 2026-11-18):** the
+  card does NOT survive its author's deletion — `gc_messages.author_id`'s
+  CASCADE is the law (an authored card is the author's message; per the t64
+  §2 row the author's messages vanish from every surface), so the cascade
+  deleting the boost row and the cascade deleting its card are the SAME
+  event, both firing on the one `users` delete. The stamps therefore carry no
+  `rendered_at` (no FK can clear a plain column) and no inter-column CHECK
+  (the card's SET-NULL deletion action clears `rendered_message_id` while
+  `rendered_channel_id` stays; a pair CHECK would refuse every card delete at
+  its own action). Pending stays defined by `rendered_message_id IS NULL`;
+  the surviving channel stamp names the boost's render target.
 
 ### 2.2 The shared table (`fleet_boosts`, migration on BOTH sides)
 
@@ -92,6 +103,17 @@ CREATE TABLE IF NOT EXISTS gc_fleet_boosts (
 - Row lands pending (`rendered_message_id NULL`). Forum does NOT insert into
   `gc_*` tables — the GC render pass owns every card byte, per the render
   section. Forum responds `{ boostId }` + the mirror card preview.
+- **Title/excerpt derivation ruling (the forum `6fcf1a0` lane, lead-ratified):**
+  the forum has no thread titles, so the mint derives both card fields from
+  the post's body — flattened to ONE line first (every whitespace run to a
+  single space, the card must survive both pipelines as plain text). The
+  title is the first **100** flat characters, ellipsized when the body ran
+  longer; the excerpt is the body **after** that first 100 (no duplicate
+  head in the card), capped at **240**, ellipsized when truncated. A body at
+  or under the cap leaves an empty excerpt — the card's excerpt line stays
+  present, just blank. The GC renderer re-applies its own 240 cap over
+  whatever the forum stored, so the byte contract holds even if the two
+  caps ever drift (the forum caps are conveniences, the render cap is law).
 
 ### 2.4 GC side (render)
 
@@ -142,3 +164,42 @@ failure IS the red state):
 GREEN lane for a later commit: write `api/boost.mjs` to the spec (§2.4-2.5),
 run `node --test tests/boost-mirror-lane.test.mjs` to green, then build the
 route + migration lane.
+
+## 4. The riders (wave-3 ruling, R5 + R6)
+
+### 4.1 R6 — the ban gate rides the consume (module law)
+
+The chair flagged the boost mirror skipping the T58 ban rider BY DESIGN —
+this section is the explicit ruling. The mirrored card is the boosting
+member's OWN gc_messages row (the author of the card, per §2.4), so the ban
+law rides the consume pass in the T58 idiom:
+
+- The consume pass reads the pending boosts' authors through the ONE shared
+  ban screen read — `activeBanRow` (api/accounts.mjs:397, the exact read the
+  password login and the SSO redeem already run) — BEFORE any boost renders.
+- An actively banned author → the whole call refuses **409** with the copy
+  `"A banned member's boost cannot render."` and nothing renders. Fail-closed
+  by design: no partial render, no half-queue; the caller re-fires the
+  consume once the mod lane moves.
+- A forum-only author carries no GC bans row → `activeBanRow` answers null →
+  the render proceeds. Identity stays the shared users row (t64 G1); the
+  pending SELECT's shared-users JOIN is the identity source, so the card's
+  provenance line shows the shared username, never a copy.
+
+Placement (api/boost.mjs): at the END of the route's gate order — the kind
+gate first, then the member gate, then the SEND bit, then the R5 wall, then
+this ban screen (inside the consume pass, before the first card insert).
+
+### 4.2 R5 — the consume rides the message writer bucket
+
+The render IS a message write (the card rides the one gc_messages writer,
+§2.4), so the consume-boost route rate-limits in the T30 writer bucket with
+the send path's exact idiom shape:
+
+```js
+await rateLimit(request, env, "message", "user:" + user.id);
+```
+
+placed after the SEND gate and before any render — one wall, the shared
+`GC_MESSAGE_RATE_LIMITER` binding, so a consume burst can never sidestep the
+wall every other message write already stands behind.
