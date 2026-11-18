@@ -58,6 +58,12 @@ class DurableObjectBase {}
 // The single hub identity every relay and route shares.
 export const PRESENCE_HUB_NAME = "hub";
 
+// The stale-ghost window: 2X the REST announce cadence (300s). A live
+// member beats at least every 300s (announce lane) or 30s (socket lane), so
+// 600s of silence means the tab is gone — the roster prunes it rather than
+// carrying a ghost forever (T38).
+const PRESENCE_STALE_SECONDS = 600;
+
 // The status overlay the REST route persists; the hub re-reads it per
 // heartbeat, so an eviction between write and heartbeat never wedges status.
 const STATUS_MAX_CHARS = 128;
@@ -199,8 +205,12 @@ export class PresenceHub extends (workerd?.DurableObject ?? DurableObjectBase) {
   // The pinned presence envelope: online[] in userId order, and a status whose
   // statusUntil has already passed is hidden (nulls) rather than stale. The
   // tier never hides: idle/dnd persist until the member picks online again.
+  // The stale-ghost prune runs first: a member who stopped beating past the
+  // window leaves the roster and the map (a crashed tab on the announce lane
+  // never sends a leave), so the roster stays truthful without a DO alarm.
   snapshot() {
     const now = nowSeconds();
+    this.pruneStale(now);
     const online = [];
     for (const userId of [...this.presence.keys()].sort((a, b) => a - b)) {
       const entry = this.presence.get(userId);
@@ -218,6 +228,20 @@ export class PresenceHub extends (workerd?.DurableObject ?? DurableObjectBase) {
       });
     }
     return { type: "presence", online };
+  }
+
+  // The stale-ghost prune: every envelope read drops members whose lastSeen
+  // stopped inside the window. The window is 2X the slowest legitimate beat
+  // (the REST announce cadence, 300s) — one missed beat plus network slack
+  // never drops a live member; anyone silent for 10 minutes is a ghost the
+  // roster must not carry (and the map must not grow).
+  pruneStale(now) {
+    for (const userId of this.presence.keys()) {
+      const entry = this.presence.get(userId);
+      if (now - Number(entry.lastSeen) > PRESENCE_STALE_SECONDS) {
+        this.presence.delete(userId);
+      }
+    }
   }
 }
 
