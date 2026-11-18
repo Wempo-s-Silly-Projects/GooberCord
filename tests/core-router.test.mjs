@@ -67,3 +67,49 @@ test("the browser half rides History-API urls; the legacy hash shim lives in the
   assert.match(MAIN, /location\.hash\.startsWith\("#\/"\)/,
     "the boot rewrites a legacy #/ fragment onto the equal path exactly once");
 });
+
+// --- the render guard (T-W23): a thrown render never kills navigation ------
+
+test("a thrown render paints the error pane into the connected mount and navigation stays usable", () => {
+  const previousDoc = globalThis.document;
+  const children = [];
+  const mount = {
+    isConnected: true,
+    children,
+    replaceChildren() { children.length = 0; },
+    append(...kids) { children.push(...kids); },
+  };
+  globalThis.document = { createElement: (tag) => ({ tag, className: "", textContent: "", children: [],
+    append(...kids) { this.children.push(...kids); } }) };
+  try {
+    router.mount(mount);
+    router.addRoute("/boom", "boom-guard", () => { throw new Error("the render died"); });
+    router.addRoute("/calm", "calm-guard", (route, node) => node.append("calm-pane"));
+    router.navigate("/boom");
+    const pane = children[0];
+    assert.ok(pane && /router-error/.test(String(pane.className || "")),
+      "the thrown render paints the error pane, never a blank mount");
+    assert.match(String((pane.children[1] && pane.children[1].textContent) || ""),
+      /the render died/, "the error's message rides the pane");
+    router.navigate("/calm");
+    assert.equal(children[0], "calm-pane", "a later navigation renders normally — navigation stays usable");
+    assert.equal(router.current().name, "calm-guard");
+  } finally {
+    globalThis.document = previousDoc;
+  }
+});
+
+test("a thrown render into a detached mount silently paints nothing and never escapes", () => {
+  router.mount({ isConnected: false, children: [], replaceChildren() {}, append() {} });
+  router.addRoute("/boom-detached", "boom-detached", () => { throw new Error("dies"); });
+  const route = router.navigate("/boom-detached");
+  assert.equal(route.name, "boom-detached", "the resolve completes — the render throw never escapes");
+});
+
+test("the render guard pins: the connected-mount check rides both render seats", () => {
+  assert.match(SOURCE, /isConnected/, "the detached-class guard is the humanizer's assert");
+  assert.match(SOURCE, /catch \(caught\)/);
+  assert.match(SOURCE, /router-error/, "the error pane carries its class");
+  const seats = (SOURCE.match(/renderFailurePane\(/g) || []).length;
+  assert.ok(seats >= 3, `the shared failure painter rides renderRoute AND renderCurrent (${seats} call sites)`);
+});

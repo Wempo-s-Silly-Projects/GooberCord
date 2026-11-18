@@ -93,3 +93,22 @@ test("the landing card speaks through the bundle", () => {
       `the call site rides ${key}`);
   }
 });
+
+// --- the refusal-card mount guard (T-W23) -----------------------------------
+
+test("the refusal card: no #app and no body paints nothing, never throws", async () => {
+  const landing = await import("../public/js/ui/landing.js");
+  const previousDoc = globalThis.document;
+  try {
+    await assert.doesNotReject(() => Promise.resolve().then(() =>
+      landing.renderRedeemRefusal({ getElementById: () => null, body: null },
+        { location: { origin: "https://gc.example" } }, null)),
+      "a mountless document is a silent skip, not a TypeError");
+  } finally {
+    globalThis.document = previousDoc;
+  }
+});
+
+test("the refusal card guard pins: the mount check rides before the paint", () => {
+  assert.match(SOURCE, /if \(!mount\) return;/, "the guard is an early return, not a try/catch swallow");
+});

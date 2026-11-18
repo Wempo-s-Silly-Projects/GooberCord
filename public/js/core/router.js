@@ -76,9 +76,36 @@ function renderRoute(route) {
   if (mountNode) {
     mountNode.replaceChildren();
     // The render owns nothing outside its node: the router clears it before
-    // each render and hands the node over.
-    route.render(route, mountNode);
+    // each render and hands the node over. A render's own death is caught by
+    // the shared failure painter below — navigation stays usable.
+    try {
+      route.render(route, mountNode);
+    } catch (caught) {
+      renderFailurePane(mountNode, caught);
+    }
   }
+}
+
+// renderFailurePane(mountNode, error) — the render-guard's card: the thrown
+// render paints one pane into the mount instead of dying to the console, and
+// the full stack still rides the console for the QA lane (the pane is the
+// user's channel; the console is the developer's). The humanizer's assert is
+// the gate: only a live, connected mount takes the pane (the detached class —
+// a node already swapped out — paints nothing, silently); and the node-pinning
+// test half (no document at all) paints nothing too.
+function renderFailurePane(mountNode, error) {
+  console.error("Route render failed:", error);
+  if (!mountNode || (typeof mountNode.isConnected === "boolean" && !mountNode.isConnected)) return;
+  const doc = globalThis.document;
+  if (!doc || typeof doc.createElement !== "function") return;
+  const pane = doc.createElement("div");
+  pane.className = "router-error";
+  const title = doc.createElement("h2");
+  title.textContent = "This view failed to render.";
+  const body = doc.createElement("p");
+  body.textContent = (error && error.message) || "An unknown error stopped this view.";
+  pane.append(title, body);
+  mountNode.append(pane);
 }
 
 function resolve(path, { history: historyMode = false } = {}) {
@@ -111,7 +138,13 @@ export function navigate(path, { replace = false } = {}) {
 export function renderCurrent() {
   if (currentRoute) {
     // Same arg contract as renderRoute: the render receives (route, mountNode).
-    currentRoute.render(currentRoute, mountNode);
+    // The same guard: a render's death paints the failure pane and stops
+    // propagating.
+    try {
+      currentRoute.render(currentRoute, mountNode);
+    } catch (caught) {
+      renderFailurePane(mountNode, caught);
+    }
   }
   return currentRoute;
 }
@@ -129,6 +162,12 @@ export function notFoundHandler(fn) {
 // live for popstate and for every internal anchor click.
 export function mount(node) {
   mountNode = node;
+  // The browser-only half: a node-pinning importer mounts with neither
+  // window nor document — the live wiring skips cleanly, the render half
+  // (renderRoute/renderCurrent) works without it.
+  if (typeof window === "undefined" || typeof document === "undefined") {
+    return null;
+  }
   window.addEventListener("popstate", () => {
     resolve(location.pathname);
   });

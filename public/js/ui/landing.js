@@ -71,9 +71,14 @@ export function clearTicketParam(win) {
   return true;
 }
 
-// renderRedeemRefusal(doc, win, error) — the refusal card for outcome 3.
+// renderRedeemRefusal(doc, win, error) — the refusal card for outcome 3. The
+// mount guard (T-W23): a document with neither #app nor a body is a silent
+// skip — a TypeError from replaceChildren would be the boot's own crash card,
+// not this lane's failure to show.
 export function renderRedeemRefusal(doc, win, error) {
+  if (!doc) return;
   const mount = doc.getElementById("app") || doc.body;
+  if (!mount) return;
   mount.replaceChildren();
   const panel = h("div", { class: "gate-panel gate-refusal" });
   if (error && error.banned === true) {
