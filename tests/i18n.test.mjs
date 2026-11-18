@@ -265,12 +265,14 @@ const CARVE_GATES = {
   // time running, the declaration pattern stable).
   ar: [
     "gc.app.title",
+    "gc.chat.gif.button",
     "gc.chat.gif.short",
     "gc.shell.mentions.loading",
   ],
   es: [
     "gc.app.title",
     "gc.chat.expressions.stickerTitle",
+    "gc.chat.gif.button",
     "gc.chat.gif.short",
     "gc.expressions.kinds.stickers",
     "gc.mod.queue.summary",
@@ -282,6 +284,7 @@ const CARVE_GATES = {
   ],
   de: [
     "gc.app.title",
+    "gc.chat.gif.button",
     "gc.chat.gif.short",
     "gc.chat.pins.heading",
     "gc.chat.pins.link",
@@ -300,11 +303,13 @@ const CARVE_GATES = {
   ],
   ja: [
     "gc.app.title",
+    "gc.chat.gif.button",
     "gc.shell.mentions.loading",
   ],
   fr: [
     "gc.app.title",
     "gc.chat.compose.aria",
+    "gc.chat.gif.button",
     "gc.chat.expressions.emojiTitle",
     "gc.chat.expressions.stickerTitle",
     "gc.chat.gif.short",
@@ -324,6 +329,7 @@ const CARVE_GATES = {
     "gc.app.title",
     "gc.chat.expressions.emojiTitle",
     "gc.chat.expressions.stickerTitle",
+    "gc.chat.gif.button",
     "gc.chat.gif.short",
     "gc.expressions.kinds.emojis",
     "gc.expressions.kinds.stickers",
@@ -336,6 +342,7 @@ const CARVE_GATES = {
     "gc.app.title",
     "gc.chat.expressions.emojiTitle",
     "gc.chat.expressions.stickerTitle",
+    "gc.chat.gif.button",
     "gc.expressions.kinds.emojis",
     "gc.expressions.kinds.stickers",
     "gc.shell.mentions.loading",
@@ -346,6 +353,7 @@ const CARVE_GATES = {
   zh: [
     "gc.app.title",
     "gc.chat.expressions.emojiTitle",
+    "gc.chat.gif.button",
     "gc.expressions.kinds.emojis",
     "gc.shell.mentions.loading",
   ],

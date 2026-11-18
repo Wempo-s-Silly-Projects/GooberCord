@@ -433,3 +433,16 @@ export const GC_MENTIONS_PAGE_MAX = 100;
 // 2026-11-17).
 export const GC_SEARCH_PAGE_MAX = 25;
 export const GC_SEARCH_TERM_MAX = 100;
+
+// GIF provider (KLIPY, migrated off Tenor at its 2026-06-30 EOL, owner
+// order): the search lane rides docs.klipy.com's gifs-search contract —
+// the APP KEY is a PATH segment (never a query param), per_page tops at
+// 50, and the picker's shared surface defaults the content filter to the
+// explicit-low tier. The CDN hosts (api.klipy.com and the media static
+// host) share the subdomain-inclusive allowlist rule the proxy enforces
+// at api/gifs.mjs.
+export const KLIPY_SEARCH_BASE_URL = "https://api.klipy.com/api/v1";
+export const KLIPY_SEARCH_PATH = "/gifs/search";
+export const KLIPY_MEDIA_CDN_HOST = "static.klipy.com";
+export const KLIPY_MAX_PER_PAGE = 50;
+export const KLIPY_CONTENT_FILTER_DEFAULT = "low";

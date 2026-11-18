@@ -264,7 +264,7 @@ export async function searchGifs(query, { position = null, limit = UI_GIF_PAGE_D
   return api(`/api/gifs/search?${params.toString()}`);
 }
 
-// The GIF display is ALWAYS the same-origin proxy — never a tenor.com URL
+// The GIF display is ALWAYS the same-origin proxy — never a provider-CDN URL.
 // in any <img> (the CSP is default-src 'self'); insertion pins the plain
 // proxied URL as the body text (no markdown invented).
 export function gifProxyUrl(remoteUrl) {
