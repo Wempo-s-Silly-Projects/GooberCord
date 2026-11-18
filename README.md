@@ -1,46 +1,73 @@
-# GooberCord — the rewrite line
+# GooberCord
 
-This is GooberCord's rewritten backend line, kept on the `rewrite` branch of
-the same repository (<https://github.com/Wempo-s-Silly-Projects/GooberCord>).
-The API surface, migrations, tests, and worker entrypoint live in this tree;
-the vendored framework files it carries are byte-pinned back to their
-framework sources, and its shared-table auth core is parity-locked to the
-forum's by the contract-parity gates.
+A Discord-style chat app running on Cloudflare Workers + D1 —servers, rooms,
+messages, reactions, roles, uploads, soundboard, GIFs, an economy (coins,
+boosts, Goober+), a daily Morning Paper, campfire, bookmarks, and more. All
+vanilla imperative JS on both sides: no frontend framework, no build step.
 
-The license law's per-file notices and the twin-header coordination with
-wempos-forum land on this line the same shape as GooberCord main's: see the
-license ledger in docs/license-ledger.md on the main lane's tree for the
-program's row record.
+- **Live:** <https://goobercord.itswempo.workers.dev>
+- **Source:** <https://github.com/Wempo-s-Silly-Projects/GooberCord>
+
+GooberCord shares one identity layer and one production D1 database with
+[wempos-forum] and [wempos-forum's sign-in worker]
+[wempo-accounts]: accounts are minted at
+<https://accounts.itswempo.workers.dev> and session/user/ban rows are
+parity-locked between the apps by contract tests.
+
+## Features
+
+- Servers, rooms, messages, mentions, reactions, conversation DMs
+- Presence, WebSocket relay, mobile push-style job queue
+- Roles, permissions, mod rules, message filters
+- Coins economy, Goober+ tiers, server boosts, cosmetics
+- Uploads, GIFs (Tenor), soundboard with sound packs
+- Bookmarks, campfire, daily Morning Paper, Goober Day, seasons
+- Welcome cards, reaction tags, accent colors, usernames
+- 8 UI languages beside English (es, de, fr, pt, ru, ja, zh, ar)
+- Turnstile on the door, TOTP two-factor, rate limiters per lane
+
+## Quick start (local dev)
+
+```bash
+pnpm install
+pnpm run db:migrate:local   # apply migrations to the local D1 store
+pnpm run dev                # wrangler dev
+```
+
+Secret bindings (Turnstile keys, password pepper, relay secret) are
+owner-held: put what you need in `.dev.vars` for local runs — it is
+git-ignored and never committed. Without them the app still serves and the
+test suite stays green.
+
+Run the tests:
+
+```bash
+pnpm test
+```
+
+Deploy is always `pnpm run deploy` (it stamps the commit SHA the client uses
+as its bundle cache-buster). Deploying is the owner's job, not a
+contributor's.
+
+## Repo layout
+
+| Path | What it holds |
+| --- | --- |
+| `api/` | The `/api/*` endpoints, one module per domain |
+| `api/vendor/` | Vendored framework modules, byte-parity pinned |
+| `public/` | The client (vanilla JS + CSS) and locale bundles |
+| `migrations/` | D1 migrations, sequential |
+| `tests/` | `node --test` suites (unit, contract parity, i18n) |
+| `docs/` | Parity board, license ledger, specs, decisions |
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the setup details, test
+commands, and commit conventions.
 
 ## License
 
-Source: <https://github.com/Wempo-s-Silly-Projects/GooberCord>
+AGPL-3.0-or-later — see the [LICENSE](LICENSE) file (full text in
+[COPYING](COPYING)). If you run a modified version over a network, you owe
+your users the source of that version (AGPLv3 section 13).
 
-Copyright (C) 2026 ItsWempo
-
-GooberCord is free software: you can redistribute it and/or modify
-it under the terms of the GNU Affero General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-
-This program is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-GNU Affero General Public License for more details.
-
-You should have received a copy of the GNU Affero General Public License
-along with this program.  If not, see <https://www.gnu.org/licenses/>.
-
-The full license text follows in the COPYING file at the root of this
-repository.
-
-Modified versions that let users interact with them over a network must
-offer those users the corresponding source of the version they are serving
-(GNU Affero General Public License, section 13): a visible link to the
-source archive, or the repository above, satisfies this duty.
-
-Copyright 2026 ItsWempo
-Copying and distribution of this file, with or without modification, are
-permitted in any medium without royalty provided the copyright notice and
-this notice are preserved.  This file is offered as-is, without any
-warranty.
+[wempos-forum]: https://github.com/Wempo-s-Silly-Projects/wempos-forum
+[wempo-accounts]: https://github.com/Wempo-s-Silly-Projects/wempo-accounts
