@@ -183,12 +183,13 @@ test("en.json: every key rides the <product>.<area>.<topic>(.<element>) scheme",
   assert.ok(!values.includes("Not found."), "the same law, the generic 404 body");
 });
 
-test("the lifted stage-1 gate ships exactly the six en+staged bundle seats", () => {
-  // ar/ja/zh stay OUT (owner law): they hold at the Firefox visual pass and
-  // enter only on the owner's lift order — a stored human choice may still
-  // name any seat (the loader's fail-open), this list gates the navigator-
-  // derived seats only.
-  assert.deepEqual(i18n.BUNDLE_LANGS, ["en", "es", "de", "fr", "pt", "ru"]);
+test("the lifted gate ships exactly the nine en+all-bundle seats (stage-2, owner order)", () => {
+  // The owner ordered the stage-2 lift (ja/zh/ar ride on owner authority;
+  // the Firefox visual pass is DEFERRED by the owner's own decision — the
+  // risk is disclosed in the commit body, not hidden). A stored human
+  // choice may still name any seat (the loader's fail-open), this list
+  // gates the navigator-derived seats only.
+  assert.deepEqual(i18n.BUNDLE_LANGS, ["en", "es", "de", "fr", "pt", "ru", "ja", "zh", "ar"]);
 });
 
 test("the raw-seat sweep keys pin (pins dialog, shell rails, document title)", () => {

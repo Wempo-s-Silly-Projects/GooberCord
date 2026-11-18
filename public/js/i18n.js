@@ -33,7 +33,7 @@
 // The bundle seats this repo ships. A navigator-derived tag must sit in
 // this list (with the base-script fallback); a stored human choice may
 // name any seat — a 404 just fails open to English.
-export const BUNDLE_LANGS = ["en", "es", "de", "fr", "pt", "ru"];
+export const BUNDLE_LANGS = ["en", "es", "de", "fr", "pt", "ru", "ja", "zh", "ar"];
 
 const STORE_KEY = "lang";
 
