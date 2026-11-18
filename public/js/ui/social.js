@@ -30,6 +30,7 @@ import store from "../core/store.js";
 import { createForm, createInput, createSelect } from "../vendor/designer/kit.mjs";
 import { openDialog } from "../vendor/frontload/dom.mjs";
 import * as router from "../core/router.js";
+import * as quiet from "./quiet-hours.js";
 import { renderShell } from "./shell.js";
 
 // --- the loads ---------------------------------------------------------------
@@ -42,9 +43,21 @@ export async function loadSocial() {
 
 export async function loadConversations() {
   const payload = await api("/api/conversations");
-  store.set({ conversations: Array.isArray(payload?.conversations)
-    ? payload.conversations : [] });
-  return store.get("conversations");
+  const fresh = Array.isArray(payload?.conversations) ? payload.conversations : [];
+  // The DM ping's hold point (T77): a thread's unread GROWN against the
+  // store's previous list is the ping moment — the schedule's "held" answer
+  // parks it in the wake digest instead. The first-known list (cold store)
+  // is backlog, never a new ping.
+  const previous = store.get("conversations");
+  if (previous) {
+    const before = new Map(previous.map((thread) => [thread.id, thread.unread || 0]));
+    const meId = store.get("user")?.id ?? null;
+    for (const thread of fresh) {
+      if ((thread.unread || 0) > (before.get(thread.id) || 0)) quiet.holdDmPing(thread, meId);
+    }
+  }
+  store.set({ conversations: fresh });
+  return fresh;
 }
 
 export async function loadBlocks() {
@@ -277,6 +290,74 @@ function blocksPanel() {
 
 // renderSocialHub(route, mount) — the "/friends" task page. Back, heading,
 // one panel per quiet lane, gate toggle written through on click.
+// quietDigestSeat() — the wake digest (T77): the window no longer holding,
+// the member's next friends-hub consult drains the held rows once — one row
+// per conversation, title + how many, the click opens the thread. A cold
+// conversations store defers the consult (the hydration re-render has the
+// titles); a second wake with nothing held renders nothing.
+function quietDigestSeat() {
+  if (!store.get("conversations")) return null;
+  let digest = [];
+  try {
+    digest = quiet.dueDigest(quiet.wakeQueue, quiet.scheduleOf(), new Date());
+  } catch { /* the digest is a courtesy, never a render blocker */ }
+  if (digest.length === 0) return null;
+  const threads = store.get("conversations") || [];
+  const title = (conversationId) => {
+    const thread = threads.find((entry) => entry.id === conversationId);
+    return thread ? (thread.name || t("gc.shell.nav.dm")) : t("gc.shell.nav.dm");
+  };
+  return h("div", { class: "panel quiet-digest" },
+    h("h3", { text: t("gc.social.quiet.digestHeading") }),
+    ...digest.map((row) => h("a", { class: "quiet-digest-row", href: `/dm/${row.conversationId}` },
+      h("span", { text: title(row.conversationId) }),
+      h("span", { class: "count-pill", text: String(row.count) }))));
+}
+
+// quietPanel() — the saved schedule's seat: the explicit save ONLY writes
+// (the defaults law: the OFF default never turns itself on; no render, no
+// hover, no toggle-flip write). The time wells sit disabled while the
+// schedule is off.
+function quietPanel() {
+  const draft = { ...quiet.scheduleOf() };
+  const toggle = h("button", {
+    class: "control-quiet gate-toggle", type: "button",
+    text: draft.on ? t("gc.social.quiet.on") : t("gc.social.quiet.off"),
+  });
+  const times = [
+    createInput(document, {
+      id: "quiet-start", label: t("gc.social.quiet.start"), type: "time", value: draft.start,
+    }),
+    createInput(document, {
+      id: "quiet-end", label: t("gc.social.quiet.end"), type: "time", value: draft.end,
+    }),
+  ];
+  const syncTimes = () => {
+    for (const well of times) well.querySelector("input").disabled = !draft.on;
+  };
+  toggle.addEventListener("click", () => {
+    draft.on = !draft.on;
+    toggle.textContent = draft.on ? t("gc.social.quiet.on") : t("gc.social.quiet.off");
+    syncTimes();
+  });
+  syncTimes();
+  return h("div", { class: "panel quiet-panel" },
+    h("h3", { text: t("gc.social.quiet.heading") }),
+    h("p", { class: "muted", text: t("gc.social.quiet.note") }),
+    toggle, ...times,
+    h("button", {
+      class: "button button-primary", type: "button", text: t("gc.controls.save"),
+      onclick: () => {
+        quiet.saveSchedule({
+          on: draft.on,
+          start: times[0].querySelector("input").value || draft.start,
+          end: times[1].querySelector("input").value || draft.end,
+        });
+        router.renderCurrent();
+      },
+    }));
+}
+
 export function renderSocialHub(route, mount) {
   const social = store.get("friends");
   const pane = h("section", { class: "pane-main task-main" },
@@ -285,6 +366,7 @@ export function renderSocialHub(route, mount) {
         h("header", { class: "task-header" },
           h("a", { class: "back-link", href: "/", text: t("gc.controls.back") }),
           h("h2", { class: "page-heading", text: t("gc.social.friends.heading") })),
+        quietDigestSeat(),
         h("div", { class: "panel gate-panel-inline" },
           h("h3", { text: t("gc.social.privacy.label") }),
           h("button", {
@@ -300,7 +382,8 @@ export function renderSocialHub(route, mount) {
               }
             },
           })),
-        requestForm(), statusEditor(), friendsPanel(), requestsPanel(), blocksPanel())));
+        requestForm(), statusEditor(), friendsPanel(), requestsPanel(),
+        blocksPanel(), quietPanel())));
   mount.append(renderShell(null, pane));
   if (!social) {
     loadSocial().then(() => loadBlocks()).then(() => router.current() && router.renderCurrent())

@@ -35,6 +35,10 @@ see <https://www.gnu.org/licenses/>
    blocked), which is exactly the dark default. */
 :root {
   color-scheme: dark;
+  /* T81: the font-scale row's token — the shell row and the pre-paint
+     reader set it inline on documentElement, which outranks this :root
+     default of exactly 1 (no scale until the row moves it). */
+  --font-scale: 1;
   --button-radius: 0.45rem 0.65rem 0.4rem 0.55rem;
   accent-color: var(--green);
   font-family: "Trebuchet MS", "Segoe UI", sans-serif;
@@ -108,6 +112,55 @@ see <https://www.gnu.org/licenses/>
   --quiet-hover: #e9d9a7;
   --coin: #c1920f;
 }
+
+/* ============================ a11y tokens =========================== */
+
+/* T81 (docs/drafts/t81-a11y-theme-spec.md): high contrast as a first-class
+   theme — a sparse override of the core tokens per theme; every unlisted
+   token inherits the incumbent theme value. Values are the spec table
+   verbatim, and every pair inside holds its WCAG 2.2 floor through the
+   tests' in-test luminance recompute (tests/a11y-theme.test.mjs). */
+:root[data-hc="on"] {
+  --ink: #ffffff;
+  --muted: #c9d3dd;
+  --desk: #0b1119;
+  --paper: #14202e;
+  --line: #7487a0;
+  --focus: #a8c7ff;
+  --link: #9be3bd;
+  --green: #17553a;
+  --coral: #ff9b8a;
+  --error-chip-ink: #ff9b8a;
+  --error-chip-bg: #3a1214;
+  --quiet-hover: #233646;
+}
+
+:root[data-theme="light"][data-hc="on"] {
+  --ink: #101c29;
+  --muted: #43525f;
+  --desk: #fffaf0;
+  --paper: #ffffff;
+  --line: #8a7f66;
+  --focus: #0b47a0;
+  --link: #1a4f39;
+  --green: #26573f;
+  --coral: #7a231a;
+  --error-chip-ink: #7a231a;
+  --error-chip-bg: #ffe4dc;
+  --quiet-hover: #f0e4c8;
+}
+
+/* ============================ a11y rules ============================ */
+
+/* The font-scale seat: one var converts to the rem root, so every
+   rem-riding size scales together while px geometry (borders, indents)
+   stays fixed. The shell row and the pre-paint reader write the var onto
+   documentElement's inline style, always outranking the :root default. */
+html {
+  font-size: calc(100% * var(--font-scale));
+}
+
+/* == end a11y == */
 
 /* =============================== base =============================== */
 
