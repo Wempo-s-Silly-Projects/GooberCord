@@ -136,6 +136,12 @@ export async function initI18n() {
   lang = storedLang() || navigatorLang() || "en";
   if (lang === "en") {
     setHtmlLang("en");
+    // The paint-swap race floor (T29): painters run against the EMPTY
+    // catalog while this lane is still resolving; on the en seat this
+    // return was the last stop, so the bound copy stayed humanized tails
+    // until the next route render. One repaint here clears the race the
+    // moment the en bundle lands (non-en seats already repaint below).
+    applyDom();
     return lang;
   }
   try {
@@ -150,7 +156,6 @@ export async function initI18n() {
   setHtmlLang("en");
   return lang;
 }
-
 // setLang(next) — the switcher's seat: stores the choice (per-viewer, the
 // browser-storage law's convenience tier), loads the bundle, flips the
 // bound copy in place. Refusals fail open to English like every other lane.
@@ -321,7 +326,10 @@ export function fmtDate(value, options = null) {
 // applyDom(root) — idempotent; the sweep's re-call sites are the painters
 // that already re-run per route render. Locale content is DATA: textContent
 // and attribute setters only, never a markup parse.
-export function applyDom(root = document) {
+export function applyDom(root = globalThis.document) {
+  // The nondocument contract stays: a node importer (or a catch running
+  // before any document exists) is a no-op — the browser's document IS
+  // globalThis.document, so the default rides the same object.
   if (!root || typeof root.querySelectorAll !== "function") return;
   for (const node of root.querySelectorAll("[data-i18n]")) {
     node.textContent = t(node.getAttribute("data-i18n"));

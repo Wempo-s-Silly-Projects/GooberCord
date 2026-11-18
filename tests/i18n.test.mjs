@@ -637,3 +637,31 @@ test("fmtNumber and fmtDate ride the active locale and never throw on a bad seat
   globalThis.localStorage.store.clear();
   await i18n.initI18n();
 });
+
+// --- the paint-swap race (T29): the en floor's late resolve repainted -------
+
+test("the en floor repaints already-bound copy: initI18n's en seat calls applyDom", async () => {
+  // The boot NEVER awaits the lane: painters run t() over an EMPTY catalog
+  // while /locales/en.json is still in flight — the bound copy is humanized
+  // key tails until SOMETHING repaints. The en seat's late resolve is that
+  // something: one applyDom() over the document at catalog.set time.
+  const previousDoc = globalThis.document;
+  try {
+    const holder = new StubNode("doc");
+    holder.documentElement = new StubNode("html");
+    const node = new StubNode("p");
+    node.setAttribute("data-i18n", "gc.t29.late");
+    holder.append(node);
+    globalThis.document = holder;
+    globalThis.localStorage.setItem("lang", "en"); // deterministic en seat
+    node.textContent = i18n.t("gc.t29.late"); // the painter's pre-resolve paint
+    assert.equal(node.textContent, "Late",
+      "the pre-resolve paint is the humanized tail — the empty-catalog race");
+    freshBundles({ en: { "gc.t29.late": "Repainted now." } }); // the file lands
+    await i18n.initI18n(); // the boot's unawaited lane finally resolves
+    assert.equal(node.textContent, "Repainted now.",
+      "the en seat's resolve repainted the already-bound copy — tails cleared");
+  } finally {
+    globalThis.document = previousDoc;
+  }
+});
