@@ -50,6 +50,13 @@ import { loadMentions } from "./mentions.js";
 import { coinFooterLine } from "./economy.js";
 import { serverAdminRights } from "./settings.js";
 import { wempoAccountsSignOutUrl } from "./landing.js";
+import { renderPaper } from "./paper.js";
+
+// The Morning Paper surface (T87): the route registers from the shell's
+// module scope — this module evaluates BEFORE main.js's boot() pushes the
+// generic "/s/:serverId/:channelId" catch, so insertion order resolves
+// "/s/:serverId/paper" to this seat, never to a "paper" channel.
+router.addRoute("/s/:serverId/paper", "paper", renderPaper);
 
 // AGPL §13's source-offer rides the shell's user footer: every signed-in
 // screen carries the quiet anchor next to sign-out, pointing at the repo.
@@ -339,6 +346,15 @@ function channelRail() {
     hidden: !Array.isArray(mentions) || mentions.length === 0 ? true : undefined,
     text: Array.isArray(mentions) ? String(mentions.length) : t("gc.shell.mentions.loading"),
   })));
+
+  // The Morning Paper door (T87): every member of an active server can ride
+  // the link (the read's own gates decide what answers); the surface sits
+  // inside the paper pane, never in the rail.
+  if (server) {
+    rail.append(h("a", { class: "channel-row paper-item", href: `/s/${server.id}/paper`,
+      "aria-label": t("gc.paper.nav"), title: t("gc.paper.nav") },
+    h("span", { class: "channel-hash", text: "📰" }), t("gc.paper.nav")));
+  }
 
   if (server && Array.isArray(server.channels)) {
     // Channels file under their categories when the server has any;
