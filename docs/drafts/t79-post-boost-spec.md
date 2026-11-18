@@ -92,6 +92,27 @@ CREATE TABLE IF NOT EXISTS gc_fleet_boosts (
   rendered_at and no inter-column CHECK (the SET-NULL deletion actions
   cannot clear a plain column and would break a pair CHECK at its own
   action).)
+- **The 0035 fix-forward (board row FK35, 2026-11-18):** `forum_post_id` now
+  carries **ON DELETE CASCADE** — the ecc-security finding (0029 shipped a
+  bare `REFERENCES posts(id)`, SQLite NO ACTION; the forum hard-deletes post
+  rows at api/posts-write.mjs:444 today, so a boosted post's first delete
+  500s on the FK). 0029 was already ritual-applied remotely when the finding
+  landed, so the fix rides a NEW migration, not a 0029 amend:
+  `migrations/0035_fleet_boosts_fk_cascade.sql` rebuilds the table the 0029
+  way (create-new → explicit-id copy → drop-old → rename → the index
+  recreated verbatim; no canary — nothing references `gc_fleet_boosts`; no
+  child-FK-AROUND machinery — the DROP is a child-table drop). Deletion law
+  after 0035: the post delete kills its boost rows (the shadow dies WITH the
+  post, same t64 §2 idiom as the author CASCADE) and the already-rendered
+  card becomes an orphan whose removal rides the parked GC mirror/retract
+  sweep lane — that lane owns every card-removal byte; the ghost is
+  transient until it exists. Both live DDL copies carry the fix going
+  forward: 0029's DDL is the remote-applied history ONLY (pinned as
+  shipped, never amended); 0035's rebuild DDL + the forum 0043 copy
+  (created post-finding) are the live shapes. Tests:
+  tests/migration-scoping-0035.test.mjs (the static rebuild-order pins + the
+  enforced-FK live-ness pin + the real delete-the-post cascade regression
+  row the 0029 suite's static pin could not give).
 
 ### 2.3 Forum side (mint)
 
