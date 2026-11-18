@@ -9,6 +9,27 @@ lane's trigger, dissolved after; nothing idles.
 Routing law (ECC 2.2.3 present): generic lanes -> `ecc:*` agents; fleet
 governance (board, ritual, compliance, roster) -> these seats.
 
+## Kernel routing (declarative — the Agentic-OS table; lead routes per trigger)
+
+| Trigger (owner says / lane shows) | Seat fielded |
+|---|---|
+| UI, dashboard, client, bundle, locale keys | `frontend-dev` (+ modern-web-guidance gate) |
+| API, worker, migration, SQL, statement gate | `backend-dev` |
+| Red tests, suite gate, regression, coverage | `qa-runner` |
+| Deploy, probe, ritual, CI, version stamp | `devops` |
+| Merge, fire, rebase, branch-set | `merge-eng` |
+| SHIP/BLOCK verdict, gate review | `ship-reviewer` (+ `ecc:code-reviewer` for deep passes) |
+| Board audit, dispatch-vs-shipped drift | `issue-review` |
+| Spec a vague idea | `pm` |
+| Parallel-debug a hard bug | `hypothesis` in MULTIPLES (one theory each) |
+| Disprove our favorite hypothesis | `falsificationist` |
+| Contracts, shapes, cross-app | `contract-architect` |
+| Security read on auth/cookie/migration | `ecc-security` |
+| Deletion sweep, dead code | `garbage-collector`, `entropy-monkey` |
+| Locale keys, bundles, RTL | `localizer` |
+| A11y / keyboard / screen reader | `a11y-navigator` |
+| Fleet ops (rituals, deploy law) | me — `team-lead` |
+
 ## Core engineering (the owner's canonical core-7)
 
 - **researcher** — Fleet researcher seat — codebase/external-doc/web context runs that return a SUMMARIZED brief (contracts, APIs
