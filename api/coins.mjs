@@ -173,6 +173,26 @@ const PLUS_SPEND_SQL =
   "AND (SELECT COALESCE(SUM(le.delta), 0) FROM gc_coin_ledger le " +
     "WHERE le.user_id = ?) >= ? LIMIT 1";
 
+// The Mini claim's spend: the L2 fold-in (lock-hunt L2 + backend confirm) —
+// the Mini-refuse affordance rides INSIDE the claim's single guarded
+// statement (affordance check + debit share ONE WHERE, the coins claim
+// idiom), so a concurrent FULL-term renewal landing between the route's
+// read and this batch cannot route a stale "lapsed" read into a Mini buy:
+// the arm evaluates the LIVE gc_plus_state at claim time, and changes 0 is
+// the lost race. A legacy NULL tier reads full exactly like the route's
+// own guard does. The arm's two binds ride TRAILING so the statement's
+// first EIGHT seats stay identical to PLUS_SPEND_SQL's (shared callers).
+const MINI_SPEND_SQL =
+  "INSERT INTO gc_coin_ledger (user_id, delta, source, related_user_id, created_at) " +
+  "SELECT ?, ?, ?, ?, ? " +
+  "WHERE EXISTS (SELECT 1 FROM users rp WHERE rp.id = ?) " +
+  "AND (SELECT COALESCE(SUM(le.delta), 0) FROM gc_coin_ledger le " +
+    "WHERE le.user_id = ?) >= ? " +
+  "AND NOT EXISTS (SELECT 1 FROM gc_plus_state ps " +
+    "WHERE ps.user_id = ? " +
+    "AND ps.renews_until > ? " +
+    "AND (ps.tier IS NULL OR ps.tier <> 'mini')) LIMIT 1";
+
 // The FORUM-POST ROLLUP (the economy re-rule): one LAZY row per member per UTC
 // day, minted at the member's next coins touch. The NOT EXISTS arm is the
 // user+day gate; the count sub-query (GC's read-only forum lane) counts the
@@ -996,11 +1016,14 @@ async function purchasePlusTerm(env, gifterId, recipientId, purchasedTier = "plu
     : (purchasedTier === "mini" ? GC_MINI_PRICE : GC_PLUS_PRICE);
 
   const results = await env.GOOBER_DB.batch([
-    env.GOOBER_DB.prepare(PLUS_SPEND_SQL).bind(
-      Number(gifterId), -price, source, relatedUserId, now,
-      targetId,
-      Number(gifterId),
-      price,
+    env.GOOBER_DB.prepare(purchasedTier === "mini" ? MINI_SPEND_SQL : PLUS_SPEND_SQL).bind(
+      // The shared seats (textual order): gifter, debit, source, the related
+      // member (the RECIPIENT — the term upsert's fingerprint keys on it),
+      // now, the recipient-exists seat, the sufficient-coins seats — the Mini
+      // statement appends its refuse arm's two seats (target, now) trailing.
+      ...[Number(gifterId), -price, source, relatedUserId, now, targetId,
+        Number(gifterId), price],
+      ...(purchasedTier === "mini" ? [targetId, now] : []),
     ),
     env.GOOBER_DB.prepare(PLUS_TERM_UPSERT_SQL).bind(
       // INSERT branch: user, MAX(now, now), +term, tenure start, gifted by, updated, tier.
@@ -1016,6 +1039,17 @@ async function purchasePlusTerm(env, gifterId, recipientId, purchasedTier = "plu
   // failure mode left after validation) — the house-style after-the-fact
   // classification, one copy, no probe.
   if (Number(results[1]?.meta?.changes) !== 1) {
+    // L2 fold-in: the race classifier — a Mini claim the in-statement refuse
+    // arm rejected is the mis-sale answer, not a balance answer. One probe,
+    // only on the refusal path, only for the Mini tier (the route-side read
+    // raced its window; this read answers the POST-claim state).
+    if (purchasedTier === "mini") {
+      const fresh = await env.GOOBER_DB.prepare(PLUS_READ_SQL).bind(targetId).first();
+      if (fresh && Number(fresh.renews_until) > now &&
+        (fresh.tier === null || fresh.tier === undefined || fresh.tier !== "mini")) {
+        throw new HttpError(409, "You already have full Goober+.");
+      }
+    }
     throw new HttpError(400, "Not enough Goober Coins for that.");
   }
   const [balanceRow, targetPlusRow] = await Promise.all([
