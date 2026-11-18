@@ -24,7 +24,10 @@
 // test: a server boost level's upload blessing merges GREEDIER-of into the
 // enforced seat — a level never lowers a cap, and a DM/group channel (no
 // server row) keeps the account-tier seat the route has always enforced,
-// byte-for-byte, with no gc_servers read at all.
+// byte-for-byte, with no gc_servers read at all. Wave-7 (T-AUD-H1): the
+// buffered lane clamps the lifted frame at GC_BUFFERED_FRAME_CEILING (25 MiB —
+// the multipart parse buffers the whole body inside the isolate), so L2/L3
+// answer the ceiling on this route; the tier raises ride the staged lane.
 import test from "node:test";
 import assert from "node:assert/strict";
 
@@ -34,6 +37,7 @@ import { randomToken, sha256Hex, nowSeconds } from "../api/core/crypto.mjs";
 import { HttpError, json } from "../api/core/http.mjs";
 import {
   GC_BOOST_LEVELS,
+  GC_BUFFERED_FRAME_CEILING,
   MAX_ATTACHMENT_BYTES,
   RATE_LIMIT_BINDINGS,
 } from "../constants.mjs";
@@ -177,13 +181,19 @@ function sendImageRoutes({ serverId = SERVER_ID, boosts = 0, tier = null } = {})
   ];
 }
 
-async function sendImage(routes, bytes) {
+async function sendImage(routes, bytes, declaredLength = null) {
   const { headers } = await SESSION_FIX;
   const db = fakeDb(routes);
+  // A DECLARED Content-Length (undici rides one through) is the framing the
+  // intake's pre-buffer refusal keys on (media.mjs declaredLength branch) —
+  // probes over the frame's request ceiling must declare, or the counted
+  // chunked buffering refuses first and the harness reads the generic copy.
+  const declared =
+    declaredLength === null ? headers : { ...headers, "Content-Length": String(declaredLength) };
   const response = await dispatch(
     new Request(ORIGIN + "/api/channels/" + CHANNEL_ID + "/messages", {
       method: "POST",
-      headers: { ...headers, Origin: ORIGIN },
+      headers: { ...declared, Origin: ORIGIN },
       body: imageForm(bytes),
     }),
     envWithLimiters({ GOOBER_DB: db }),
@@ -254,10 +264,17 @@ test("the frame LIFTS past the free 20 MiB pair inside an L2 server (a free memb
   assert.ok(body.includes(UNREADABLE_COPY), "the survival reads the intake 400: " + body);
 });
 
-test("the frame answers the L3 ceiling: 100 MiB + 1 refuses ON the level's number", async () => {
-  const { response, body } = await sendImage(sendImageRoutes({ boosts: 14 }), oversizedProbe(100 * MIB + 1));
+test("the L3 arm CLAMPS on the buffered lane: 100 MiB + 1 refuses 25 MiB-sized", async () => {
+  // The buffered intake buffers the whole body (media.mjs readMultipartWithImage),
+  // so the frame answers GC_BUFFERED_FRAME_CEILING — the blessing's 100 MiB arm
+  // rides the staged large-file lane instead (the tier raise's seat).
+  const { response, body } = await sendImage(
+    sendImageRoutes({ boosts: 14 }),
+    oversizedProbe(100 * MIB + 1),
+    100 * MIB + 1,
+  );
   assert.equal(response.status, 413);
-  assert.ok(body.includes(tooLargeCopy(100)), "the refusal names the L3 frame: " + body);
+  assert.ok(body.includes(tooLargeCopy(25)), "the refusal names the clamped frame: " + body);
 });
 
 test("a level-0 server changes nothing: 10 MiB + 1 is under the untouched free frame", async () => {
@@ -295,13 +312,14 @@ test("a DM/group channel keeps the account frame byte-for-byte — and reads the
   );
 });
 
-test("the server-arm seat rides the shared read exactly once per send", async () => {
+test("the L2 arm clamps on the buffered lane, and the shared read stays ONE per send", async () => {
   const { response, body, db } = await sendImage(
     sendImageRoutes({ boosts: 7 }),
     oversizedProbe(50 * MIB + 1),
+    50 * MIB + 1,
   );
   assert.equal(response.status, 413);
-  assert.ok(body.includes(tooLargeCopy(50)));
+  assert.ok(body.includes(tooLargeCopy(25)), "the 50 MiB blessing clamps to the buffered ceiling: " + body);
   assert.equal(
     db.calls.filter((call) => call.sql.includes("SELECT boosts FROM gc_servers")).length,
     1,
@@ -311,6 +329,33 @@ test("the server-arm seat rides the shared read exactly once per send", async ()
 
 test("the route's frame constants: the MAX_ATTACHMENT_BYTES pair stays the free seat the merge maximizes from", () => {
   assert.equal(MAX_ATTACHMENT_BYTES, 20_971_520, "the free pair the DM arm keeps byte-for-byte");
+  assert.equal(
+    GC_BUFFERED_FRAME_CEILING,
+    25 * 1024 * 1024,
+    "the buffered lane's memory-safe ceiling rides constants.mjs (the clamped frame's number)",
+  );
+});
+
+test("the buffered ceiling is the BINDING frame: 25 MiB + 1 refuses on its number, 25 MiB - 1 passes", async () => {
+  // L2's blessing (50 MiB) lifts the frame, the ceiling clamps it back to
+  // exactly 25 MiB — the boundary answers ON the ceiling's number (the probe
+  // sits under the ceiling's request bound, so the frame itself renders the
+  // copy, not the pre-buffer declared-length refusal).
+  const clamped = await sendImage(sendImageRoutes({ boosts: 7 }), oversizedProbe(25 * MIB + 1));
+  assert.equal(clamped.response.status, 413, "the ceiling binds inside a blessing");
+  assert.ok(clamped.body.includes(tooLargeCopy(25)), "the 413 names the ceiling: " + clamped.body);
+
+  // One byte under sails the clamped frame to the sanitizer — the ceiling is
+  // never LOWER than its number (the blessing still lifts free's 20 MiB arm).
+  const under = await sendImage(sendImageRoutes({ boosts: 7 }), oversizedProbe(25 * MIB - 1));
+  assert.equal(under.response.status, 400, "the probe survives the clamped frame to the sanitizer");
+  assert.ok(under.body.includes(UNREADABLE_COPY));
+
+  // The FREE arm is unchanged on its own number: outside a server blessing, the
+  // frame is still 20 MiB even for a body the ceiling would admit.
+  const freeArm = await sendImage(sendImageRoutes({ boosts: 0 }), oversizedProbe(25 * MIB + 1), 25 * MIB + 1);
+  assert.equal(freeArm.response.status, 413, "no blessing, no lift: the free frame stands at 20 MiB");
+  assert.ok(freeArm.body.includes(tooLargeCopy(20)), "the free arm keeps its own number: " + freeArm.body);
 });
 
 test("auth-before-body (T96's reorder): a body to a channel the member cannot address refuses before any read", async () => {

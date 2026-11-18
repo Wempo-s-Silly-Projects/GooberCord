@@ -206,6 +206,17 @@ export const GC_MINI_ATTACHMENT_REQUEST_BYTES = GC_MINI_ATTACHMENT_BYTES + 512 *
 export const GC_PLUS_ATTACHMENT_BYTES = 1_073_741_824;
 export const GC_PLUS_ATTACHMENT_REQUEST_BYTES = GC_PLUS_ATTACHMENT_BYTES + 512 * 1024;
 
+// The BUFFERED frame's memory-safe ceiling (wave-7 T-AUD-H1): the send-with-
+// image lane (api/media.mjs readMultipartWithImage) buffers the full body
+// through formData() and copies each file's bytes — a peak near 2x the file
+// size, inside the 128 MiB Worker isolate. The boost blessing would otherwise
+// ride a 50/100 MiB frame through that lane, so the buffered intake answers
+// this ceiling and L2/L3 clamp here; the tier raises ride the STAGED large-
+// file lane (constants.mjs GC_UPLOAD_PART_*, api/uploads.mjs), which never
+// holds more than one part. Free and level-1 frames (20 MiB) sit under it and
+// are byte-identical.
+export const GC_BUFFERED_FRAME_CEILING = 25 * 1024 * 1024;
+
 // The LARGE-FILE upload lane — D1 staging since 2026-11-17 (owner ruling
 // then: "no park, and no r2" — REVIVED 2026-11-18, owner order moving the D1
 // byte surfaces to R2: the GC_MEDIA binding now carries a second copy of the

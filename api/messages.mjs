@@ -46,6 +46,7 @@ import { requireSignedInRead, requireUser } from "./core/auth.mjs";
 import { nowSeconds } from "./core/crypto.mjs";
 import { HttpError, json, rateLimit, readJson, requiredText } from "./core/http.mjs";
 import {
+  GC_BUFFERED_FRAME_CEILING,
   GC_FREE_MESSAGE_MAX,
   GC_INVISIBLE_CONTROL_STRIP,
   GC_MESSAGE_MAX,
@@ -1222,7 +1223,14 @@ async function handleSendMessageWithImageRoute(request, env, channelId, session)
     env,
     channel.server_id === null || channel.server_id === undefined ? null : Number(channel.server_id),
   );
-  const frameFileBytes = greedierUploadFileBytes(MAX_ATTACHMENT_BYTES, serverUploadBytes);
+  // The buffered lane's memory-safe ceiling (GC_BUFFERED_FRAME_CEILING): the
+  // multipart parse buffers the whole body, so the frame never rides a
+  // blessing above it — free/L1 frames (20 MiB) sit under and stay
+  // byte-identical, L2/L3 clamp here (the tier raises ride the staged lane).
+  const frameFileBytes = Math.min(
+    greedierUploadFileBytes(MAX_ATTACHMENT_BYTES, serverUploadBytes),
+    GC_BUFFERED_FRAME_CEILING,
+  );
   const { fields, files } = await readMultipartWithImage(request, {
     maxFileBytes: frameFileBytes,
     maxRequestBytes: frameFileBytes + 512 * 1024,
