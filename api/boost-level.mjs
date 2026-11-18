@@ -74,3 +74,22 @@ export async function serverBoostTier(env, serverId) {
 }
 
 export { LEVEL_BASE_CAPS };
+
+// The SERVER-CHANNEL upload blessing (T96): the level's `uploadBytes` row —
+// L1 10 MiB, L2 50 MiB, L3 100 MiB (constants.mjs GC_BOOST_LEVELS uploadBytes,
+// the owner's blessed Nov 16 2026 matrix). A DM/group channel (null/undefined
+// serverId) answers 0 WITHOUT a read — the merge's identity, so a
+// destination-less seat never consults the ladder.
+export async function serverUploadBytesCap(env, serverId) {
+  if (serverId === null || serverId === undefined) return 0;
+  const tier = await serverBoostTier(env, serverId);
+  return Number(tier.levelPerks?.uploadBytes) || 0;
+}
+
+// The GREEDIER-of merge (T96): the effective per-file cap is the LARGER of
+// the member's enforced account seat and the destination's blessing — a
+// level can never LOWER a cap (the shared resolver's max-of law, applied to
+// upload bytes), and a 0 answer is the no-raise identity.
+export function greedierUploadFileBytes(accountFileBytes, serverUploadBytes) {
+  return Math.max(Number(accountFileBytes) || 0, Number(serverUploadBytes) || 0);
+}

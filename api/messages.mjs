@@ -38,6 +38,7 @@
 // attachment — the attachment's intake INSERT and chunks in that same batch).
 import { publicAccent } from "./accent.mjs";
 import { activeBanRow } from "./accounts.mjs";
+import { greedierUploadFileBytes, serverUploadBytesCap } from "./boost-level.mjs";
 import { grantMessageCoins } from "./coins.mjs";
 import { grantCampfireFuel } from "./campfire.mjs";
 import { recordJobProgress } from "./jobs.mjs";
@@ -1194,12 +1195,10 @@ function referenceFromBody(raw) {
 // file field and rides the same prepareAttachmentBytes intake (size cap, sniff,
 // sanitize) as the standalone upload — a body field is still required.
 async function handleSendMessageWithImageRoute(request, env, channelId, session) {
-  // The plus upload tier rides the member's own row (the free pair for a
-  // non-buyer or a grace member — attachmentCapBytes in api/plus.mjs).
-  const caps = await attachmentCapBytes(env, Number(session.user.id), nowSeconds());
-  const { fields, files } = await readMultipartWithImage(request, caps);
-  if (files.length > 1) throw new HttpError(400, "Attach at most one image.");
-
+  // T96: the channel gates answer BEFORE the body parses — the boost seat
+  // below needs the destination, and auth-before-body is the route's order
+  // (a body the member could never address vanishes 404/403 before any
+  // multipart read).
   const userId = Number(session.user.id);
   const channel = await channelForUser(env, channelId, userId);
   if (!channel) throw new HttpError(404, "This channel does not exist or you cannot view it.");
@@ -1207,7 +1206,31 @@ async function handleSendMessageWithImageRoute(request, env, channelId, session)
   // Same pair of layer gates as the JSON send (VIEW vanishes, SEND 403s).
   await enforceChannelBits(env, channel, userId, ["VIEW", "SEND"]);
 
-  const preparedAttachment = files.length === 1 ? prepareAttachmentBytes(files[0], caps.fileBytes) : null;
+  // The plus upload tier rides the member's own row (the free pair for a
+  // non-buyer or a grace member — attachmentCapBytes in api/plus.mjs).
+  const caps = await attachmentCapBytes(env, Number(session.user.id), nowSeconds());
+
+  // The T96 boost seat: the destination's level blessing (L1 10 MiB / L2 50
+  // MiB / L3 100 MiB, constants.mjs GC_BOOST_LEVELS uploadBytes) rides the
+  // SAME recounted column the shared resolver trusts — ONE gc_servers read —
+  // and merges GREEDIER into the frame. The buffered image lane's account
+  // envelope is the free pair this route has always enforced (the tier raise
+  // is the staged lane's seat; DMs keep it byte-for-byte), so the merge can
+  // only LIFT a server channel by the blessing — never lower, and a DM/group
+  // channel (server_id NULL, no read) is the default pair exactly as before.
+  const serverUploadBytes = await serverUploadBytesCap(
+    env,
+    channel.server_id === null || channel.server_id === undefined ? null : Number(channel.server_id),
+  );
+  const frameFileBytes = greedierUploadFileBytes(MAX_ATTACHMENT_BYTES, serverUploadBytes);
+  const { fields, files } = await readMultipartWithImage(request, {
+    maxFileBytes: frameFileBytes,
+    maxRequestBytes: frameFileBytes + 512 * 1024,
+  });
+  if (files.length > 1) throw new HttpError(400, "Attach at most one image.");
+
+  const preparedFileBytes = greedierUploadFileBytes(caps.fileBytes, serverUploadBytes);
+  const preparedAttachment = files.length === 1 ? prepareAttachmentBytes(files[0], preparedFileBytes) : null;
   const bodyValue = typeof fields.body === "string" ? fields.body : undefined;
   const clientMessageId =
     fields.clientMessageId === undefined || fields.clientMessageId === ""

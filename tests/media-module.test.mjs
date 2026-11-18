@@ -841,7 +841,10 @@ test("the multipart send stores the message WITH its attachment in one batch", a
 
 test("the multipart send refuses two images and, through createAttachment, an oversized one", async () => {
   const { row, headers } = await sessionFixtures();
-  const db = fakeDb([sessionRoute(row)]);
+  // T96 reordered the route auth-first (the boost seat needs the destination
+  // before any body read), so the two-image probe dispatches against a real
+  // channel (tests/upload-boost.test.mjs pins the new 404-before-parse order).
+  const db = channelsFor(row);
   const response = await dispatch(
     multipartRequest(
       `/api/channels/${CHANNEL_ID}/messages`,

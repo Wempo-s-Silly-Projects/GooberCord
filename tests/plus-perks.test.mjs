@@ -589,6 +589,10 @@ test("the media intake consumes the tier pair (messages.mjs passes attachmentCap
   const messages = readFileSync(new URL("../api/messages.mjs", import.meta.url), "utf8");
   assert.match(messages, /import \{ attachmentCapBytes, plusActiveExpr, plusPerkActive, publicIsPlus \} from "\.\/plus\.mjs";/);
   assert.match(messages, /attachmentCapBytes\(env, Number\(session\.user\.id\), nowSeconds\(\)\)/);
-  assert.match(messages, /readMultipartWithImage\(request, caps\)/);
-  assert.match(messages, /prepareAttachmentBytes\(files\[0\], caps\.fileBytes\)/);
+  // T96: the frame is now the GREEDIER-of seat (the tier pair merges with
+  // the destination's level blessing in boost-level.mjs) — the prepared
+  // bytes keep the merged seat too (tests/upload-boost.test.mjs pins the
+  // behavior).
+  assert.match(messages, /readMultipartWithImage\(request, \{\s*maxFileBytes: frameFileBytes,\s*maxRequestBytes: frameFileBytes \+ 512 \* 1024,\s*\}\)/);
+  assert.match(messages, /prepareAttachmentBytes\(files\[0\], preparedFileBytes\)/);
 });
