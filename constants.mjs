@@ -411,6 +411,11 @@ export const GC_PAPER_THREADS_MAX = 5;
 export const GC_PAPER_CAPSULES_MAX = 25;
 export const GC_PAPER_YESTERDAY_KEYS = 1;
 
+// Bookmarks (T88, wave 5 — docs/drafts/t88-bookmarks-spec.md §6): the private
+// reading list's only cap — the newest N own pointers the GET answers. A cut
+// beyond it is a pagination owner-gate, not a cap raise.
+export const GC_BOOKMARKS_LIST_MAX = 100;
+
 // Goober+ (owner decisions: ONE bundle, MONTHLY renewal, a grace window,
 // boosts stay free, GIFT Goober+ in). The price buys gc_plus_state term
 // extensions; the coin spend itself is gc_coin_ledger's negative row.
