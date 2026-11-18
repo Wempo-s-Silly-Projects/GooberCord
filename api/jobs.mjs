@@ -76,12 +76,18 @@ export const jobDefs = [
 const JOBS_STATE_READ_SQL =
   "SELECT enabled FROM gc_server_jobs WHERE server_id = ? LIMIT 1";
 
-// The owner gate rides INSIDE the upsert: a non-owner's write answers
-// changes 0, classified to the shared unknown-server 404, never a 403
-// existence oracle.
+// The owner gate rides INSIDE the upsert on BOTH arms: the fresh INSERT's
+// SELECT carries it (a member's first toggle never lands the row) and the
+// DO UPDATE WHERE carries it again — a non-owner's write answers changes 0,
+// classified to the shared unknown-server 404, never a 403 existence oracle.
+// Bind order follows ?-positions: server, enabled, now, | fresh arm server,
+// user, | update arm server, user.
 const JOBS_TOGGLE_UPSERT_SQL =
-  "INSERT INTO gc_server_jobs (server_id, enabled, updated_at) VALUES (?, ?, ?) " +
-  "ON CONFLICT (server_id) DO UPDATE SET enabled = ?, updated_at = ? " +
+  "INSERT INTO gc_server_jobs (server_id, enabled, updated_at) " +
+  "SELECT ?, ?, ? WHERE EXISTS (SELECT 1 FROM gc_server_members fi " +
+    "WHERE fi.server_id = ? AND fi.user_id = ? AND fi.role = 'owner') " +
+  "ON CONFLICT (server_id) DO UPDATE SET enabled = excluded.enabled, " +
+    "updated_at = excluded.updated_at " +
   "WHERE EXISTS (SELECT 1 FROM gc_server_members oj " +
     "WHERE oj.server_id = ? AND oj.user_id = ? AND oj.role = 'owner')";
 
@@ -357,7 +363,7 @@ async function handleJobsToggleRoute(request, env, serverId) {
   const now = nowSeconds();
   const result = await env.GOOBER_DB.prepare(JOBS_TOGGLE_UPSERT_SQL).bind(
     serverId, enabled ? 1 : 0, now,
-    enabled ? 1 : 0, now,
+    serverId, userId,
     serverId, userId,
   ).run();
   if (Number(result.meta?.changes) !== 1) {

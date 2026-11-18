@@ -37,6 +37,7 @@ const ORIGIN = "https://goobercord.itswempo.workers.dev";
 const SERVER_ID = 1;
 const USER_ID = 7;
 const OTHER_ID = 22;
+const MEMBER_ID = 33; // a membered non-owner (the toggle-gate pins ride it)
 const DAY = 86400;
 const NOW = nowSeconds();
 const WEEK_KEY = jobWeekKey(NOW);
@@ -51,8 +52,12 @@ const SESSION_ROW = {
   username: "wempos",
 };
 
+// A membered non-owner's session (the toggle-gate pins ride it).
+const NON_OWNER_SESSION_ROW = { ...SESSION_ROW, user_id: MEMBER_ID, username: "member" };
+
 function coinDb(options = {}) {
   const roster = options.roster || [USER_ID, OTHER_ID];
+  const nonOwners = options.nonOwners || []; // members who are NOT owners (gate pins)
   const serverJobs = new Map(options.serverJobs || []); // server_id -> enabled (0/1)
   const counters = new Map(options.counters || []);     // "srv:week:kind" -> counter
   const finishes = new Map(options.finishes || []);     // "srv:week:job" -> { paidTotal, at }
@@ -73,16 +78,21 @@ function coinDb(options = {}) {
   const routes = [
     {
       test: (sql) => sql.includes("FROM sessions s LEFT JOIN users u"),
-      first: async () => SESSION_ROW,
+      first: async () => options.sessionRow || SESSION_ROW,
     },
     {
       test: (sql) => sql.startsWith("SELECT role FROM gc_server_members"),
-      first: async (bound) => (roster.includes(Number(bound[1])) ? { role: "owner" } : null),
+      first: async (bound) => {
+        const userId = Number(bound[1]);
+        if (roster.includes(userId)) return { role: "owner" };
+        if (nonOwners.includes(userId)) return { role: "member" };
+        return null;
+      },
     },
     {
       test: (sql) => sql.startsWith("SELECT user_id FROM gc_server_members WHERE server_id = ?"),
       all: async (bound) => ({
-        results: roster.filter((id) => Number(bound[0]) === SERVER_ID)
+        results: [...roster, ...nonOwners].filter((id) => Number(bound[0]) === SERVER_ID)
           .map((id) => ({ user_id: id })),
       }),
     },
@@ -96,11 +106,13 @@ function coinDb(options = {}) {
     {
       test: (sql) => sql.startsWith("INSERT INTO gc_server_jobs"),
       run: (bound) => {
-        // The owner gate rides INSIDE the statement (binds 5/6: server + user)
-        // — the fake encodes it, so a pinned toggle that loses the arm fails
+        // The owner gate rides INSIDE the statement on BOTH arms (fresh
+        // SELECT: binds 4/5 server + user; DO UPDATE WHERE: binds 6/7) — the
+        // fake encodes it, so a pinned toggle that loses either arm fails
         // here.
-        const isOwner = roster.includes(Number(bound[6]));
-        if (!isOwner) return { meta: { changes: 0 } };
+        const freshGate = roster.includes(Number(bound[4]));
+        const updateGate = roster.includes(Number(bound[6]));
+        if (!freshGate || !updateGate) return { meta: { changes: 0 } };
         serverJobs.set(Number(bound[0]), Number(bound[1]));
         return { meta: { changes: 1 } };
       },
@@ -244,14 +256,14 @@ function envOf(db, presence = null) {
   return env;
 }
 
-function authed(method, path, body) {
+function authed(method, path, body, session = SESSION_ROW) {
   return new Request(ORIGIN + path, {
     method,
     headers: {
       "Content-Type": "application/json",
       Origin: ORIGIN,
       Cookie: "__Host-goober_session=" + SESSION_TOKEN,
-      "X-CSRF-Token": SESSION_ROW.csrf_token,
+      "X-CSRF-Token": session.csrf_token,
     },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
@@ -303,6 +315,19 @@ test("the toggle route opts the server in and writes the gc_server_jobs row", as
   const writes = db.calls.filter((call) =>
     (call.call === "run" || call.call === "batch") && call.sql?.startsWith("INSERT INTO gc_server_jobs"));
   assert.equal(writes.length, 1);
+});
+
+test("a non-owner member's FIRST toggle rides the gated fresh arm: changes 0, shared 404, no row", async () => {
+  const db = coinDb({ nonOwners: [MEMBER_ID], sessionRow: NON_OWNER_SESSION_ROW });
+  const response = await worker.fetch(
+    authed("POST", `/api/servers/${SERVER_ID}/jobs/toggle`, { enabled: true }, NON_OWNER_SESSION_ROW),
+    envOf(db), {},
+  );
+  assert.equal(response.status, 404, "the authority gap never answers 200 through the fresh arm");
+  assert.equal(db.serverJobs.has(SERVER_ID), false, "no row lands for a non-owner's first toggle");
+  const writes = db.calls.filter((call) =>
+    (call.call === "run" || call.call === "batch") && call.sql?.startsWith("INSERT INTO gc_server_jobs"));
+  assert.equal(writes.length, 1, "the write fired (gate refused it inside the statement)");
 });
 
 test("weekly rotation determinism: same server + week answers the SAME three jobs", () => {
