@@ -333,7 +333,9 @@ test("POST /api/coins/cosmetics buys banner in an atomic batch: the negative row
   // The ledger row: -100 at the caller's own tier, the fingerprint's binds.
   assert.equal(spend.bound[1], -100);
   assert.equal(spend.bound[2], "cosmetic");
-  assert.match(spend.sql, /WHERE \(SELECT COALESCE\(SUM\(le4\.delta\), 0\) FROM gc_coin_ledger le4 WHERE le4\.user_id = \?\) >= \? LIMIT 1$/);
+  assert.match(spend.sql, /WHERE \(SELECT COALESCE\(SUM\(le4\.delta\), 0\) FROM gc_coin_ledger le4 WHERE le4\.user_id = \?\) >= \? AND NOT EXISTS \(SELECT 1 FROM gc_cosmetic_ownership ow WHERE ow\.user_id = \? AND ow\.item IN \(\?\)\) LIMIT 1$/);
+  // The T31 replay guard's binds ride the spend: guard-user + guard-item.
+  assert.deepEqual(spend.bound.slice(6,), [USER_ID, "banner"]);
   // The ownership row guards on THIS batch's spend fingerprint (the term
   // upsert's proven pattern) AND its own NOT EXISTS.
   assert.match(ownership.sql, /WHERE EXISTS \(SELECT 1 FROM gc_coin_ledger cl WHERE cl\.user_id = \? AND cl\.source = \? AND cl\.delta = \? AND cl\.created_at = \?\) AND NOT EXISTS \(SELECT 1 FROM gc_cosmetic_ownership ow WHERE ow\.user_id = \? AND ow\.item = \?\)$/);
@@ -413,6 +415,60 @@ test("an already-owned re-spend is the 409 and insufficient coins the 400 (class
   );
   assert.equal(brokeResponse.status, 400);
   assert.equal((await bodyOf(brokeResponse)).error, "Not enough Goober Coins for that.");
+});
+
+// --- the replay guard (T31) ------------------------------------------------------------
+//
+// A replayed POST /api/coins/cosmetics used to log a second negative ledger
+// row (the spend's only arm was the balance) before answering the ownership
+// 409 — coins charged twice, nothing gained. The guard rides the SPEND
+// statement itself: the ledger row never inserts when the caller already
+// holds every item this purchase would grant.
+test("the banner buy's spend carries the replay guard: the ownership NOT-EXISTS rides the ledger row too", async () => {
+  const db = fakeDb([
+    ...baseRoutes({ balance: 300 }),
+    { test: LEGER_OWNERSHIP_TEST, run: () => ({ meta: { changes: 1 } }) },
+  ]);
+  const response = await dispatch(
+    authed("POST", "/api/coins/cosmetics", { item: "banner" }),
+    envWithLimiters({ GOOBER_DB: db }),
+  );
+  assert.equal(response.status, 200);
+  const batch = db.calls.find((call) => call.call === "batch");
+  const [spend, ownership] = batch.statements;
+  assert.match(
+    spend.sql,
+    /AND NOT EXISTS \(SELECT 1 FROM gc_cosmetic_ownership ow WHERE ow\.user_id = \? AND ow\.item IN \(\?\)\) LIMIT 1$/,
+    "the spend is zero-changes on a replay, never a second ledger row",
+  );
+  // Textual binds: user, delta, source, now, balance-user, price,
+  // guard-user, guard-item.
+  assert.deepEqual([spend.bound[0], spend.bound[1], spend.bound[2]], [USER_ID, -100, "cosmetic"]);
+  assert.deepEqual(spend.bound.slice(6,), [USER_ID, "banner"]);
+  void ownership;
+});
+
+test("the pack's spend guards BOTH items through the two-slot IN (a half-owned pack can't re-charge either)", async () => {
+  const db = fakeDb([
+    sessionRoute,
+    TERM_ROUTE(true),
+    { test: BALANCE_TEST, first: async () => ({ balance: 300 }) },
+    { test: DAY_TEST, first: async () => ({ earned: 0, daily: 0, message: 0, voice: 0, rollup: 0, server: 0 }) },
+    { test: OWNERSHIP_TEST, all: async () => ({ results: [] }) },
+    { test: LEGER_OWNERSHIP_TEST, run: () => ({ meta: { changes: 1 } }) },
+  ]);
+  const response = await dispatch(
+    authed("POST", "/api/coins/cosmetics", { item: "pack" }),
+    envWithLimiters({ GOOBER_DB: db }),
+  );
+  assert.equal(response.status, 200);
+  const batch = db.calls.find((call) => call.call === "batch");
+  const spend = batch.statements[0];
+  assert.match(
+    spend.sql,
+    /AND NOT EXISTS \(SELECT 1 FROM gc_cosmetic_ownership ow WHERE ow\.user_id = \? AND ow\.item IN \(\?, \?\)\) LIMIT 1$/,
+  );
+  assert.deepEqual(spend.bound.slice(6,), [USER_ID, "banner", "flair"]);
 });
 
 test("the equip gate on PATCH /api/me/cosmetics refuses an unowned banner/flair before any validation", async () => {

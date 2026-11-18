@@ -245,13 +245,22 @@ const PLUS_GRACE_TOUCH_SQL =
 // The cosmetic sink (the economy re-rule): one atomic batch per purchase — the
 // negative ledger row and the ownership row, BOTH guarded by the sufficient-
 // coins arm, and the ownership INSERT additionally by its own NOT EXISTS (a
-// re-spend is the 409, never a second row). The caller's tier's price rides
+// re-spend is the 409, never a second ownership row). The REPLAY guard rides
+// the spend statement itself (T31): a caller who already holds every item the
+// purchase would grant takes a zero-changes ledger INSERT, so a replayed
+// double-submit is 409 with NO second negative row — before the fix the
+// balance arm alone let the replay re-charge. The NOT-EXISTS slots the items
+// through (one bind pair or the pack's two); the caller's tier's price rides
 // as a bind; the pack is two ownership INSERTs and one ledger row.
-const COSMETIC_LEDGER_SPEND_SQL =
+const COSMETIC_LEDGER_SPEND_SQL = (slots) =>
   "INSERT INTO gc_coin_ledger (user_id, delta, source, created_at) " +
   "SELECT ?, ?, ?, ? " +
   "WHERE (SELECT COALESCE(SUM(le4.delta), 0) FROM gc_coin_ledger le4 " +
-    "WHERE le4.user_id = ?) >= ? LIMIT 1";
+    "WHERE le4.user_id = ?) >= ? " +
+    "AND NOT EXISTS (SELECT 1 FROM gc_cosmetic_ownership ow " +
+      "WHERE ow.user_id = ? AND ow.item IN (" +
+      Array.from({ length: slots }, () => "?").join(", ") + ")) " +
+  "LIMIT 1";
 
 const COSMETIC_OWNERSHIP_INSERT_SQL =
   "INSERT INTO gc_cosmetic_ownership (user_id, item, purchased_at) " +
@@ -575,8 +584,9 @@ async function handleCoinsShopRoute(request, env) {
 // The cosmetic SINK's one write route (the economy re-rule): buy banner,
 // flair, or the pack. The tier's price (50% off for an ACTIVE term on
 // banner/flair; the pack flat, plus-only) is computed ROUTE-SIDE per the
-// owner's amendment, and the batch's guards carry the balance + NOT-
-// EXISTS-ownership + (for the pack) the plus gate into the statements.
+// owner's amendment, and the batch's guards carry the balance + the NOT-
+// EXISTS-ownership (on the SPEND too — the T31 replay guard — beside the
+// ownership INSERT) + (for the pack) the plus gate into the statements.
 async function handleCosmeticBuyRoute(request, env) {
   const session = await requireUser(request, env);
   const userId = Number(session.user.id);
@@ -600,10 +610,12 @@ async function handleCosmeticBuyRoute(request, env) {
   const items = item === "pack" ? ["banner", "flair"] : [item];
 
   const results = await env.GOOBER_DB.batch([
-    env.GOOBER_DB.prepare(COSMETIC_LEDGER_SPEND_SQL).bind(
+    env.GOOBER_DB.prepare(COSMETIC_LEDGER_SPEND_SQL(items.length)).bind(
       userId, -price, source, now,
       userId,
       price,
+      userId,
+      ...items,
     ),
     ...items.map((owned) =>
       env.GOOBER_DB.prepare(COSMETIC_OWNERSHIP_INSERT_SQL).bind(
