@@ -14,7 +14,7 @@
 //
 // You should have received a copy of the
 // GNU Affero General Public License along with this program.  If not,
-// see <https://www.gnu.org/licenses/>.
+// see <https://www.gnu.org/licenses/>
 
 // The __Host- wave's regression lane: the mint shape carries the prefixed,
 // always-Secure name; the legacy bare name still reads; and a legacy hit
