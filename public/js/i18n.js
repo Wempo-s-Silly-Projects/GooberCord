@@ -50,20 +50,27 @@ function normalizeTag(tag) {
   return BUNDLE_LANGS.includes(base) ? base : null;
 }
 
+// The ONE gate every seat rides (the base-script law's single implementation:
+// the sanitize + shipped-base check storedLang() carried since aa6979a, and
+// setLang() now shares). A raw tag is sanitized to the BCP-47-ish shape, then
+// kept only when its base script (the chain's first hop) ships — "zh-hans" →
+// base "zh" → keep; a shipless choice ("it") normalizes to null, because a
+// seat with no catalog paints every t() miss as a visible key tail.
+function lawfulSeat(raw) {
+  const tag = String(raw || "").trim().toLowerCase().replace(/_/g, "-")
+    .replace(/[^a-z0-9-]/g, "");
+  if (!tag) return null;
+  return BUNDLE_LANGS.includes(tag.split("-", 1)[0]) ? tag : null;
+}
+
 function storedLang() {
-  try {
-    const stored = String(localStorage.getItem(STORE_KEY) || "").trim().toLowerCase()
-      .replace(/_/g, "-").replace(/[^a-z0-9-]/g, ""); // the same sanitize setLang applies
-    // An explicit human choice still rides, but only over a SHIPPED base
-    // script: a stale key from a churn-era browser ("it", a bundle long
-    // unshipped) would otherwise keep lang on a seat with no catalog and
-    // paint every t() miss as a visible key tail. The exact stored seat
-    // survives when its base (the chain's first hop) ships — "zh-hans" →
-    // base "zh" → keep — and shipless choices normalize to null (→ en).
-    return BUNDLE_LANGS.includes(stored.split("-", 1)[0]) ? stored : null;
-  } catch {
-    return null; // a blocked store keeps the default for this page
-  }
+  // An explicit human choice still rides, but only over a SHIPPED base
+  // script: a stale key from a churn-era browser would otherwise keep lang
+  // on a seat with no catalog and paint every t() miss as a key tail. The
+  // exact stored seat survives when its base ships — "zh-hans" stays — and
+  // shipless choices normalize to null (→ en).
+  try { return lawfulSeat(localStorage.getItem(STORE_KEY)); }
+  catch { return null; } // a blocked store keeps the default for this page
 }
 
 function navigatorLang() {
@@ -133,7 +140,15 @@ export async function initI18n() {
     try { enBundle = await fetch(bundleUrl("en"), { cache: "reload" }).then((r) => r.json()); } catch { /* the catalog takes {}, tails stay visible */ }
   }
   catalog.set("en", enBundle ?? {});
-  lang = storedLang() || navigatorLang() || "en";
+  // Boot scrub (defense-in-depth): a stored row the seat gate rejects is
+  // deleted at boot, so the churn-era browser keeps no unlawful key around
+  // to re-wedge a future lane (a blocked store leaves it and no-ops).
+  const seat = storedLang();
+  try {
+    const row = seat === null ? localStorage.getItem(STORE_KEY) : null;
+    if (row !== null) localStorage.removeItem(STORE_KEY);
+  } catch { /* per-page */ }
+  lang = seat || navigatorLang() || "en";
   if (lang === "en") {
     setHtmlLang("en");
     // The paint-swap race floor (T29): painters run against the EMPTY
@@ -160,12 +175,14 @@ export async function initI18n() {
 // browser-storage law's convenience tier), loads the bundle, flips the
 // bound copy in place. Refusals fail open to English like every other lane.
 export async function setLang(next) {
-  // Only the lawful BCP-47-ish shape survives: letters, digits, dashes. A
-  // stored human choice may name any seat, but path/realm chars (.., %, /)
-  // never ride into the fetch URL the loader builds from this key.
-  const langKey = String(next || "").trim().toLowerCase().replace(/_/g, "-")
-    .replace(/[^a-z0-9-]/g, "");
+  // The ONE seat gate (lawfulSeat, the same one storedLang() rides): the
+  // BCP-47-ish shape survives the sanitize, but a seat whose base script
+  // ships nowhere — "it", a bundle long unshipped — is refused outright: no
+  // store write, no switch, no fetch built from a key nobody serves. Path/
+  // realm chars (.., %, /) never reach the store or a fetch URL either way.
+  const langKey = lawfulSeat(next);
   if (!langKey) return lang;
+  const previousSeat = lang;
   try { localStorage.setItem(STORE_KEY, langKey); } catch { /* per-page */ }
   lang = langKey;
   let bundle = null;
@@ -174,9 +191,16 @@ export async function setLang(next) {
     catalog.set(langKey, bundle);
     setHtmlLang(langKey);
     applyDom();
-  } else {
-    setHtmlLang("en");
+    return lang;
   }
+  // The bundle 404'd (or failed to parse): roll back to the previous seat —
+  // the failure key never rides storage or the catalog, setHtmlLang and the
+  // bound copy return to the previous seat, and no empty-catalog state (the
+  // every-t()-paints-a-key-tail wedge) survives the switch.
+  lang = previousSeat;
+  try { localStorage.removeItem(STORE_KEY); } catch { /* per-page */ }
+  setHtmlLang(previousSeat);
+  applyDom();
   return lang;
 }
 
