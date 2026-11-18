@@ -267,18 +267,31 @@ const CHAIN_SEND_SPEND_SQL =
   "WHERE (SELECT COALESCE(SUM(le.delta), 0) FROM gc_coin_ledger le " +
     "WHERE le.user_id = ?) >= ? LIMIT 1";
 
+// The fee spend rides the opener's own changes (the jobs.mjs:239 idiom): its
+// balance arm alone (>= fee) is weaker than the gift's, so a sender holding
+// only the fee would pay it while the gift refused — the arm ties the fee to
+// the exact batch statement before it.
 const CHAIN_FEE_SPEND_SQL =
   "INSERT INTO gc_coin_ledger (user_id, delta, source, created_at) " +
   "SELECT ?, ?, 'chain_fee', ? " +
   "WHERE (SELECT COALESCE(SUM(le.delta), 0) FROM gc_coin_ledger le " +
-    "WHERE le.user_id = ?) >= ? LIMIT 1";
+    "WHERE le.user_id = ?) >= ? " +
+  "AND (SELECT changes()) = 1 LIMIT 1";
 
+// The hop rides the fee spend's changes (statement 2 IS the opener's verdict —
+// 1 iff the gift landed), never a plain-VALUES insert: an unguarded hop banks
+// a live token that later mints the full amount, so a refused send that
+// committed it would mint coins from nothing.
 const CHAIN_HOP_INSERT_SQL =
   "INSERT INTO gc_chain_hops (hop_token, depth, amount, pool_server_id, expires_at, created_at) " +
-  "VALUES (?, ?, ?, ?, ?, ?)";
+  "SELECT ?, ?, ?, ?, ?, ? WHERE (SELECT changes()) = 1";
 
+// The hold rides ONLY a hop this batch itself minted (the CHAIN_PASS_HOLD
+// idiom — the fresh random token resolves through nothing else): no hop, no
+// hold, no recipient banked against a refused send.
 const CHAIN_HOLD_INSERT_SQL =
-  "INSERT INTO gc_chain_hold (hop_token, user_id, created_at) VALUES (?, ?, ?)";
+  "INSERT INTO gc_chain_hold (hop_token, user_id, created_at) " +
+  "SELECT ?, ?, ? WHERE EXISTS (SELECT 1 FROM gc_chain_hops nh WHERE nh.hop_token = ?)";
 
 const CHAIN_DELETE_HOP_SQL =
   "DELETE FROM gc_chain_hops WHERE hop_token = ?";
@@ -340,6 +353,17 @@ const CHAIN_PASS_HOLD_INSERT_SQL =
 // (the term-upsert idiom): no credit can ride a batch whose fee never spent.
 const CHAIN_PASS_CREDIT_FP = (ownerId, fee, createdAt) => ({
   sql: "EXISTS (SELECT 1 FROM gc_coin_ledger cl WHERE cl.user_id = ? " +
+    "AND cl.source = 'chain_fee' AND cl.delta = ? AND cl.created_at = ?)",
+  binds: [ownerId, -fee, createdAt],
+});
+
+// The send's pool credit, gated like jobs.mjs:239's finish credit: the
+// `(SELECT changes()) = 1` arm rides the credit's own batch predecessor (the
+// fee's book row when one banks, the hold's insert at the marker pool) and
+// the EXISTS arm fingerprints the fee row THIS batch minted — a refused
+// opener leaves the entire batch a single atomic no-op on the sender's money.
+const CHAIN_SEND_CREDIT_FP = (ownerId, fee, createdAt) => ({
+  sql: "(SELECT changes()) = 1 AND EXISTS (SELECT 1 FROM gc_coin_ledger cl WHERE cl.user_id = ? " +
     "AND cl.source = 'chain_fee' AND cl.delta = ? AND cl.created_at = ?)",
   binds: [ownerId, -fee, createdAt],
 });
@@ -1137,9 +1161,13 @@ async function chainPoolServer(env, aId, bId) {
 
 // POST /api/coins/chain { to, amount } — the anonymous chain gift. ONE batch:
 // the gift spend (− amount, chain_gift, no related identity), the fee spend
-// (− fee, chain_fee), the fee's Campfire pool credit (the SINK law — named
-// in-batch), the hop row, and the recipient's hold row. The recipient NEVER
-// sees the sender: the hold maps the token to the member, nothing else does.
+// (− fee, chain_fee, riding the opener's changes), the hop row (riding the
+// fee's changes), the recipient's hold row (riding the hop), then the fee's
+// Campfire book row and pool credit (the SINK law — named in-batch, riding
+// the money). EVERY statement chains to the opener's verdict, so a refused
+// send is ONE atomic no-op on the sender's money — no fee charged, no hop or
+// hold banked, no pool credit minted. The recipient NEVER sees the sender:
+// the hold maps the token to the member, nothing else does.
 async function handleChainSendRoute(request, env) {
   const session = await requireUser(request, env);
   const userId = Number(session.user.id);
@@ -1159,6 +1187,10 @@ async function handleChainSendRoute(request, env) {
   const results = await env.GOOBER_DB.batch([
     env.GOOBER_DB.prepare(CHAIN_SEND_SPEND_SQL).bind(userId, -amount, now, userId, amount + fee),
     env.GOOBER_DB.prepare(CHAIN_FEE_SPEND_SQL).bind(userId, -fee, now, userId, fee),
+    env.GOOBER_DB.prepare(CHAIN_HOP_INSERT_SQL).bind(
+      hopToken, 1, amount, poolServerId, now + GC_CHAIN_HOP_TTL_SECONDS, now,
+    ),
+    env.GOOBER_DB.prepare(CHAIN_HOLD_INSERT_SQL).bind(hopToken, targetId, now, hopToken),
     // The fee's book row (T90 spec §3.2) rides ahead of the credit: its guard
     // fingerprints the fee row (a refused fee banks no book row) and reads
     // the PRE-arm pool, so the booked delta is the credit's ACTUAL post-arm
@@ -1167,18 +1199,14 @@ async function handleChainSendRoute(request, env) {
     ...(poolServerId === 0 ? [] : [
       campfireChainFeeLedgerStatement(env.GOOBER_DB, poolServerId, fee, userId, now),
     ]),
-    campfirePoolCreditStatement(env.GOOBER_DB, poolServerId, fee, now),
-    env.GOOBER_DB.prepare(CHAIN_HOP_INSERT_SQL).bind(
-      hopToken, 1, amount, poolServerId, now + GC_CHAIN_HOP_TTL_SECONDS, now,
-    ),
-    env.GOOBER_DB.prepare(CHAIN_HOLD_INSERT_SQL).bind(hopToken, targetId, now),
+    campfirePoolCreditStatement(env.GOOBER_DB, poolServerId, fee, now, CHAIN_SEND_CREDIT_FP(userId, fee, now)),
   ]);
   const spent = results[0] && Number(results[0].meta?.changes) === 1;
   if (!spent) {
     throw new HttpError(400, "Not enough Goober Coins for that.");
   }
   // The hop's coins never lose their anonymity either way: the statements
-  // named no member column — a refused spend refuses only the spend.
+  // named no member column — a refused spend refuses the whole batch.
   return json({ sent: true, amount, fee });
 }
 

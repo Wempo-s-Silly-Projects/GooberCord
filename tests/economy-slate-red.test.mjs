@@ -75,7 +75,12 @@ function coinDb(options = {}) {
   const streaks = new Map(options.streaks || []);
   const campfires = new Map(options.campfires || []);
   const holds = new Map(options.holds || []);
+  const hops = new Map(options.hops || []);
   const calls = [];
+  // The batch engine's changes() cursor: statement N's `(SELECT changes())`
+  // arms read the count of the most recently COMPLETED statement (the probe —
+  // /tmp/gc-audit-fix-probe.mjs — verifies a zero-row INSERT resets it to 0).
+  let lastChanges = 0;
 
   const balanceOf = (userId) =>
     ledger.filter((row) => row.user_id === userId).reduce((total, row) => total + row.delta, 0);
@@ -109,6 +114,20 @@ function coinDb(options = {}) {
   // server's roster — the fake seeder carries two members (ids 1 and 22).
   const ROSTER_TEST = (sql) =>
     sql.startsWith("SELECT user_id FROM gc_server_members WHERE server_id = ?");
+  // The repair (C1/H1 RED pins): the guarded coin spends — the real SQL's
+  // balance arm IS encoded here per the real statement, so a sender below the
+  // guard answers changes-0 instead of the catch-all's blind changes-1. The
+  // `changes() = 1` arm (fixed fee spend / hop) reads the batch cursor, and
+  // the stoke's pool-cap arm reads the campfires map, exactly where the real
+  // SQL's clauses put them.
+  const SPEND_TEST = (sql) =>
+    sql.startsWith("INSERT INTO gc_coin_ledger (user_id, delta, source, created_at) SELECT ?, ?, '") &&
+    sql.includes("WHERE (SELECT COALESCE(SUM(le.delta), 0) FROM gc_coin_ledger le WHERE le.user_id = ?) >= ?");
+  // The pool credit upsert (both the shipped no-fp 5-bind form and the fixed
+  // fingerprinted builder form) — the fingerprint arms are decoded from the
+  // binds the real builder placed: (server, amount, now, …fp, amount, now, …fp).
+  const POOL_CREDIT_TEST = (sql) =>
+    sql.startsWith("INSERT INTO gc_campfires (server_id, fuel, pool, updated_at)");
 
   const routes = [
     {
@@ -131,6 +150,23 @@ function coinDb(options = {}) {
         if (!(userExists && notExists && ceilingArm)) return { meta: { changes: 0 } };
         ledger.push({ user_id: userId, delta, source: "daily", related_user_id: null, created_at: now });
         return { meta: { changes: 1, last_row_id: 100 + ledger.length } };
+      },
+    },
+    {
+      test: SPEND_TEST,
+      run: (bound, sql) => {
+        if (sql.includes("(SELECT changes()) = 1") && lastChanges !== 1) {
+          return { meta: { changes: 0 } };
+        }
+        if (balanceOf(bound[0]) < bound[4]) return { meta: { changes: 0 } };
+        if (sql.includes("cf.pool")) {
+          // The stoke's pool-cap arm: COALESCE(pool,0) + amount <= cap.
+          const current = Number(campfires.get(Number(bound[5]))?.pool) || 0;
+          if (current + bound[6] > C.GC_CAMPFIRE_MAX_POOL) return { meta: { changes: 0 } };
+        }
+        const source = (sql.match(/SELECT \?, \?, '([a-z_]+)', \?/) || [])[1] || "unknown";
+        ledger.push({ user_id: bound[0], delta: bound[1], source, related_user_id: null, created_at: bound[2] });
+        return { meta: { changes: 1 } };
       },
     },
     {
@@ -175,7 +211,55 @@ function coinDb(options = {}) {
         campfires.get(bound[0]) ||
         { ...campfires.get(-1), server_id: bound[0] } || null,
     },
+    {
+      test: POOL_CREDIT_TEST,
+      run: (bound, sql) => {
+        if (sql.includes("(SELECT changes()) = 1") && lastChanges !== 1) {
+          return { meta: { changes: 0 } };
+        }
+        // The fingerprinted builder form: the EXISTS arm lands only when the
+        // cause row it names is on the batch's own ledger (the chain_fee /
+        // campfire_stoke spend row the real guard fingerprints).
+        if (bound.length > 5) {
+          const fpBinds = bound.slice(3, bound.length - 5);
+          const source = (sql.match(/le\.source = '([a-z_]+)'/) || [])[1];
+          const landed = source && ledger.some((row) =>
+            row.user_id === fpBinds[0] && row.source === source &&
+            row.delta === fpBinds[1] && row.created_at === fpBinds[2]);
+          if (!landed) return { meta: { changes: 0 } };
+        }
+        const previous = campfires.get(Number(bound[0]));
+        const pool = Math.min((Number(previous?.pool) || 0) + Number(bound[1]), C.GC_CAMPFIRE_MAX_POOL);
+        campfires.set(Number(bound[0]), { ...(previous || {}), fuel: Number(previous?.fuel) || 0, pool, updated_at: bound[2] });
+        return { meta: { changes: 1 } };
+      },
+    },
     { test: POOL_TEST, run: (bound) => { campfires.set(bound[0], { bound }); return { meta: { changes: 1 } }; } },
+    {
+      // The send's hop rides the fee spend's changes; the shipped plain-VALUES
+      // form commits unconditionally (the C1 defect the refusal pin encodes),
+      // and the pass's fingerprinted form keeps its (token, created_at) claim.
+      test: (sql) => sql.startsWith("INSERT INTO gc_chain_hops"),
+      run: (bound, sql) => {
+        if (sql.includes("(SELECT changes()) = 1") && lastChanges !== 1) {
+          return { meta: { changes: 0 } };
+        }
+        hops.set(String(bound[0]), { bound });
+        return { meta: { changes: 1 } };
+      },
+    },
+    {
+      // The hold rides the hop (the CHAIN_PASS idiom): no hop, no hold. The
+      // shipped plain-VALUES form commits unconditionally — the same defect.
+      test: (sql) => sql.startsWith("INSERT INTO gc_chain_hold"),
+      run: (bound, sql) => {
+        if (sql.includes("nh.hop_token = ?") && !hops.has(String(bound[3]))) {
+          return { meta: { changes: 0 } };
+        }
+        holds.set(String(bound[0]), { bound });
+        return { meta: { changes: 1 } };
+      },
+    },
     {
       test: (sql) => sql.startsWith("SELECT h.hop_token, h.depth, h.amount, h.expires_at, h.created_at"),
       // GREEN-side fake extension: the chain lanes resolve a hop by its OWN
@@ -193,7 +277,10 @@ function coinDb(options = {}) {
     // username (the same GIFT_TARGET read the + lane uses) — the fake answers
     // the seeded friend row.
     { test: (sql) => sql.includes("FROM users WHERE username_key"), first: async () => ({ id: TARGET_ID, username: "friend" }) },
-    { test: () => true, run: (bound) => { holds.set(String(bound[0]), { bound }); return { meta: { changes: 1 } }; } },
+    {
+      test: () => true,
+      run: () => ({ meta: { changes: 1 } }),
+    },
   ];
 
   const db = {
@@ -202,6 +289,7 @@ function coinDb(options = {}) {
     streaks,
     campfires,
     holds,
+    hops,
     balanceOf,
     prepare(sql) {
       const route = routes.find((entry) => entry.test(sql));
@@ -220,15 +308,20 @@ function coinDb(options = {}) {
       };
       statement.run = async () => {
         calls.push({ sql, bound: statement.bound, call: "run" });
-        let out = route && route.run ? route.run(statement.bound) : { meta: { changes: 1 } };
+        let out;
         // The WAVE-3 verdict hook: options.verdictFor stages a live
-        // changes-verdict per SQL (a lost race's zero), on top of whatever
-        // the route's own handler answered.
+        // changes-verdict per SQL (a lost race's zero) BEFORE the route's own
+        // handler — a vetoed statement must not mutate the fake's maps (its
+        // real engine answered changes-0), so the staged verdict wins first.
         if (options.verdictFor) {
           const verdict = options.verdictFor(sql);
           if (verdict !== undefined) out = { meta: { changes: verdict } };
         }
+        if (out === undefined) {
+          out = route && route.run ? await route.run(statement.bound, sql) : { meta: { changes: 1 } };
+        }
         calls[calls.length - 1].changes = out.meta?.changes;
+        lastChanges = out.meta?.changes;
         return out;
       };
       return statement;
@@ -453,6 +546,55 @@ test("the campfire stoke sinks coins into the pool under the sufficient-coins ar
   assert.ok(
     spend.sql.includes("gc_campfires"),
     "the same statement credits the pool (SINK LAW: one batch, no free pool coin)",
+  );
+});
+
+// The C1/H1 refusal pins: a REFUSED opener must leave the whole batch a
+// single atomic no-op — no fee, no hop, no hold, no pool coin, no book row.
+
+test("a chain send with the fee but not the gift refuses WHOLE — the sender's money never moves", async () => {
+  // amount 100 + fee 5 costs 105; the sender holds exactly [fee, amount+fee).
+  const db = coinDb({ ledger: [{ user_id: USER_ID, delta: 104, source: "daily", related_user_id: null, created_at: TTL_NOW() }] });
+  const response = await dispatch(authed("POST", "/api/coins/chain", { to: "friend", amount: 100 }), envWithLimiters(db));
+  assert.equal(response.status, 400, "the gift refuses at the opener's balance arm");
+  assert.equal(db.balanceOf(USER_ID), 104, "the fee ride-along never charges a refused send");
+  assert.equal(db.ledger.length, 1, "no chain_fee row rides the refusal");
+  assert.equal(db.hops.size, 0, "no live hop banks on a refused opener");
+  assert.equal(db.holds.size, 0, "no hold banks on a refused opener");
+  assert.equal(db.campfires.size, 0, "SINK LAW: no pool credit mints from a refused send");
+});
+
+test("a stoke past the coins arm banks no pool credit and spends no coin", async () => {
+  const db = coinDb({ campfires: [[SERVER_ID, { fuel: 40, pool: 1000, bonus_until: null, last_draw_at: null }]] });
+  const response = await worker.fetch(
+    authed("POST", `/api/servers/${SERVER_ID}/campfire/stoke`, { amount: 100 }),
+    envWithLimiters(db),
+    {},
+  );
+  assert.equal(response.status, 400, "the stoke refuses at the sufficient-coins arm");
+  assert.equal(db.balanceOf(USER_ID), 0, "no coin spent");
+  assert.equal(Number(db.campfires.get(SERVER_ID)?.pool), 1000, "the pool never banks a refused stoke");
+});
+
+test("a stoke at the capped pool refuses — the pool-cap arm is the gate, no coin moves", async () => {
+  const db = coinDb({
+    campfires: [[SERVER_ID, { fuel: 40, pool: C.GC_CAMPFIRE_MAX_POOL, bonus_until: null, last_draw_at: null }]],
+    ledger: [{ user_id: USER_ID, delta: 300, source: "daily", related_user_id: null, created_at: TTL_NOW() }],
+  });
+  const response = await worker.fetch(
+    authed("POST", `/api/servers/${SERVER_ID}/campfire/stoke`, { amount: 100 }),
+    envWithLimiters(db),
+    {},
+  );
+  assert.equal(response.status, 400, "the stoke refuses at the pool-cap arm");
+  assert.equal(db.balanceOf(USER_ID), 300, "no coin spent");
+  assert.equal(Number(db.campfires.get(SERVER_ID)?.pool), C.GC_CAMPFIRE_MAX_POOL, "the cap arm held");
+  const credit = flatStatements(db).find((call) =>
+    call.sql?.startsWith("INSERT INTO gc_campfires (server_id, fuel, pool, updated_at)"));
+  assert.ok(credit, "the pool credit still rides the batch");
+  assert.ok(
+    credit.sql.includes("(SELECT changes()) = 1") && credit.sql.includes("le.source = 'campfire_stoke'"),
+    "the credit is fingerprinted to the stoke's own spend (H1 gate, both arms)",
   );
 });
 

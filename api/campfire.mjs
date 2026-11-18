@@ -68,8 +68,11 @@ const FUEL_ACCRUAL_SQL =
 // it stays ledger-anonymous): the spend statement carries BOTH guards inside
 // — the sufficient-coins arm AND the pool-cap arm (a credit at the cap burns,
 // so refusing the stoke is the honest answer) — then the pool credit upserts
-// in the SAME batch. The SINK law in one line: no statement mints a pool
-// coin the ledger never spent.
+// in the SAME batch, gated like jobs.mjs:239: fingerprinted to the spend row
+// the batch itself minted (the jobs shape — `changes() = 1` AND the row
+// EXISTS), so a refused stoke (coins arm OR pool-cap arm) banks no pool
+// coin. The SINK law in one line: no statement mints a pool coin the ledger
+// never spent.
 const STOKE_SPEND_SQL =
   "INSERT INTO gc_coin_ledger (user_id, delta, source, created_at) " +
     "SELECT ?, ?, 'campfire_stoke', ? " +
@@ -78,12 +81,16 @@ const STOKE_SPEND_SQL =
     "AND COALESCE((SELECT cf.pool FROM gc_campfires cf WHERE cf.server_id = ?), 0) + ? <= " +
       GC_CAMPFIRE_MAX_POOL;
 
-const POOL_CREDIT_UPSERT_SQL =
-  "INSERT INTO gc_campfires (server_id, fuel, pool, updated_at) " +
-    "VALUES (?, 0, ?, ?) " +
-  "ON CONFLICT (server_id) DO UPDATE SET " +
-    "pool = MIN(gc_campfires.pool + ?, " + GC_CAMPFIRE_MAX_POOL + "), " +
-    "updated_at = ?";
+// The stoke's pool credit: the campfirePoolCreditStatement builder's
+// SELECT-form (both arms ride the fingerprint), called with the jobs-shape
+// fingerprint below. The old plain-VALUES upsert is gone — an unguarded
+// credit banked the pool a free fill toward the 5000 cap whenever the spend
+// refused (the H1 probe defect).
+const STOKE_CREDIT_FP = (userId, amount, createdAt) => ({
+  sql: "(SELECT changes()) = 1 AND EXISTS (SELECT 1 FROM gc_coin_ledger le WHERE le.user_id = ? " +
+    "AND le.source = 'campfire_stoke' AND le.delta = ? AND le.created_at = ?)",
+  binds: [userId, -amount, createdAt],
+});
 
 // The one read the member gate and the shape answer share.
 const CAMPFIRE_ROW_READ_SQL =
@@ -187,7 +194,8 @@ const POOL_LEDGER_READ_SQL =
 const STOKE_LEDGER_SQL =
   "INSERT INTO gc_campfire_pool_ledger (server_id, class, source, direction, delta, created_at) " +
     "SELECT ?, 'pool-credit', 'campfire_stoke', 'in', ?, ? " +
-    "WHERE EXISTS (SELECT 1 FROM gc_coin_ledger le " +
+    "WHERE (SELECT changes()) = 1 " +
+    "AND EXISTS (SELECT 1 FROM gc_coin_ledger le " +
       "WHERE le.user_id = ? AND le.source = 'campfire_stoke' AND le.delta = ? AND le.created_at = ?)";
 // The stoke's booked delta IS the amount verbatim: the spend's own cap arm
 // (COALESCE(pool, 0) + amount <= GC_CAMPFIRE_MAX_POOL) already ran, so the
@@ -198,7 +206,8 @@ const CHAIN_FEE_LEDGER_SQL =
       "MIN(COALESCE((SELECT cf.pool FROM gc_campfires cf WHERE cf.server_id = ?), 0) + ?, " +
         GC_CAMPFIRE_MAX_POOL + ") - " +
       "COALESCE((SELECT cf.pool FROM gc_campfires cf WHERE cf.server_id = ?), 0), ? " +
-    "WHERE EXISTS (SELECT 1 FROM gc_coin_ledger le " +
+    "WHERE (SELECT changes()) = 1 " +
+    "AND EXISTS (SELECT 1 FROM gc_coin_ledger le " +
       "WHERE le.user_id = ? AND le.source = 'chain_fee' AND le.delta = ? AND le.created_at = ?) " +
     // CRITICAL-1 (t90-b review): with the pool already AT the cap the booked
     // delta computes to 0 and 0039's CHECK (delta <> 0) would abort the whole
@@ -209,6 +218,11 @@ const CHAIN_FEE_LEDGER_SQL =
     // MIN arms enforce; a broken-invariant pool refuses the book too).
     "AND COALESCE((SELECT cf.pool FROM gc_campfires cf WHERE cf.server_id = ?), 0) < " +
       GC_CAMPFIRE_MAX_POOL;
+// The changes() arm (the jobs.mjs:239 idiom): the statement before the book
+// in every caller's batch (the pass's fee spend, the send's hold insert) is 1
+// exactly when the fee's cause landed, so a refused send/pass banks no book
+// row — and a same-second repeat send can never book the earlier send's fee
+// row as its own flow (the C1 probe fix, campfire half of the closure).
 // The chain fee's book row (spec §3.2) — the companion the chain call sites
 // spread beside campfirePoolCreditStatement in their own batch. It books the
 // ACTUAL post-arm credit (the credit's MIN arm may clip the fee at the cap —
@@ -490,9 +504,12 @@ async function handleCampfireStokeRoute(request, env, serverId) {
       amount,
       serverId, amount,
     ),
-    env.GOOBER_DB.prepare(POOL_CREDIT_UPSERT_SQL).bind(
-      serverId, amount, now2, amount, now2,
-    ),
+    // The pool credit rides the spend's own changes the way jobs.mjs finishes
+    // gate: fingerprinted to the spend row (the builder's SELECT-form arms),
+    // so a stoke refused on EITHER the coins arm or the pool-cap arm banks no
+    // pool coin — the same-second repeat corner cannot match an earlier
+    // stoke's row while this batch's spend refused.
+    campfirePoolCreditStatement(env.GOOBER_DB, serverId, amount, now2, STOKE_CREDIT_FP(userId, amount, now2)),
     // The stoke's book row (T90 spec §3.1), fire-and-forget: the guard
     // fingerprints the spend row, so a refused stoke banks no book row. The
     // spend's own cap arm already bounded the credit, so the booked delta is

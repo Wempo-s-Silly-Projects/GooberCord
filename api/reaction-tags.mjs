@@ -46,6 +46,12 @@ import { GC_REACTION_TAGS_MAX, GC_REACTION_TAG_TEXT_MAX } from "../constants.mjs
 // where no WHERE is ever evaluated, so the role gate and the map cap ride
 // the SELECT-WHERE for the insert arm AND the DO UPDATE's WHERE for the
 // update arm; a gated arm answers changes-0 either way → the shared 404).
+// The cap is a CREATE cap (spec §4: it bounds the map's DISTINCT emoji
+// slots — it never bounds a re-label): the update arm's exemption (`OR the
+// row for THIS server's emoji already exists`, keyed through excluded.* with
+// no new binds) lets at-cap members re-label an existing emoji while a row
+// 21 with a fresh emoji still refuses through the count arm. Both arms
+// classify to the shared 404 on changes-0.
 // Upsert refreshes in place (paper idiom): ON CONFLICT the seat refreshes,
 // never a second row.
 const TAG_PUT_SQL =
@@ -57,7 +63,9 @@ const TAG_PUT_SQL =
     "created_by = excluded.created_by, created_at = excluded.created_at " +
   "WHERE EXISTS (SELECT 1 FROM gc_server_members pm " +
     "WHERE pm.server_id = ? AND pm.user_id = ? AND pm.role IN ('owner','moderator')) " +
-  "AND (SELECT COUNT(*) FROM gc_server_reaction_tags t WHERE t.server_id = ?) < " + GC_REACTION_TAGS_MAX;
+  "AND ((SELECT COUNT(*) FROM gc_server_reaction_tags t WHERE t.server_id = ?) < " + GC_REACTION_TAGS_MAX +
+    " OR EXISTS (SELECT 1 FROM gc_server_reaction_tags t " +
+      "WHERE t.server_id = excluded.server_id AND t.emoji = excluded.emoji))";
 // .bind(server_id, emoji, tag_text, created_by, created_at,
 //        server_id, user_id, server_id,           — the INSERT arm's role + cap
 //        server_id, user_id, server_id)           — the update arm's role + cap
