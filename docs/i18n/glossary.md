@@ -259,3 +259,38 @@ Platform-noun law (reviewer rider, folded into the wave-4 cadence):
   procedurally; the first and only victim was zh's "@所有人" (roles.count
   + overwrites.order), restored to "@everyone" in the wave-4 cadence —
   ja and ar held the verbatim from row one.
+
+## T54 rule-seat audit rows (localizer cross-audit, 2026-11-18, HEAD)
+
+The PLURAL_RULES seat (public/js/i18n.js:190) vs the bundle data, script-verified
+family-by-family. Verdict rows, held from this audit forward:
+
+- **seat coverage is total for BUNDLE_LANGS** — the table carries ru, ar,
+  fr, pt, es, en; de/ja/zh ride the en seat by design (the two-branch shape
+  ICU also gives de, and the ja/zh no-arm law above). No bundle lang falls
+  off the table's coverage.
+- **es carries the round-million `many` arm in the RULE SEAT (i18n.js:225-235)
+  but no `_many` row in the copy set** — es's 5 branched families ship
+  base+`_one` only; a bare round-million routes key_many → key_other → base
+  (chain public/js/i18n.js:233) and lands the plural-form base. Correct
+  rendering; the arm is rule-side only, same class as fr/pt (whose 6
+  families also ship no `_many` — no copy wants the partitive phrasing
+  yet).
+- **ru's `serverRow` is the one-arm exception family** — base+`_one` only
+  (ru.json:186-187, the T-T22b GenSg arm); unlike ru's 4 full families there
+  is no `_few`/`_many`/`_other`. Fine/few-many counts fall through to the
+  base (genitive-plural) row, the same degrade class the base==_other law
+  already renders elsewhere. The blanket phrase "ru one/few/many with
+  `_other` duplicating the many-form" names the 4 full families, not every
+  ru family.
+- **all base==`_other` holds ride green** — fr/pt/ru/ar: every `_other` row
+  byte-equals its base; ru's `_other` byte-equals `_many` in all 4 full
+  families; ar's 5 families each ship exactly `_few`+`_other`, `_other`
+  byte-equals base, per the flex ruling above.
+- **comment drift, behavior clean**: public/js/i18n.js:186's phrase "the
+  en-class two-branch shape en/es/de share" is stale wording — the same
+  comment block and the seat itself (i18n.js:225-235) define es as
+  three-branch (one/other/many), matching glossary row "es the same
+  three-way shape". Behavior contradicts nothing; the comment sentence
+  predates the es round-million seat (the 12e-CLDR wave) and reads
+  correctly only if cut at "en/de share".

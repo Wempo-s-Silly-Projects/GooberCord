@@ -1,0 +1,65 @@
+-- T39 DRAFT (NOT APPLIED): index audit — gc_coin_ledger + the presence/lastSeen
+-- table. Candidate indexes ride as SQL COMMENTS ONLY; nothing here is runnable
+-- by design. Migrations NEVER apply from this file (NAME-PRESENCE ritual +
+-- owner gate; prod-D1 writes DENIED to agents).
+--
+-- Existing coverage (the audit's baseline):
+--   idx_gc_coin_ledger_user_created(user_id, created_at, source)
+--       — migrations/0011_coin_economy.sql:45
+--   idx_gc_coin_ledger_gift_trail(related_user_id, source)
+--       — migrations/0011_coin_economy.sql:63
+--   gc_member_status: PK(user_id) — migrations/0001_initial_goobercord.sql:77
+--
+-- Verdict rows (query site → needed shape → verdict):
+--   R1  api/coins.mjs:271 (BALANCE_READ_SQL, user_id only)
+--       → covered by user_created prefix. NO ACTION.
+--   R2  api/coins.mjs:281 (DAY_EARNED_READ_SQL, user_id + created_at >= day)
+--       → covered by user_created (range on col 2, per-source CASE sums are
+--         residual over the day window). NO ACTION.
+--   R3  ceiling SUMs, all (user_id + created_at >= day [+ delta>0, + source]):
+--       api/coins.mjs:113-114 (claim), 125-131 (message), 146-152 (voice),
+--       162 (plus spend: user_id only), 184-185 + 191-192 (rollup),
+--       203-208 (server mint), 253 (cosmetic spend: user_id only)
+--       → covered by user_created; source/delta are residual inside a
+--         bounded per-member day window. NO ACTION.
+--   R4  source-gated day gates: api/coins.mjs:110-111 (daily NOT EXISTS),
+--       191-192 (rollup NOT EXISTS), 207-208 (server COUNT)
+--       → candidate C1 below; deferred (see its own note). DEFER.
+--   R5  plus-term fingerprint: api/coins.mjs:222-224 (user_id + source +
+--         delta + created_at = exact + related_user_id IS ?)
+--       → user_created hits user_id + created_at (exact); residual is
+--         handful of rows. NO ACTION.
+--   R6  gift trail: api/coins.mjs:292 (LEDGER_PAGE_SQL LEFT JOIN users ON
+--         lu.id = le.related_user_id)
+--       → the join is driven by lu.id (users PK); gc_coin_ledger's side is
+--         user_id-led. gift_trail(related_user_id, source) serves any
+--         recipient-led trail read. NO ACTION.
+--   R7  forum rollup COUNT: api/coins.mjs:179-180 and 187-188 (posts:
+--         author_id + visibility + created_at >= day, public bodies)
+--       → forum table, forum ledger's land: idx_posts_author(author_id,
+--         parent_id, visibility, id DESC) — wempos-forum
+--         migrations/0002_forum_v2.sql:170 — covers author_id + residual
+--         visibility; created_at stays residual (per-author day rows are
+--         small). CROSS-REPO NOTE for forum-dev; NOT a GC migration.
+--   R8  presence/lastSeen: api/presence.mjs:186 (single-row read by
+--         user_id) and 294-296 (upsert ON CONFLICT(user_id))
+--       → PK(user_id) covers both; gc_member_status is one row per member
+--         (0001:77 + 0016's presence_state column). Live lastSeen lives in
+--         the DO hub map, NOT D1 (api/presence.mjs:86) — no table, no index
+--         surface. NO ACTION — ZERO new indexes.
+--
+-- Candidate index (comment only — DEFERRED, do not migrate):
+--
+-- CREATE INDEX IF NOT EXISTS idx_gc_coin_ledger_user_source_day
+--   ON gc_coin_ledger(user_id, source, created_at);
+
+-- T39 deferred-index rider (adopted draft wording, still unapplied): R4 is
+-- the only shape the baseline leaves residual, and its scans are bounded by
+-- the per-member day window, while gc_coin_ledger is the fleet's hottest
+-- insert path (every send/voice tick/claim mints) already paying two
+-- indexes. Ship gate: only if a member's per-day window grows past
+-- ~2,000 rows in practice (cap math: constants.mjs's day caps bound it far
+-- lower today). Owner rules the threshold; floor after adoption would be
+-- 0029 — T21's three set-NULL drafts claim 0029-0031 first, so T39's index,
+-- if ever adopted, waits for those to land (0032) or rides one combined
+-- apply wave.
