@@ -246,7 +246,11 @@ export default {
       // for two hours, console-silent). A missing bundle is a plain 404 here —
       // the loader's existing branch answers it; a real bundle (or any other
       // path, documents included) rides the funnel exactly as before.
-      if (/^\/locales\/[^/]+\.json$/.test(url.pathname)) {
+      // The segment class is the seated bundle charset (BUNDLE_LANGS keys are
+      // loader-sanitized [a-z0-9-] — i18n.js setLang/storedLang), so a crafted
+      // segment (dots, escapes, traversal shapes) never enters the funnel: it
+      // rides the generic document leg like any other unknown path (T41).
+      if (/^\/locales\/[a-z0-9-]+\.json$/.test(url.pathname)) {
         const asset = await env.ASSETS.fetch(unconditional(request));
         const type = asset.status === 200 ? asset.headers.get("Content-Type") || "" : "";
         if (asset.status !== 200 || type.includes("text/html")) {

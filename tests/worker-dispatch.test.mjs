@@ -261,3 +261,88 @@ test("a non-locale HTML-fallback path is untouched — the SPA routing for docum
   assert.notEqual(response.headers.get("X-Frame-Options"), null, "document re-wrap still rides");
 });
 
+// --- T41: property rows for the funnel-guard regex -----------------------------
+// The guard at worker.mjs (`^\/locales\/[^/]+\.json$`) defines bundle-class
+// admission: a MATCH rides the funnel (json passthrough / html-fallback 404),
+// a NON-match rides the generic static leg, where the SPA fallback answers the
+// document. Both legs are observable through one mock with real-file
+// semantics: 200 JSON only for the real en bundle, SPA-fallback HTML for
+// everything else. A dot-, percent-, or encoded-slash segment is never a
+// shipped bundle name, so it must NOT be admitted. RED FIRST: the current
+// `[^/]+` class admits every such segment, so the refused-class rows FAIL
+// (the funnel answers its 404) until the guard's segment class tightens; the
+// admitted-class rows pin behavior the same patch must not move.
+test("the funnel guard never admits a crafted locale segment — dots, encoding, and query delimiters ride the generic leg", async () => {
+  const envFor = () => ({
+    ASSETS: {
+      fetch() {
+        return new Response("<html><head></head></html>", {
+          status: 200,
+          headers: { "Content-Type": "text/html; charset=utf-8" },
+        });
+      },
+    },
+  });
+  const refusedRows = [
+    ["/locales/en..json", "bare dot-segment"],
+    ["/locales/%2e.json", "single-encoded dot"],
+    ["/locales/%2e%2e.json", "encoded traversal segment"],
+    ["/locales/%252e%252e.json", "double-encoded traversal segment"],
+    ["/locales/en%3Fx.json", "encoded query delimiter"],
+    ["/locales/..%2Fen.json", "encoded slash traversal"],
+  ];
+  for (const [path, why] of refusedRows) {
+    const response = await worker.fetch(
+      new Request("https://goobercord.itswempo.workers.dev" + path),
+      envFor(),
+      undefined,
+    );
+    assert.equal(response.status, 200, `${why} (${path}) must never be admitted to the funnel`);
+    assert.match(
+      response.headers.get("Content-Type") || "",
+      /text\/html/,
+      `${why} (${path}) rides the generic document leg, not the funnel`,
+    );
+  }
+});
+
+test("the funnel guard admits exactly the seated bundle class — real json passes, the query rides, plain non-locale paths stay generic", async () => {
+  const envFor = () => ({
+    ASSETS: {
+      fetch(request) {
+        const path = new URL(request.url).pathname;
+        if (path === "/locales/en.json") {
+          return new Response('{"gc.app.title":"GooberCord"}', {
+            status: 200,
+            headers: { "Content-Type": "application/json; charset=utf-8" },
+          });
+        }
+        return new Response("<html><head></head></html>", {
+          status: 200,
+          headers: { "Content-Type": "text/html; charset=utf-8" },
+        });
+      },
+    },
+  });
+  const admittedRows = [
+    ["/locales/en.json", 200, /application\/json/, "the real seated bundle rides the funnel as json"],
+    ["/locales/en.json?x=1", 200, /application\/json/, "a query string never widens nor breaks admission (the guard reads pathname only)"],
+  ];
+  const refusedRows = [
+    ["/locales/../en.json", 200, /text\/html/, "literal traversal is not a bundle name (the slash already refuses it)"],
+    ["/locales//en.json", 200, /text\/html/, "a double slash is not a bundle name"],
+    ["/locales/en.json/extra", 200, /text\/html/, "a trailing segment is not a bundle name"],
+    ["/locales/en.txt", 200, /text\/html/, "a non-json extension is not a bundle name"],
+    ["/locales/it.json", 404, /text\/plain/, "a seated but unshipped code stays in the funnel class and 404s the HTML fallback"],
+  ];
+  for (const [path, status, type, why] of [...admittedRows, ...refusedRows]) {
+    const response = await worker.fetch(
+      new Request("https://goobercord.itswempo.workers.dev" + path),
+      envFor(),
+      undefined,
+    );
+    assert.equal(response.status, status, why + " (" + path + ")");
+    assert.match(response.headers.get("Content-Type") || "", type, why + " (" + path + ")");
+  }
+});
+
