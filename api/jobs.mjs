@@ -29,6 +29,16 @@
 // same batch — and members only second; a finish with zero online members
 // burns its whole member share into the pool. paid_total in gc_job_finishes
 // is the batch's own conservation note (100, always).
+//
+// THE C1 FOLD-IN: the finish claim, its pool credit, and the claim's marker
+// row ride ONE atomic batch, so an interrupted delivery can never orphan a
+// paid_total=100 stamp behind an empty Campfire. The member share is the
+// SECOND batch, ended by the delivered stamp (the marker's counter = 100,
+// the conservation note again): the claim marker's only two states are
+// claimed(1, pool banked, delivery pending) and delivered(100) — a retry
+// between them re-runs the delivery exactly once (the batch is atomic, so
+// mints + stamp commit together or never), and a retry past it answers
+// alreadyPaid without touching a coin.
 import { requireUser } from "./core/auth.mjs";
 import { nowSeconds } from "./core/crypto.mjs";
 import { HttpError, json, rateLimit, readJson } from "./core/http.mjs";
@@ -98,16 +108,37 @@ const FINISH_INSERT_SQL =
 // The member share's mint: one guarded row per online member. A member who
 // left between the presence read and the batch finds the EXISTS false — the
 // verdict walk refunds their seat to the pool, so conservation holds
-// (minted + refunded == the batch's own 100) like the Campfire draws'.
+// (minted + refunded == the batch's only 100). The mint ALSO fingerprints the
+// claim's row (lf) AND the delivery state (md, counter=1 = claimed,
+// undelivered): coins never mint off an unclaimed finish, and a racing
+// delivery whose target is already stamped delivered(100) mints nothing.
 const MEMBER_SHARE_MINT_SQL =
   "INSERT INTO gc_coin_ledger (user_id, delta, source, created_at) " +
     "SELECT ?, ?, 'job_finish', ? " +
-    "WHERE EXISTS (SELECT 1 FROM gc_server_members jm " +
+    "WHERE EXISTS (SELECT 1 FROM gc_job_finishes lf " +
+      "WHERE lf.server_id = ? AND lf.week_key = ? AND lf.job_id = ?) " +
+    "AND EXISTS (SELECT 1 FROM gc_job_counters md " +
+      "WHERE md.server_id = ? AND md.week_key = ? AND md.kind = ? AND md.counter = 1) " +
+    "AND EXISTS (SELECT 1 FROM gc_server_members jm " +
       "WHERE jm.server_id = ? AND jm.user_id = ?)";
 
 // A skipped seat's coins stay UNMINTED (the verdict walk is informational —
 // total mint <= 100, never a leak), so no seat-refund statement exists: the
 // pool's own credit shape carries every pool-first coin.
+//
+// The C1 fold's other two statements: the claim marker (the finish's durable
+// stamp — its kind is the JOB'S id, a keyspace DISJOINT from the activity
+// kinds, so it never collides with a chore counter) and the delivered stamp
+// (the marker's counter lifted to the conservation note, 100) — claimed(1)
+// and delivered(100) are the marker's only two states, and the delivery
+// batch is atomic, so the retry between them re-delivers exactly once.
+const CLAIM_MARKER_INSERT_SQL =
+  "INSERT INTO gc_job_counters (server_id, week_key, kind, counter) VALUES (?, ?, ?, ?) " +
+    "ON CONFLICT (server_id, week_key, kind) DO NOTHING";
+
+const DELIVERY_DONE_SQL =
+  "UPDATE gc_job_counters SET counter = ? " +
+    "WHERE server_id = ? AND week_key = ? AND kind = ? AND counter < ?";
 
 // --- the weekly rotation (pure, computed, never stored) ------------------------
 
@@ -175,23 +206,48 @@ export async function recordJobProgress(env, serverId, kind, amount, now) {
 
 async function finishJob(env, serverId, weekKey, jobId, now) {
   const db = env.GOOBER_DB;
-  // THE finish claim: the PK's NOT EXISTS arm serializes the race in one
-  // statement — the loser's insert answers changes 0 and pays nothing; the
-  // winner's changes verdict is the whole race's answer BEFORE any coin
-  // moves (conservation: one finish = one mint, ever, per week).
-  const landed = await db.prepare(FINISH_INSERT_SQL).bind(
-    serverId, weekKey, jobId, GC_JOB_FINISH_BONUS, now,
-    serverId, weekKey, jobId,
-  ).run();
-  if (Number(landed.meta?.changes) !== 1) {
-    return { finished: false, alreadyPaid: true };
-  }
-
-  // The pool takes its share FIRST (the sink law's ordering, not a nicety):
-  // the credit statement binds before any member seat in the same batch.
+  // THE C1 PRE-READ: the claim marker's counter is the delivery state —
+  // claimed(1, pool banked, delivery pending) or delivered(100). Delivered →
+  // the retry answers alreadyPaid BEFORE any statement can re-run; claimed →
+  // the delivery re-runs exactly once below (its mints are guarded on the
+  // claimed state); absent → the claim batches now.
   const poolShare = Math.round(GC_JOB_FINISH_BONUS * GC_JOB_POOL_SHARE_PERCENT / 100);
   const memberShare = Math.round(GC_JOB_FINISH_BONUS * GC_JOB_MEMBER_SHARE_PERCENT / 100);
+  const marker = await db.prepare(COUNTER_READ_SQL).bind(serverId, weekKey, jobId).first();
+  const markerState = Number(marker?.counter) || 0;
+  if (markerState >= GC_JOB_FINISH_BONUS) {
+    return { finished: false, alreadyPaid: true };
+  }
+  if (markerState === 0) {
+    // THE finish claim, FOLDED (the C1 repair): claim + pool credit + the
+    // claim marker ride ONE atomic batch — an interrupted delivery can never
+    // orphan a paid_total=100 stamp behind an empty Campfire. The credit's
+    // fingerprint is the claimed finish row (lc) PLUS the changes() arm: a
+    // raced claim that inserts nothing refuses to bank, even in its batch.
+    const results = await db.batch([
+      db.prepare(FINISH_INSERT_SQL).bind(
+        serverId, weekKey, jobId, GC_JOB_FINISH_BONUS, now,
+        serverId, weekKey, jobId,
+      ),
+      campfirePoolCreditStatement(db, serverId, poolShare, now, {
+        sql: "(SELECT changes()) = 1 AND EXISTS (SELECT 1 FROM gc_job_finishes lc " +
+          "WHERE lc.server_id = ? AND lc.week_key = ? AND lc.job_id = ?)",
+        binds: [serverId, weekKey, jobId],
+      }),
+      db.prepare(CLAIM_MARKER_INSERT_SQL).bind(serverId, weekKey, jobId, 1),
+    ]);
+    if (Number(results[0].meta?.changes) !== 1) {
+      return { finished: false, alreadyPaid: true };
+    }
+  }
+  // markerState 1 (pending): the claim is already banked — deliver only;
+  // the retry's answer stays the PK arm's alreadyPaid, never a second claim.
 
+  // The member delivery (pool-first, members second): burn the unsplit share
+  // into the pool, mint each online member's seat, and END on the delivered
+  // stamp. Atomic, so a retry between claimed(1) and delivered(100) delivers
+  // exactly once: the mints are themselves guarded on the claimed state, and
+  // a delivery whose target already reads delivered mints nothing.
   const online = await onlineServerMembers(env, serverId).catch(() => []);
   const perMember = online.length > 0 ? Math.floor(memberShare / online.length) : 0;
   // The unsplit member share (rounding remainder, or the whole share when
@@ -199,34 +255,50 @@ async function finishJob(env, serverId, weekKey, jobId, now) {
   // pool ledger shows exactly where the pool-first coins came from.
   const unsplit = memberShare - perMember * online.length;
 
-  const statements = [campfirePoolCreditStatement(db, serverId, poolShare, now)];
+  const delivery = [];
   if (unsplit > 0) {
-    statements.push(campfirePoolCreditStatement(db, serverId, unsplit, now));
+    // The burned share fingerprints the CLAIMED marker (md, counter = 1) —
+    // the same gauntlet the mints below carry. A delivery whose batch races
+    // past another delivery's stamp can never double-bank: the marker leaving
+    // claimed(1) means someone already delivered, so the credit refuses.
+    delivery.push(campfirePoolCreditStatement(db, serverId, unsplit, now, {
+      sql: "EXISTS (SELECT 1 FROM gc_job_counters md " +
+        "WHERE md.server_id = ? AND md.week_key = ? AND md.kind = ? AND md.counter = 1)",
+      binds: [serverId, weekKey, jobId],
+    }));
   }
+  const seatOffset = delivery.length;
   for (const memberId of online) {
     if (perMember <= 0) break;
-    statements.push(db.prepare(MEMBER_SHARE_MINT_SQL).bind(
+    delivery.push(db.prepare(MEMBER_SHARE_MINT_SQL).bind(
       memberId, perMember, now,
+      serverId, weekKey, jobId,
+      serverId, weekKey, jobId,
       serverId, memberId,
     ));
   }
-
-  const results = await db.batch(statements);
+  // The delivered stamp RIDES LAST: atomic with the mints it vouches for.
+  delivery.push(db.prepare(DELIVERY_DONE_SQL).bind(
+    GC_JOB_FINISH_BONUS, serverId, weekKey, jobId,
+    GC_JOB_FINISH_BONUS,
+  ));
+  const deliveryResults = await db.batch(delivery);
   // The verdict walk is informational only: a member seat whose membership
   // vanished mid-flight mints nothing (its coins stay unminted — total mint
   // <= 100, never a leak). The pool ledger's own rows carry the count.
-  const seatOffset = statements.length - online.length;
   let mintedSeats = 0;
   for (let index = 0; index < online.length; index += 1) {
-    const seat = results[seatOffset + index];
+    const seat = deliveryResults[seatOffset + index];
     if (seat && Number(seat.meta?.changes) === 1) mintedSeats += 1;
   }
-  return {
-    finished: true,
-    minted: GC_JOB_FINISH_BONUS,
-    poolShare,
-    mintedShare: perMember * mintedSeats,
-  };
+  return markerState === 1
+    ? { finished: false, alreadyPaid: true }
+    : {
+      finished: true,
+      minted: GC_JOB_FINISH_BONUS,
+      poolShare,
+      mintedShare: perMember * mintedSeats,
+    };
 }
 
 // --- the routes ----------------------------------------------------------------

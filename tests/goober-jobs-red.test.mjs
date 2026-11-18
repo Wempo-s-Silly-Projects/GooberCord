@@ -139,14 +139,27 @@ function coinDb(options = {}) {
     },
     {
       // The finish's pool credit (campfirePoolCreditStatement's shape): the
-      // two-step design fingerprints nothing — the finish claim's changes
-      // verdict IS the race answer, so every credit statement here is plain
-      // and the double-finish row pins the conservation at the claim.
+      // C1 fold rides the credit's fingerprint into the statement — the fake
+      // banks plainly, and the fold's own rows (below) pin the fingerprint
+      // text on the folded statements.
       test: (sql) => sql.startsWith("INSERT INTO gc_campfires"),
       run: (bound) => {
         const amount = Number(bound[1]);
         const current = campfires.get(Number(bound[0])) || { pool: 0 };
         campfires.set(Number(bound[0]), { pool: Math.min(current.pool + amount, C.GC_CAMPFIRE_MAX_POOL) });
+        return { meta: { changes: 1 } };
+      },
+    },
+    {
+      // The delivered stamp (the C1 fold's DELIVERY_DONE_SQL): SET counter=?
+      // WHERE ... AND counter < ? — a marker already at the conservation note
+      // changes nothing, so a retry past delivery re-delivers nothing.
+      test: (sql) => sql.startsWith("UPDATE gc_job_counters"),
+      run: (bound) => {
+        const key = `${bound[1]}:${bound[2]}:${bound[3]}`;
+        const current = Number(counters.get(key)) || 0;
+        if (current >= Number(bound[4])) return { meta: { changes: 0 } };
+        counters.set(key, Number(bound[0]));
         return { meta: { changes: 1 } };
       },
     },
@@ -333,28 +346,47 @@ test("the counter table carries NO member column (privacy law, DDL-level pin)", 
   assert.doesNotMatch(body, /user_id|member_id|actor_id/, "counters are aggregate-only (counters ONLY)");
 });
 
-test("the pool-first mint: the finish claim lands first, then the pool binds BEFORE the member payout", async () => {
+test("the pool-first mint, FOLDED: the claim batch banks the pool 80 first, the delivery batch mints the member 20 second", async () => {
   const db = coinDb({ serverJobs: [[SERVER_ID, 1]] });
   const kind = crossedKind(db);
   defCrossedSelected(db);
   const outcome = await recordJobProgress(envOf(db, presenceStub([OTHER_ID])), SERVER_ID, kind, 1, NOW);
   assert.ok(outcome && outcome.finished, "the finish ran");
-  // The two-step conservation: the finish claim is the race's verdict (one
-  // awaited statement), THEN the credits batch — no same-second double mint.
-  const finishIdx = db.calls.findIndex((call) =>
-    call.call !== "batch" && call.sql?.startsWith("INSERT INTO gc_job_finishes"));
-  const batchIdx = db.calls.findIndex((call) => call.call === "batch");
-  assert.ok(finishIdx >= 0 && batchIdx > finishIdx, "the finish claim answers the race BEFORE the credits batch");
-  const batch = db.calls[batchIdx].statements;
-  const poolIdx = batch.findIndex((s) => s.sql.startsWith("INSERT INTO gc_campfires"));
-  const memberIdx = batch.findIndex((s) => s.sql.includes("'job_finish'"));
-  assert.ok(poolIdx === 0, "SINK LAW ORDER: the batch leads with the pool credit");
-  assert.ok(poolIdx < memberIdx, "members pay second");
-  assert.equal(batch[poolIdx].bound[1], 80, "the pool takes its 80% (delta == finish * share)");
-  assert.equal(batch[memberIdx].bound[1], 20, "the one online member takes the split share");
+  // THE CLAIM BATCH (the fold): the guarded finish row leads, the pool
+  // credit rides INSIDE its batch (fingerprinted on the claimed row), the
+  // claim marker (claimed state, 1) follows — one atomic batch, so an
+  // interrupted delivery can never orphan a paid_total stamp behind an
+  // empty pool.
+  const claimBatch = db.calls.find((call) =>
+    call.call === "batch" &&
+    call.statements[0]?.sql.startsWith("INSERT INTO gc_job_finishes"));
+  assert.ok(claimBatch, "the claim batch exists");
+  const foldedCredit = claimBatch.statements[1];
+  assert.ok(foldedCredit.sql.startsWith("INSERT INTO gc_campfires"),
+    "the pool credit rides INSIDE the claim's batch");
+  assert.ok(foldedCredit.sql.includes("gc_job_finishes lc"),
+    "the credit's fingerprint is the claimed finish row itself");
+  assert.equal(foldedCredit.bound[1], 80, "the pool takes its 80% (delta == finish * share)");
+  const claimMarker = claimBatch.statements[2];
+  assert.ok(claimMarker.sql.startsWith("INSERT INTO gc_job_counters"),
+    "the claim marker rides the claim's batch as its third statement");
+  assert.equal(claimMarker.bound[3], 1, "the marker starts at the claimed state (1)");
+  // THE DELIVERY BATCH: members pay second — the unsplit share (none here:
+  // one online member splits it whole) only burns into the pool when the
+  // seats split unevenly, and the delivered stamp RIDES LAST.
+  const deliveryBatches = db.calls.filter((call) =>
+    call.call === "batch" &&
+    !call.statements[0]?.sql.startsWith("INSERT INTO gc_job_finishes"));
+  assert.equal(deliveryBatches.length, 1, "one delivery batch after the claim");
+  const delivery = deliveryBatches[0].statements;
+  const memberIdx = delivery.findIndex((s) => s.sql.includes("'job_finish'"));
+  assert.ok(memberIdx >= 0, "the member mint exists");
+  assert.equal(delivery[memberIdx].bound[1], 20, "the one online member takes the split share");
+  assert.ok(delivery[delivery.length - 1].sql.startsWith("UPDATE gc_job_counters"),
+    "the delivered stamp rides the delivery batch LAST");
   assert.equal(db.campfires.get(SERVER_ID).pool, 80, "the pool ledger shows exactly the 80");
-  assert.equal(db.balanceOf(OTHER_ID), 20, "the member share rode the same batch");
-  assert.equal(db.calls[finishIdx].bound[3], C.GC_JOB_FINISH_BONUS, "paid_total records the conservation (100)");
+  assert.equal(db.balanceOf(OTHER_ID), 20, "the member share rode the delivery batch");
+  assert.equal(claimBatch.statements[0].bound[3], C.GC_JOB_FINISH_BONUS, "paid_total records the conservation (100)");
 });
 
 test("zero online members: the unsplit member share ALSO routes into the pool (no circulating mint)", async () => {
@@ -362,26 +394,37 @@ test("zero online members: the unsplit member share ALSO routes into the pool (n
   defCrossedSelected(db);
   const outcome = await recordJobProgress(envOf(db, null), SERVER_ID, crossedKind(db), 1, NOW);
   assert.ok(outcome && outcome.finished, "the finish ran");
-  const batch = db.calls.find((call) => call.call === "batch").statements;
-  const credits = batch.filter((s) => s.sql.startsWith("INSERT INTO gc_campfires"));
-  assert.equal(credits.length, 2, "the pool takes the finish share AND the unsplit member share");
-  assert.equal(credits[0].bound[1], 80, "the pool-first share");
-  assert.equal(credits[1].bound[1], 20, "the burned member share");
+  // The claim batch banks the finish's own share; the delivery batch carries
+  // the WHOLE member share as the burned pool credit (nobody online to
+  // split), ending on the delivered stamp.
+  const batches = db.calls.filter((call) => call.call === "batch");
+  assert.equal(batches.length, 2, "claim batch + delivery batch");
+  const foldedCredit = batches[0].statements[1];
+  assert.equal(foldedCredit.bound[1], 80, "the pool-first share, inside the claim's batch");
+  const delivery = batches[1].statements;
+  assert.equal(delivery[0].sql.startsWith("INSERT INTO gc_campfires"), true,
+    "the delivery leads with the burned unsplit share");
+  assert.equal(delivery[0].bound[1], 20, "the burned member share");
+  assert.equal(delivery[delivery.length - 1].sql.startsWith("UPDATE gc_job_counters"), true,
+    "the delivered stamp rides last");
   assert.equal(db.campfires.get(SERVER_ID).pool, 100, "nothing circulated");
   assert.equal(db.ledgers.length, 0, "no member mint without online members");
 });
 
-test("a job finishes once per week: the finishes PK arm refuses the double mint", async () => {
+test("a job finishes once per week; the retry past delivery answers alreadyPaid and re-banks nothing", async () => {
   const db = coinDb({ serverJobs: [[SERVER_ID, 1]] });
   const kind = crossedKind(db);
   defCrossedSelected(db);
   await recordJobProgress(envOf(db, null), SERVER_ID, kind, 1, NOW);
-  await recordJobProgress(envOf(db, null), SERVER_ID, kind, 1, NOW);
+  const retry = await recordJobProgress(envOf(db, null), SERVER_ID, kind, 1, NOW);
+  assert.deepEqual(retry, { finished: false, alreadyPaid: true },
+    "the delivered marker (100) short-circuits the retry before any statement");
   assert.equal(db.finishes.size, 1, "one finish row, ever, per week");
-  const creditBatches = db.calls.filter((call) =>
-    call.call === "batch" && call.statements.some((s) => s.sql.startsWith("INSERT INTO gc_campfires")));
-  assert.equal(creditBatches.length, 1, "one credit batch, never two (the race's loser paid nothing)");
-  assert.equal(db.campfires.get(SERVER_ID).pool, 100, "one finish's mint, never two");
+  const claimBatches = db.calls.filter((call) =>
+    call.call === "batch" && call.statements[0]?.sql.startsWith("INSERT INTO gc_job_finishes"));
+  assert.equal(claimBatches.length, 1, "one claim batch, never two (the race's loser paid nothing)");
+  assert.equal(db.campfires.get(SERVER_ID).pool, 100, "one finish's mint, never two (80 claim + 20 delivery)");
+  assert.equal(db.ledgers.length, 0, "the delivery also banked exactly once (no pending re-run)");
 });
 
 // The helper: the crossed activity for THIS week's rotation is whichever
