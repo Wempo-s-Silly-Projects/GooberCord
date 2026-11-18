@@ -192,6 +192,55 @@ test("the lifted gate ships exactly the nine en+all-bundle seats (stage-2, owner
   assert.deepEqual(i18n.BUNDLE_LANGS, ["en", "es", "de", "fr", "pt", "ru", "ja", "zh", "ar"]);
 });
 
+test("a stale stored seat this fleet no longer ships falls back to en at boot", async () => {
+  // A tab wedged on a seat the loader no longer ships must boot back to
+  // en: lang follows normalizeTag's shipped-seat gate, so an old choice
+  // (“it” from a churn-era browser) can never keep the paint on tails.
+  freshBundles({ en: LOCALES.en }); // no "it" bundle, prod reality
+  globalThis.localStorage.setItem("lang", "it");
+  await i18n.initI18n();
+  assert.equal(i18n.currentLang(), "en", "a shipless stored seat never keeps the paint");
+});
+
+test("a wedged (non-JSON) en response retries uncached instead of leaving key tails", async () => {
+  // The T25 churn window served the SPA-fallback HTML for /locales/en.json
+  // (200); a force-cache copy of it wedged tabs on visible key tails with
+  // zero console errors. A poisoned en parse must fall to one uncached
+  // retry and, failing that, still catalog en as {} so setLang repaints.
+  let calls = 0;
+  bundles.clear();
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async () => (++calls === 1
+    ? new Response("<!DOCTYPE html>", { status: 200 })
+    : new Response(JSON.stringify(LOCALES.en), { status: 200 }));
+  try {
+    await i18n.initI18n();
+    assert.equal(i18n.currentLang(), "en");
+    assert.match(i18n.t("gc.gate.accept"), /Accept and continue/,
+      "the retry lands the real en copy, not key tails");
+    assert.equal(calls, 2, "exactly one uncached retry after the poisoned copy");
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
+
+test("bundle fetches ride the app-build stamp as a cache-buster", async () => {
+  bundles.clear();
+  bundles.set("en.json", LOCALES.en);
+  let seen = null;
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (path) => { seen = String(path); return realFetch("/locales/en.json"); };
+  try {
+    globalThis.document.querySelector = () => ({ content: "1.0@722e9e2" });
+    await i18n.initI18n();
+    assert.match(seen, /\?v=1\.0%40722e9e2$/,
+      "the stamp rides the URL so each deploy's copy is a distinct cache row");
+  } finally {
+    globalThis.fetch = realFetch;
+    delete globalThis.document.querySelector;
+  }
+});
+
 test("the dir law: the ar seat flips documentElement to rtl, every other seat to ltr", async () => {
   const html = globalThis.document.documentElement;
   freshBundles({
@@ -445,14 +494,18 @@ test("the chain rides lang → base script → en → the visible key-tail", asy
   await i18n.initI18n();
 });
 
-test("an unsupported navigator seat (or a 404 seat) fails open to English", async () => {
+test("an unshipped stored seat (or a 404 seat) fails open to English", async () => {
+  // The T25-churn wedged tab taught the loader's law: a stored seat whose
+  // base is not one the fleet ships keeps NO paint on tails — it rides
+  // back to en at boot (the human can re-pick any shipped seat; the old
+  // fail-open-to-anything left lang on a catalogless seat forever).
   freshBundles({ en: LOCALES.en });
   globalThis.localStorage.setItem("lang", "xx-wemponese");
   await i18n.initI18n();
-  assert.equal(i18n.currentLang(), "xx-wemponese",
-    "an explicit human choice tries its seat");
+  assert.equal(i18n.currentLang(), "en",
+    "a shipless stored seat normalizes to en, never a catalogless tail-paint");
   assert.equal(i18n.t("gc.chat.pins.empty"), "Nothing pinned in this channel yet.",
-    "a failed 404 bundle falls open to the en bundle, never a broken page");
+    "the en bundle carries the copy, never a broken page");
   globalThis.localStorage.store.clear();
   await i18n.initI18n();
 });

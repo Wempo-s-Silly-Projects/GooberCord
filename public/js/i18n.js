@@ -52,8 +52,15 @@ function normalizeTag(tag) {
 
 function storedLang() {
   try {
-    const stored = String(localStorage.getItem(STORE_KEY) || "").trim().toLowerCase().replace(/_/g, "-");
-    return stored || null; // an explicit human choice: any seat, fail-open below
+    const stored = String(localStorage.getItem(STORE_KEY) || "").trim().toLowerCase()
+      .replace(/_/g, "-").replace(/[^a-z0-9-]/g, ""); // the same sanitize setLang applies
+    // An explicit human choice still rides, but only over a SHIPPED base
+    // script: a stale key from a churn-era browser ("it", a bundle long
+    // unshipped) would otherwise keep lang on a seat with no catalog and
+    // paint every t() miss as a visible key tail. The exact stored seat
+    // survives when its base (the chain's first hop) ships — "zh-hans" →
+    // base "zh" → keep — and shipless choices normalize to null (→ en).
+    return BUNDLE_LANGS.includes(stored.split("-", 1)[0]) ? stored : null;
   } catch {
     return null; // a blocked store keeps the default for this page
   }
@@ -90,20 +97,41 @@ function setHtmlLang(tag) {
 
 // --- loading ----------------------------------------------------------------
 
+// initI18n() — en-first paint: the en bundle (or a cached failure, which
+// leaves the catalog empty and every key visible-garbage) resolves before
+// this returns; a non-en seat loads in the background and swaps the bound
+// copy on resolve. The boot NEVER awaits the locale lane.
+//
+// The wedged-en law (the T25 churn window served the SPA-fallback HTML for
+// /locales/en.json, and force-cache kept 200s of it forever — signed-in
+// tabs painted raw key tails with zero console errors): a bundle URL rides
+// the deployed app-build stamp as a cache-buster, fetches never force old
+// cache rows, a parse failure of the en bundle retries once without cache
+// cooperation, and the en catalog seat is set either way so t() keeps its
+// en floor.
+function bundleUrl(langKey) {
+  try {
+    const stamp = document.querySelector('meta[name="app-build"]')?.content;
+    if (stamp) return `/locales/${langKey}.json?v=${encodeURIComponent(stamp)}`;
+  } catch { /* node or a locked doc */ }
+  return `/locales/${langKey}.json`;
+}
+
 async function loadBundle(langKey) {
-  const response = await fetch(`/locales/${langKey}.json`, { cache: "force-cache" });
+  const response = await fetch(bundleUrl(langKey), { cache: "no-cache" });
   if (!response.ok) return null;
   const data = await response.json();
   if (!data || typeof data !== "object" || Array.isArray(data)) return null;
   return data;
 }
 
-// initI18n() — en-first paint: the en bundle (or a cached failure, which
-// leaves the catalog empty and every key visible-garbage) resolves before
-// this returns; a non-en seat loads in the background and swaps the bound
-// copy on resolve. The boot NEVER awaits the locale lane.
 export async function initI18n() {
-  const enBundle = await loadBundle("en");
+  let enBundle = null;
+  try {
+    enBundle = await loadBundle("en");
+  } catch {
+    try { enBundle = await fetch(bundleUrl("en"), { cache: "reload" }).then((r) => r.json()); } catch { /* the catalog takes {}, tails stay visible */ }
+  }
   catalog.set("en", enBundle ?? {});
   lang = storedLang() || navigatorLang() || "en";
   if (lang === "en") {
