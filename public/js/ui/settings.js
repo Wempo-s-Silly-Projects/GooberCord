@@ -38,7 +38,7 @@ import * as router from "../core/router.js";
 import { renderShell, refreshServers } from "./shell.js";
 import { guardRulesGate } from "./rules-gate.js";
 import { rosterOf, loadRoster } from "./members.js";
-import { t } from "../i18n.js";
+import { BUNDLE_LANGS, currentLang, setLang, t } from "../i18n.js";
 
 // --- mirrored constants (G-4: pinned against constants.mjs / the contract) ----
 
@@ -116,19 +116,42 @@ function manageGate(mount, serverId, title, build) {
     refreshServers().then(() => {
       if (serverOf(serverId)) manageGate(mount, serverId, title, build);
       else mount.append(renderShell(null, taskPane(serverId, title,
-        h("p", { class: "empty-state", text: t("gc.settings.errors.permission") }))));
+        h("p", { class: "empty-state", text: t("gc.settings.errors.permission") }), languageBlock())));
     }).catch(() => {
       mount.append(renderShell(null, taskPane(serverId, title,
-        h("p", { class: "empty-state", text: t("gc.settings.errors.permission") }))));
+        h("p", { class: "empty-state", text: t("gc.settings.errors.permission") }), languageBlock())));
     });
     return;
   }
   if (!serverAdminRights(server)) {
     mount.append(renderShell(null, taskPane(serverId, title,
-      h("p", { class: "empty-state", text: t("gc.settings.errors.permission") }))));
+      h("p", { class: "empty-state", text: t("gc.settings.errors.permission") }), languageBlock())));
     return;
   }
   mount.append(shellWrap(taskPane(serverId, title, ...build(server))));
+}
+
+// The language picker seat (the locale lane's switcher surface): the one
+// user-level preference this pane hosts — locale, not account data, so the
+// header's "Accounts owns account settings" law stands. Labels are endonyms
+// by the picker convention (each seat's own word localizes nothing). Every
+// route this module mounts carries the seat: managers see it atop the
+// manage pane, and a refused viewer still reaches it from the refusal pane.
+const LANG_ENDONYMS = {
+  en: "English", es: "Español", de: "Deutsch", fr: "Français",
+  pt: "Português", ru: "Русский", ja: "日本語", zh: "中文", ar: "العربية",
+};
+
+export function languageBlock() {
+  const picker = createSelect(document, {
+    id: "app-language", label: t("gc.settings.language.label"),
+    description: t("gc.settings.language.help"),
+    options: BUNDLE_LANGS.map((seat) => ({ value: seat, label: LANG_ENDONYMS[seat] || seat })),
+  });
+  const select = picker.querySelector("select");
+  select.value = currentLang();
+  select.addEventListener("change", () => { void setLang(select.value); });
+  return h("div", { class: "panel" }, h("h3", { text: t("gc.settings.language.heading") }), picker);
 }
 
 // --- E1: the server settings page ---------------------------------------------
@@ -136,7 +159,7 @@ function manageGate(mount, serverId, title, build) {
 export function renderServerSettings(route, mount) {
   const serverId = Number(route.params.serverId);
   manageGate(mount, serverId, t("gc.settings.heading"), (server) => {
-    const nodes = [settingsForm(serverId, server), rulesPanel(serverId)];
+    const nodes = [languageBlock(), settingsForm(serverId, server), rulesPanel(serverId)];
     if (server.role === "owner") nodes.push(deletePanel(serverId));
     return nodes;
   });

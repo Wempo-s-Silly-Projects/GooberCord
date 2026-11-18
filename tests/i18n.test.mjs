@@ -192,6 +192,48 @@ test("the lifted gate ships exactly the nine en+all-bundle seats (stage-2, owner
   assert.deepEqual(i18n.BUNDLE_LANGS, ["en", "es", "de", "fr", "pt", "ru", "ja", "zh", "ar"]);
 });
 
+test("the dir law: the ar seat flips documentElement to rtl, every other seat to ltr", async () => {
+  const html = globalThis.document.documentElement;
+  freshBundles({
+    en: LOCALES.en,
+    ar: { "gc.chat.pins.empty": "لا شيء مثبَّت في هذه القناة بعد." },
+    "ar-eg": { "gc.chat.pins.empty": "لا شيء مثبَّت في هذه القناة بعد." },
+  });
+  try {
+    html.dir = "";
+    globalThis.localStorage.setItem("lang", "ar");
+    await i18n.setLang("ar");
+    assert.equal(html.dir, "rtl", "ar rides rtl on the root element");
+    globalThis.localStorage.setItem("lang", "ar-EG");
+    await i18n.setLang("ar-EG");
+    assert.equal(html.dir, "rtl", "the regional ar seat keeps rtl — the base script rules");
+    await i18n.setLang("en");
+    assert.equal(html.dir, "ltr", "every non-ar seat is ltr");
+  } finally {
+    html.dir = "";
+  }
+});
+
+test("setLang strips path/realm chars before the store and any fetch (ship-reviewer LOW-3)", async () => {
+  const seen = [];
+  const previous = globalThis.fetch;
+  try {
+    globalThis.fetch = async (path) => { seen.push(String(path)); return previous(path); };
+    globalThis.localStorage.setItem("lang", "../../etc/passwd");
+    await i18n.setLang("../../etc/passwd");
+    assert.equal(globalThis.localStorage.getItem("lang"), "etcpasswd",
+      "only letters, digits and dashes survive — no traversal shape is stored");
+    for (const path of seen) {
+      assert.doesNotMatch(path, /\.\.|%2F|%2f/gi, `the loader's fetch URL never carries the refused chars: ${path}`);
+    }
+    globalThis.localStorage.setItem("lang", "ar-EG");
+    await i18n.setLang("ar-EG");
+    assert.equal(globalThis.localStorage.getItem("lang"), "ar-eg", "the lawful regional tag rides untouched");
+  } finally {
+    globalThis.fetch = previous;
+  }
+});
+
 test("the raw-seat sweep keys pin (pins dialog, shell rails, document title)", () => {
   const pinned = {
     "gc.app.title": "GooberCord",
@@ -235,7 +277,6 @@ const CARVE_GATES = {
     "gc.mod.timeout.choice",
     "gc.settings.channels.spoiler",
     "gc.settings.general",
-    "gc.settings.nav.server",
     "gc.settings.roles.heading",
     "gc.shell.mentions.loading",
   ],
@@ -244,7 +285,6 @@ const CARVE_GATES = {
     "gc.chat.gif.short",
     "gc.chat.pins.heading",
     "gc.chat.pins.link",
-    "gc.expressions.kinds.sounds",
     "gc.mentions.inChannel",
     "gc.mentions.inThread",
     "gc.mod.card.heading",

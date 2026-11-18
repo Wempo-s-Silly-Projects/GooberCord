@@ -78,7 +78,14 @@ export function currentLang() {
 }
 
 function setHtmlLang(tag) {
-  try { document.documentElement.lang = tag; } catch { /* node or a locked doc */ }
+  // The dir law rides the tag's base script: ar (any regional seat) is the
+  // fleet's one RTL bundle — documentElement flips with the lang attribute,
+  // so both chrome and body agree before paint. Everything else is ltr.
+  const direction = tag.split("-", 1)[0] === "ar" ? "rtl" : "ltr";
+  try {
+    document.documentElement.lang = tag;
+    document.documentElement.dir = direction;
+  } catch { /* node or a locked doc */ }
 }
 
 // --- loading ----------------------------------------------------------------
@@ -120,7 +127,11 @@ export async function initI18n() {
 // browser-storage law's convenience tier), loads the bundle, flips the
 // bound copy in place. Refusals fail open to English like every other lane.
 export async function setLang(next) {
-  const langKey = String(next || "").trim().toLowerCase().replace(/_/g, "-");
+  // Only the lawful BCP-47-ish shape survives: letters, digits, dashes. A
+  // stored human choice may name any seat, but path/realm chars (.., %, /)
+  // never ride into the fetch URL the loader builds from this key.
+  const langKey = String(next || "").trim().toLowerCase().replace(/_/g, "-")
+    .replace(/[^a-z0-9-]/g, "");
   if (!langKey) return lang;
   try { localStorage.setItem(STORE_KEY, langKey); } catch { /* per-page */ }
   lang = langKey;
