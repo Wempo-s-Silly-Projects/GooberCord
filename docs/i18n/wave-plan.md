@@ -186,3 +186,154 @@ three riders which live here:
 | 93fd6b2 | (carve-gate wave-3 extension, tests/i18n.test.mjs only) | ja [mentions.loading] and zh [expressions.emojiTitle, kinds.emojis, mentions.loading] join CARVE_GATES — the 2c41d75 declarations, reviewer-scan-verified at 5e0140e | 0 keys, no bundle bytes. My live scan reproduced both lists key-for-key (zero diffs). ja/zh gate-visible set-exact both directions. Suite 1113/1113. |
 | 46106e1 | (carve-gate ar extension, tests/i18n.test.mjs only) | ar [gif.short, mentions.loading] joins CARVE_GATES — the 212c883 declared two, reviewer-scan-verified | 0 keys, no bundle bytes. My live scan reproduced key-for-key (zero diffs — same set declared third time running). EIGHT locales en+es/de/fr/pt/ru/ja/zh/ar all gate-visible set-exact both directions; the i18n lane's wave structure ends (further locales = routine intake, same laws). Suite 1113/1113. |
 | 1b9eaa8 | (§13 source seat, shell.js + en.json + tests/ui-shell.test.mjs) | the new test pins the GOOBER_SOURCE_URL const (canonical repo, remote-verified), the footer href seat, the key and the rel; en.json +1 | gc.shell.user.source ("Source (AGPLv3)") — the AGPL §13 source-offer as a quiet anchor in the shell's user footer beside sign-out, visible on every signed-in screen; en.json 425→426; ships at cutover (GC MAIN's live UI blocked this turn). LOCALIZER RIDER: es/de/... realign mirrors the one new chrome key. DISCLOSED (env, not this commit): the twin-loss harness drift — /Users/itswempo/wempos-forum is gone (forum-5.0 is the new home; auth.mjs already diverges), six byte-clone tests red identically with the commit's files stashed; harness repair = a ruling, not a path constant. Suite: 1108 pass / 6 env-fail of 1114. |
+
+## DRAFT — ko + id glossary rows (T74, staged 2026-11-17)
+
+The three-term rows for ko and id STAGED here as a draft, not promoted: the
+wave-start pass (per-wave gate #1) validates and formalizes them in
+docs/i18n/glossary.md — a draft row is a starting ruling, not law yet. No
+bundle edit rides this section; the BUNDLE_LANGS stage gates stay exactly as
+declared (no ko/id stage open). The term cells below mirror
+glossary.md's expanded table — no divergence between the two docs is
+intended; any conflict at validation time resolves toward glossary.md as the
+approved copy.
+
+| term | ko | id |
+|---|---|---|
+| free (libre) software | 자유 소프트웨어 | perangkat lunak bebas |
+| gratis software | 무료 소프트웨어 | perangkat lunak gratis |
+| proprietary software | 사유 소프트웨어 (독점 소프트웨어 in the freedom contrast) | perangkat lunak berpemilik |
+| AGPLv3 | AGPLv3 (verbatim) | AGPLv3 (verbatim) |
+
+Draft register notes:
+
+- **ko register (DRAFT)**: 존댓말 -요 prose throughout (the same product-polite
+  spirit ja's です・ます row ruled); buttons and row controls ride the plain
+  noun form (저장/삭제 style) with no imperative sentence endings — declared
+  once and held if validated. 자유 (freedom) vs 무료 (free-of-charge) is the
+  never-collapse pair; 사유 is the UI row and 독점 only where the contrast to
+  자유 is drawn explicitly, per glossary.md's expanded-table note.
+- **id register (DRAFT)**: formal "Anda" (the standard software you-form,
+  not the slangy "kamu"); no colloquial contractions in product copy. The
+  pair pair holds: "bebas" is ONLY the freedom row, "gratis" is ONLY the
+  price row — collapsing either erases the free(gratis) distinction the
+  glossary's wording laws are built on. "berpemilik" rides as the settled
+  proprietary form, per the expanded-table note.
+- **no plural branch rows (DRAFT, ko + id both)** — per glossary.md's
+  ja/zh no-arm law, count copy ships composed numeral-safe; the loader's
+  seat lookup falls through to the en map for unlisted languages, and the
+  key_other → key chain lands each bare row. No rule table edit and no
+  branch gate rides this draft; if validation contradicts, the wave-start
+  pass re-rules it in glossary.md, not here.
+- **wave-5 fit**: the wave-plan assigns hi/tr to wave 5; ko/id stage here
+  ahead of that intake with this same draft-first protocol — rows validate
+  at their wave start, before a single key of their bundle is translated.
+
+## T72 glossary draft rows — it + nl (DRAFT, UNRATIFIED, 2026-11-17)
+
+Draft staged by tr-dept-1 at team-lead order; these are NOT glossary.md law
+until the wave that fields it/nl ratifies them in wave-start pass. The
+three-term frame stays the glossary's own (free (libre) / gratis /
+proprietary, never collapsed into "free").
+
+| term (en canon) | it | nl |
+|---|---|---|
+| free (libre) software | software libero | vrije software |
+| gratis software | software gratuito | gratis software |
+| proprietary software | software proprietario | proprietair software |
+
+Draft register notes (ratification checklist):
+
+- **it** — "libero" (freedom) vs "gratuito" (price) is the settled Italian
+  community pair; never accept "gratuito" for the freedom row, and never let
+  "gratis" (familiar price register) replace "gratuito" in product copy. If
+  the it bundle ever fields, the product register is the informal "tu"
+  (Italian product convention; never "Lei" in this product's voice).
+- **nl** — "vrij" is the freedom row even though Dutch everyday "gratis"
+  dominates the zero-cost collocation; the pair never collapses to "gratis
+  software" for both. The proprietary cell is DRAFT-disputed: this draft
+  picks "proprietair software" (indeclinable adjective, no final -e) over
+  "onvrije software" (negative-contrast form) — pick one at ratification,
+  hold it. Dutch copy drifts to the English loan "proprietary software";
+  the loan is NOT an acceptable cell (untranslated seat, same class as the
+  es raw-"Server" seat the register audit flagged).
+- **Relation to the glossary.md expanded table**: the seed rows for it
+  (software libero / gratuito / proprietario) already match this draft —
+  ratification is a copy of them into the approved table's notes. The seed
+  nl proprietary cell is raw English ("proprietary software") — the
+  ratification pass REPLACES that cell with whichever term is ratified here;
+  the cell must not survive another wave untranslated.
+- **AGPLv3** stays verbatim in both (standing law, not restated as a row).
+
+## T75 glossary draft rows — vi + sv (DRAFT, UNRATIFIED, 2026-11-17)
+
+Draft staged by tr-dept-4 at team-lead order; these are NOT glossary.md law
+until the wave that fields vi/sv ratifies them in wave-start pass. The
+three-term frame stays the glossary's own (free (libre) / gratis /
+proprietary, never collapsed into "free").
+
+| term (en canon) | vi | sv |
+|---|---|---|
+| free (libre) software | phần mềm tự do | fri programvara |
+| gratis software | phần mềm miễn phí | gratis programvara |
+| proprietary software | phần mềm độc quyền | proprietär programvara |
+
+Draft register notes (ratification checklist):
+
+- **vi** — "tự do" (freedom) vs "miễn phí" (zero-cost) is the settled
+  Vietnamese free-software community pair; the freedom row is never "miễn
+  phí", and the zero-cost row never borrows "tự do". "Tự do" unmarked can
+  read generically ("free/freedom") in everyday Vietnamese — the product
+  copy keeps the compound "phần mềm tự do" so the libre sense never walks
+  bare. Proprietary cell is "độc quyền" (exclusive/monopoly-grip) — the
+  community-settled negative-contrast form; no English loan.
+- **sv** — "fri programvara" is the GNU Svenska-settled libre row
+  ("fri" as in freedom); "gratis" is the price row, never the freedom row.
+  Unlike English, the pair does not lean on a single polysemous word —
+  Swedish "gratis" already covers zero-cost on its own, so "fri" does not
+  need a "(libre)" disambiguator riding it; the distinction survives
+  unaided. Proprietary cell: "proprietär programvara" — settled form; the
+  variant "proprietär mjukvara" (mjukvara/programvara both read "software")
+  is a ratification fork — this draft holds "programvara" to match the fri
+  and gratis rows' noun, and the ratification pass binds whichever is picked
+  across all three cells.
+- **Relation to the glossary.md expanded table**: the seed rows for vi and
+  sv (phần mềm tự do / miễn phí / độc quyền; fri / gratis / proprietär
+  programvara) already match this draft — ratification is a copy of them
+  into the approved table's notes, no cell replacement needed (no
+  untranslated-seat hazard in either language's seeds).
+- **AGPLv3** stays verbatim in both (standing law, not restated as a row).
+
+## T73 glossary draft rows — pl + uk (DRAFT, UNRATIFIED, 2026-11-18)
+
+Draft staged by tr-dept-2 at team-lead order; these are NOT glossary.md law
+until the wave that fields pl/uk ratifies them in wave-start pass. The
+three-term frame stays the glossary's own (free (libre) / gratis /
+proprietary, never collapsed into "free").
+
+| term (en canon) | pl | uk |
+|---|---|---|
+| free (libre) software | wolne oprogramowanie | вільне програмне забезпечение |
+| gratis software | darmowe oprogramowanie | безкоштовне програмне забезпечення |
+| proprietary software | oprogramowanie własnościowe | пропрієтарне програмне забезпечение |
+
+Draft register notes (ratification checklist):
+
+- **pl** — "wolne" (freedom) vs "darmowe" (price) is the settled Polish
+  community pair (the glossary.md expanded note); never accept "darmowe"
+  for the freedom row, and never let "bezpłatny" or "gratis" (familiar
+  price register) replace it there. If the pl bundle ever fields, the
+  product register is the informal "ty" (Polish product convention; never
+  "Pan/Pani" in this product's voice).
+- **uk** — mirrors the ru community pair (вільне / пропрієтарне) with
+  standard uk spelling (the glossary.md uk note, held); never copy ru word
+  order. "безкоштовне" is strictly the price row, never the freedom row.
+  If the uk bundle ever fields, the product register is the formal "ви"
+  (Ukrainian product convention; "Ви" capitalized only in direct-address
+  headers, never mid-sentence; never "ти" in this product's voice).
+- **Relation to the glossary.md expanded table**: both seed rows already
+  match the approved table cell-for-cell (pl: wolne / darmowe /
+  własnościowe; uk: вільне / безкоштовне / пропрієтарне) — this draft
+  stages the register picks for ratification; term cells are sourced from
+  the approved expanded table, not re-invented here.
+- **AGPLv3** stays verbatim in both (standing law, not restated as a row).
