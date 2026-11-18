@@ -157,6 +157,15 @@ export function serverPlaceholder(route, mount) {
 // the unsubscribe).
 let connectionStripUnsub = null;
 
+// The "/" seat: renderShell is BUILT for (route, paneOverride) — handing it
+// the router's mount node directly (the "/" addRoute once did exactly that)
+// made frame.append swallow #app into a detached frame: the signed-in home
+// rendered into nothing (the live blank-page incident, W-R1). The placeholder
+// idiom instead — the seat takes (route, mount) and appends the frame in.
+export function homeRoute(route, mount) {
+  mount.append(renderShell(route));
+}
+
 export function renderShell(route, paneOverride = null) {
   const frame = h("div", { class: "shell", "data-testid": "app-shell" });
   frame.append(serverRail(), channelRail());

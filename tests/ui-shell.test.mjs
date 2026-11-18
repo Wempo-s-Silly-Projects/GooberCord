@@ -71,7 +71,15 @@ test("AGPL §13's source-offer rides the user footer as a quiet anchor", () => {
 });
 
 test("the route seats survive the wave re-registrations (by name)", () => {
-  assert.match(MAIN, /addRoute\("\/", "home", renderShell\)/);
+  // W-R1 regression: renderShell's own signature is (route, paneOverride) —
+  // handing it the router's mount node as a "seat" made shell.js frame.append
+  // the mount node into a detached frame (the signed-in "/" blank page).
+  // The home seat is a real (route, mount) render, placeholder idiom.
+  assert.doesNotMatch(MAIN, /addRoute\("\/", "home", renderShell\)/,
+    "renderShell is (route, paneOverride), never a mount-seat render");
+  assert.match(SHELL, /export function homeRoute\(route, mount\) \{\n  mount\.append\(renderShell\(route\)\);\n\}/,
+    "the home seat builds the frame and appends the frame into the router's mount");
+  assert.match(MAIN, /addRoute\("\/", "home", homeRoute\)/);
   assert.match(MAIN, /addRoute\("\/s\/:serverId", "server", serverPlaceholder\)/);
   assert.match(MAIN, /addRoute\("\/s\/:serverId\/:channelId", "channel", renderChannelPane\)/);
   assert.match(MAIN, /appearance\.applyAppearance\(doc, win\.localStorage\)/,

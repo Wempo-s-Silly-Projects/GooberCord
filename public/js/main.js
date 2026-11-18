@@ -31,7 +31,7 @@ import { api, setCsrfToken, AUTH_EVENT } from "./core/api.js";
 import store from "./core/store.js";
 import * as router from "./core/router.js";
 import {
-  appearance, renderShell, serverPlaceholder,
+  appearance, homeRoute, serverPlaceholder,
 } from "./ui/shell.js";
 import { ensureSignedIn, wempoAccountsSignInUrl } from "./ui/landing.js";
 import { renderMemberCard } from "./ui/members.js";
@@ -154,7 +154,7 @@ async function boot({ doc: bootDoc = document, win: bootWin = window } = {}) {
   //    Specific two-segment server routes register BEFORE the generic
   //    "/:channelId" catch — resolve scans in insertion order and "roles"
   //    would match an "([^/]+)" channel slot otherwise.
-  router.addRoute("/", "home", renderShell);
+  router.addRoute("/", "home", homeRoute);
   router.addRoute("/friends", "friends", renderSocialHub);
   router.addRoute("/join", "join", renderJoin);
   router.addRoute("/mentions", "mentions", renderMentions);
