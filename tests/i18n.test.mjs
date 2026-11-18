@@ -287,13 +287,21 @@ test("the raw-seat sweep keys pin (pins dialog, shell rails, document title)", (
   const pinned = {
     "gc.app.title": "GooberCord",
     "gc.chat.pins.close": "Close",
-    "gc.chat.pins.note": "Newest first, exactly the channel keeps them.",
+    "gc.chat.pins.note": "Newest first, exactly the messages the channel keeps.",
     "gc.chat.pins.title": "Pinned messages",
     "gc.shell.members.title": "Members",
   };
   for (const [key, value] of Object.entries(pinned)) {
     assert.equal(enData[key], value, `${key} rides the sweep's exact en copy`);
   }
+});
+
+test("the static <title> binding rides en.json's gc.app.title 1:1 (ship-reviewer LOW-1)", () => {
+  const html = readFileSync(join(HERE, "../public/index.html"), "utf8");
+  const attr = html.match(/<title\s+data-i18n="gc\.app\.title">([^<]*)<\/title>/);
+  assert.ok(attr, "the title element carries the gc.app.title binding");
+  assert.equal(attr[1], enData["gc.app.title"],
+    "static title text and en.json's gc.app.title cannot drift apart — the en fast-path skips applyDom, so this static render is the only one");
 });
 
 // --- the carve gate: the byte-equal grandfather set, pinned exactly -----------

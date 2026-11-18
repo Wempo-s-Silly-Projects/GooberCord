@@ -34,7 +34,7 @@
   "gc.chat.pins.capNote": "Pins cap at 250 per channel — the server's text is the truth at the cap.",
   "gc.chat.pins.close": "Close",
   "gc.chat.pins.empty": "Nothing pinned in this channel yet.",
-  "gc.chat.pins.note": "Newest first, exactly the channel keeps them.",
+  "gc.chat.pins.note": "Newest first, exactly the messages the channel keeps.",
   "gc.chat.pins.title": "Pinned messages",
   "gc.chat.rail.inHere": "In here — {{count}}",
   "gc.chat.reactions.noneLeft": "No reactions left.",
