@@ -171,8 +171,6 @@ export async function recordJobProgress(env, serverId, kind, amount, now) {
     return finishJob(env, serverId, weekKey, def.id, now);
   }
   return false;
-
-  return finishJob(env, serverId, weekKey, def.id, now);
 }
 
 async function finishJob(env, serverId, weekKey, jobId, now) {
