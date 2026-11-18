@@ -39,6 +39,7 @@ import { handleSeasonRoutes } from "./api/seasons.mjs";
 import { handleExpressionRoutes } from "./api/emoji.mjs";
 import { handleSoundboardRoutes } from "./api/soundboard.mjs";
 import { handleSoundPackRoutes } from "./api/soundpacks.mjs";
+import { handlePaperRoutes } from "./api/paper.mjs";
 import { handleGifRoutes } from "./api/gifs.mjs";
 import { handleAvatarRoutes } from "./api/avatars.mjs";
 import { handleUploadRoutes } from "./api/uploads.mjs";
@@ -212,6 +213,7 @@ const API_HANDLERS = [
   handleExpressionRoutes,
   handleSoundboardRoutes,
   handleSoundPackRoutes,
+  handlePaperRoutes,
   handleGifRoutes,
   handleAvatarRoutes,
   handleUploadRoutes,

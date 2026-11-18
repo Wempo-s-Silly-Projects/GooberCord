@@ -401,6 +401,16 @@ export const GC_SEASON_REWARD_COINS = 250;
 // var(--<token>), never raw hex from a client.
 export const GC_SEASON_COLOR_TOKENS = ["green", "coral", "yellow", "blue"];
 
+// The Morning Paper (T87, wave 4 — docs/drafts/t87-morning-paper-spec.md §5):
+// the opt-in daily digest's window bounds. The paper is DERIVED ON REQUEST —
+// it mints nothing, sinks nothing, tracks nothing (sink law N/A by spec), and
+// every number here is a window bound or a section cap, nothing else.
+export const GC_PAPER_DAY_SECONDS = 86400;
+export const GC_PAPER_CHANNELS_MAX = 10;
+export const GC_PAPER_THREADS_MAX = 5;
+export const GC_PAPER_CAPSULES_MAX = 25;
+export const GC_PAPER_YESTERDAY_KEYS = 1;
+
 // Goober+ (owner decisions: ONE bundle, MONTHLY renewal, a grace window,
 // boosts stay free, GIFT Goober+ in). The price buys gc_plus_state term
 // extensions; the coin spend itself is gc_coin_ledger's negative row.
