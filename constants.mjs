@@ -391,6 +391,11 @@ export const GC_SOUNDBOARD_MAX_PER_SERVER = 8;
 // 512 KB per sound. The request ceiling adds multipart envelope slack.
 export const GC_SOUNDBOARD_SOUND_MAX_BYTES = 524_288;
 export const GC_SOUNDBOARD_SOUND_REQUEST_BYTES = GC_SOUNDBOARD_SOUND_MAX_BYTES + 512 * 1024;
+// Pack clips (T85, GC-beyond-parity: the server's own theater packs — the
+// PARITY board sounds cap above stays 512 KB untouched): the tier caps law's
+// floor — a pack clip intake may never admit LESS than 5 MB. The client's
+// G-4 mirror (public/js/ui/soundboard-studio.js) pins equality to this seat.
+export const GC_SOUND_PACK_CLIP_MAX_BYTES = 5_242_880;
 // Expression FILE caps (the W-B0 parity law pass):
 // docs/parity-limits.md — Emoji ≤256 KB (animated = own pool, filed wave);
 // Stickers ≤512 KB, 320×320 (APNG = Lottie). Both caps gate the expression
