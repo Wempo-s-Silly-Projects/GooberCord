@@ -183,6 +183,27 @@ test("en.json: every key rides the <product>.<area>.<topic>(.<element>) scheme",
   assert.ok(!values.includes("Not found."), "the same law, the generic 404 body");
 });
 
+test("the lifted stage-1 gate ships exactly the six en+staged bundle seats", () => {
+  // ar/ja/zh stay OUT (owner law): they hold at the Firefox visual pass and
+  // enter only on the owner's lift order — a stored human choice may still
+  // name any seat (the loader's fail-open), this list gates the navigator-
+  // derived seats only.
+  assert.deepEqual(i18n.BUNDLE_LANGS, ["en", "es", "de", "fr", "pt", "ru"]);
+});
+
+test("the raw-seat sweep keys pin (pins dialog, shell rails, document title)", () => {
+  const pinned = {
+    "gc.app.title": "GooberCord",
+    "gc.chat.pins.close": "Close",
+    "gc.chat.pins.note": "Newest first, exactly the channel keeps them.",
+    "gc.chat.pins.title": "Pinned messages",
+    "gc.shell.members.title": "Members",
+  };
+  for (const [key, value] of Object.entries(pinned)) {
+    assert.equal(enData[key], value, `${key} rides the sweep's exact en copy`);
+  }
+});
+
 // --- the carve gate: the byte-equal grandfather set, pinned exactly -----------
 
 // The staged bundles grandfather some en bytes as their own copy (names of

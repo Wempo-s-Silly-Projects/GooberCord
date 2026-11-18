@@ -30,6 +30,7 @@
 // ("This channel already has N pins."), surfaced verbatim; the client
 // invents no slot numbers and displays no cap counts.
 import { el } from "./dom.js";
+import { t } from "./i18n.js";
 import { api } from "./api.js";
 import { iconButton } from "./icons.js";
 
@@ -124,7 +125,7 @@ export function openPinnedMessagesDialog(doc, win, channelId, context, onMutated
       list.replaceChildren();
       if (rows.length === 0) {
         list.append(el("p", { class: "muted pins-empty",
-          text: "Nothing is pinned in this channel yet." }));
+          text: t("gc.chat.pins.empty") }));
         return;
       }
       for (const message of rows) list.append(rowNode(message));
@@ -136,12 +137,12 @@ export function openPinnedMessagesDialog(doc, win, channelId, context, onMutated
   };
 
   const dialog = el("dialog", { class: "gc-dialog pins-dialog" },
-    el("h2", { text: "Pinned messages" }),
-    el("p", { class: "muted pins-note", text: "Newest first, exactly the channel keeps them." }),
+    el("h2", { text: t("gc.chat.pins.title") }),
+    el("p", { class: "muted pins-note", text: t("gc.chat.pins.note") }),
     list,
     error,
     el("div", { class: "form-actions" },
-      el("button", { class: "button button-quiet", type: "button", text: "Close" })),
+      el("button", { class: "button button-quiet", type: "button", text: t("gc.chat.pins.close") })),
   );
   dialog.querySelector(".form-actions button").addEventListener("click", () => dialog.close());
   dialog.addEventListener("close", () => dialog.remove());
