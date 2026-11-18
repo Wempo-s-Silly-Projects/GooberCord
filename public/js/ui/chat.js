@@ -1278,6 +1278,12 @@ export async function renderConversation(route, mount) {
   const me = store.get("user");
   let conversations = store.get("conversations");
   if (!conversations) conversations = await loadConversations();
+  // T47 render-epoch guard: the seat's paint rides the cold-store await, so
+  // a near-simultaneous navigation can land a NEWER render before this one
+  // resumes — a resuming stale seat that painted anyway would append a whole
+  // second shell under the newer paint. The route entry object is the epoch:
+  // every match makes a fresh one, so "still current" is object identity.
+  if (router.current() !== route) return;
   const thread = (conversations || []).find((entry) => entry.id === id) || null;
   const others = thread
     ? thread.members.filter((member) => member.userId !== me?.id) : [];

@@ -263,6 +263,172 @@ test("the send-failure render reads the verbatim text inline (G-2), WS arm inclu
 
 // --- the pin/unpin seat's coherence (the bundle's slip, made a law) -----------
 
+// --- the async /dm seat's render-epoch guard (T47) ------------------------------
+
+// A headless DOM surface big enough for the shell frame's h() walk (the stub
+// rides the i18n test's proven StubNode pattern). Only the T47 test installs
+// it; every other row in this file stays header-free.
+class T47Node {
+  constructor(tag) {
+    this.tag = tag;
+    this.children = [];
+    this.attributes = new Map();
+    this.dataset = {};
+    this.className = "";
+    this.textContent = "";
+    this.value = "";
+    this.hidden = false;
+    this.scrollTop = 0;
+    this.scrollHeight = 0;
+    this.parentNode = null;
+  }
+  append(...kids) {
+    for (const kid of kids) {
+      if (!kid || typeof kid !== "object") continue;
+      if (kid.parentNode) {
+        const sibs = kid.parentNode.children;
+        const at = sibs.indexOf(kid);
+        if (at >= 0) sibs.splice(at, 1);
+      }
+      kid.parentNode = this;
+      this.children.push(kid);
+    }
+  }
+  prepend(kid) {
+    if (!kid) return;
+    if (kid.parentNode) {
+      const sibs = kid.parentNode.children;
+      const at = sibs.indexOf(kid);
+      if (at >= 0) sibs.splice(at, 1);
+    }
+    kid.parentNode = this;
+    this.children.unshift(kid);
+  }
+  appendChild(kid) { this.append(kid); return kid; }
+  removeChild(kid) {
+    const at = this.children.indexOf(kid);
+    if (at >= 0) this.children.splice(at, 1);
+    kid.parentNode = null;
+    return kid;
+  }
+  replaceChildren(...kids) {
+    for (const kid of this.children) kid.parentNode = null;
+    this.children = [];
+    this.append(...kids);
+  }
+  remove() {
+    if (this.parentNode) {
+      const sibs = this.parentNode.children;
+      const at = sibs.indexOf(this);
+      if (at >= 0) sibs.splice(at, 1);
+      this.parentNode = null;
+    }
+  }
+  setAttribute(name, value) { this.attributes.set(name, String(value)); }
+  getAttribute(name) { return this.attributes.has(name) ? this.attributes.get(name) : null; }
+  addEventListener() {}
+  removeEventListener() {}
+  get firstChild() { return this.children[0] ?? null; }
+  querySelectorAll(selector) {
+    const attr = String(selector).replace(/^\[/, "").replace(/\]$/, "");
+    const found = [];
+    const walk = (node) => {
+      if (node.attributes?.has(attr)) found.push(node);
+      for (const kid of node.children || []) walk(kid);
+    };
+    for (const kid of this.children) walk(kid);
+    return found;
+  }
+  querySelector(selector) { return this.querySelectorAll(selector)[0] ?? null; }
+}
+
+T47Node.Event = class { constructor(type) { this.type = type; } };
+
+test("the cold-store /dm seat paints once: a superseded render never paints (T47)", async () => {
+  const previous = {
+    fetch: globalThis.fetch,
+    document: globalThis.document,
+    Node: globalThis.Node,
+    Element: globalThis.Element,
+    Event: globalThis.Event,
+    WebSocket: globalThis.WebSocket,
+    sessionStorage: globalThis.sessionStorage,
+    window: globalThis.window,
+    location: globalThis.location,
+  };
+  const router = (await import("../public/js/core/router.js"));
+  const mount = { children: [], replaceChildren() { this.children.length = 0; },
+    append(...kids) { this.children.push(...kids); } };
+  // The interleaving: conversation payloads resolve B-then-A while the seats
+  // fired A-then-B — only the still-routed seat may paint.
+  const taps = [];
+  const tap = () => new Promise((resolve) => taps.push(() =>
+    resolve(new Response(JSON.stringify({ conversations: [
+      { id: 1, name: "alpha", kind: "direct", members: [{ userId: 1 }, { userId: 2 }, { userId: 3 }, { userId: 4 }] },
+      { id: 2, name: "beta", kind: "direct", members: [{ userId: 1 }, { userId: 2 }, { userId: 3 }] },
+    ] }), { status: 200 }))));
+  const pending = new Promise(() => {}); // the quiet lane: history/side-fetches wait forever
+  const quiet = (shape = {}) => Promise.resolve(new Response(JSON.stringify(shape), { status: 200 }));
+  try {
+    globalThis.document = {
+      documentElement: new T47Node("html"),
+      body: new T47Node("body"),
+      createElement: (tag) => new T47Node(tag),
+      createElementNS: (ns, tag) => new T47Node(tag),
+      createTextNode: (text) => new T47Node("#text"),
+      addEventListener() {},
+    };
+    globalThis.Node = T47Node;
+    globalThis.Element = T47Node;
+    globalThis.Event = T47Node.Event;
+    globalThis.WebSocket = class { constructor() { this.readyState = 0; } addEventListener() {} send() {} close() {} };
+    globalThis.sessionStorage = { store: new Map(),
+      getItem(k) { return this.store.has(k) ? this.store.get(k) : null; },
+      setItem(k, v) { this.store.set(k, String(v)); },
+      removeItem(k) { this.store.delete(k); } };
+    globalThis.window = { addEventListener() {}, location: { pathname: "/", origin: "https://gc.example" } };
+    globalThis.location = { pathname: "/", origin: "https://gc.example", href: "https://gc.example/", host: "gc.example" };
+    globalThis.fetch = async (path) => {
+      const to = `${path}`;
+      if (to.startsWith("/api/conversations")) return tap();
+      if (to.startsWith("/api/servers")) return quiet({ servers: [] });
+      if (to.startsWith("/api/mentions")) return quiet({ mentions: [] });
+      // history + the side lanes the shell hydrates wait forever: only the
+      // two seat awaits' resolution order drives the case.
+      if (to.startsWith("/api/channels/")) return pending;
+      return pending;
+    };
+    store.reset();
+    router.addRoute("/dm/:id", "conversation", chat.renderConversation);
+    router.mount(mount);
+    router.navigate("/dm/1");
+    router.navigate("/dm/2");
+    // B resolves first (it is the routed seat)...
+    taps[1]?.();
+    await new Promise((resolve) => setImmediate(resolve));
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(mount.children.length, 1, "the routed seat painted exactly one shell");
+    assert.equal(router.current().params.id, "2");
+    // ...then A resolves: superseded, it bails instead of appending its shell.
+    taps[0]?.();
+    await new Promise((resolve) => setImmediate(resolve));
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(mount.children.length, 1, "the superseded seat painted nothing");
+  } finally {
+    taps.forEach((open) => { try { open(); } catch { /* drain */ } });
+    globalThis.fetch = previous.fetch;
+    globalThis.document = previous.document;
+    globalThis.Node = previous.Node;
+    globalThis.Element = previous.Element;
+    globalThis.Event = previous.Event;
+    globalThis.WebSocket = previous.WebSocket;
+    globalThis.sessionStorage = previous.sessionStorage;
+    globalThis.window = previous.window;
+    globalThis.location = previous.location;
+    store.reset();
+  }
+});
+
 test("the row's pin control: call site and bundle agree on which word paints which state", () => {
   const en = JSON.parse(readFileSync(join(HERE, "../public/locales/en.json"), "utf8"));
   assert.equal(en["gc.chat.row.pin"], "Pin", "row.pin paints the UNpinned row's action");
