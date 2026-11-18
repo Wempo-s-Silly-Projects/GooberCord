@@ -71,3 +71,5 @@ your users the source of that version (AGPLv3 section 13).
 
 [wempos-forum]: https://github.com/Wempo-s-Silly-Projects/wempos-forum
 [wempo-accounts]: https://github.com/Wempo-s-Silly-Projects/wempo-accounts
+
+[![Built with Cloudflare](https://workers.cloudflare.com/built-with-cloudflare.svg)](https://cloudflare.com)
