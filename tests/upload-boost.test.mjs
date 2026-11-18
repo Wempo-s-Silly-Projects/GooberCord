@@ -64,8 +64,12 @@ const LAYER_MEMBER_TEST = (sql) =>
   sql.includes("SELECT role FROM gc_server_members WHERE server_id = ? AND user_id = ?");
 const LAYER_ROLE_ROWS_TEST = (sql) => sql.includes("JOIN gc_roles r ON r.id = gmr.role_id");
 const LAYER_CHAIN_TEST = (sql) => sql.includes("FROM gc_channel_overwrites o");
-const PLUS_TIER_TEST = (sql) => sql.includes("FROM gc_plus_state WHERE user_id = ?");
 const BOOST_READ_TEST = (sql) => sql.includes("SELECT boosts FROM gc_servers");
+// The FOLDED gate read (T-AUD-M1): the send path's ONE gc_servers walk
+// carries the gate's verification/rules columns AND the boost tier column
+// (the boost seat reads it pre-parse, then hands the row down to the gates).
+const FOLDED_GATE_READ_TEST = (sql) =>
+  sql.includes("verification_level, rules_text, boosts FROM gc_servers");
 
 async function session() {
   const token = randomToken();
@@ -163,14 +167,15 @@ function oversizedProbe(bytes) {
 }
 
 // The send-with-image route's chain down to the frame: session read, the
-// channel access read, the graceful-default layer reads, the member's tier
-// pair, and — for a server channel — exactly ONE boost read. `boosts` and
-// `tier` are the lane's knobs.
-function sendImageRoutes({ serverId = SERVER_ID, boosts = 0, tier = null } = {}) {
+// channel access read, the graceful-default layer reads, the folded gate read
+// (T-AUD-M1 — the gate's columns AND the boost tier in ONE gc_servers walk;
+// the member's account tier pair no longer rides this lane: the frame's floor
+// is the free pair the merge maximizes from), and — for a server channel —
+// exactly ONE folded row. `boosts` is the lane's knob.
+function sendImageRoutes({ serverId = SERVER_ID, boosts = 0 } = {}) {
   return [
     { test: SESSION_READ_TEST, first: async () => (await SESSION_FIX).row },
-    { test: PLUS_TIER_TEST, first: async () => tier },
-    { test: BOOST_READ_TEST, first: async () => ({ boosts }) },
+    { test: FOLDED_GATE_READ_TEST, first: async () => ({ boosts, verification_level: null, rules_text: null }) },
     {
       test: CHANNEL_ACCESS_TEST,
       first: async () => ({ id: CHANNEL_ID, server_id: serverId, kind: serverId === null ? "dm" : "text" }),
@@ -290,9 +295,9 @@ test("a DM/group channel keeps the account frame byte-for-byte — and reads the
   assert.equal(refused.response.status, 413, "the DM frame never rides a boost");
   assert.ok(refused.body.includes(tooLargeCopy(20)), "the DM refusal is the DEFAULT pair: " + refused.body);
   assert.deepEqual(
-    refused.db.calls.filter((call) => call.sql.includes("SELECT boosts FROM gc_servers")),
+    refused.db.calls.filter((call) => call.sql.includes("FROM gc_servers")),
     [],
-    "a DM send consults the ladder NEVER",
+    "a DM send consults the ladder NEVER (standalone or folded — T-AUD-M1)",
   );
 
   // And UNDER it, 10 MiB + 1 sails through (no lift, no refusal): the DM's
@@ -302,12 +307,12 @@ test("a DM/group channel keeps the account frame byte-for-byte — and reads the
   assert.ok(passed.body.includes(UNREADABLE_COPY));
 
   assert.deepEqual(
-    passed.db.calls.filter((call) => call.sql.includes("SELECT boosts FROM gc_servers")),
+    passed.db.calls.filter((call) => call.sql.includes("FROM gc_servers")),
     [],
-    "a DM send consults the ladder NEVER",
+    "a DM send consults the ladder NEVER (standalone or folded — T-AUD-M1)",
   );
   assert.ok(
-    passed.db.calls.every((call) => !call.sql.includes("SELECT boosts FROM gc_servers")),
+    passed.db.calls.every((call) => !call.sql.includes("FROM gc_servers")),
     "every DM-arm read is ladder-blind",
   );
 });
@@ -321,9 +326,9 @@ test("the L2 arm clamps on the buffered lane, and the shared read stays ONE per 
   assert.equal(response.status, 413);
   assert.ok(body.includes(tooLargeCopy(25)), "the 50 MiB blessing clamps to the buffered ceiling: " + body);
   assert.equal(
-    db.calls.filter((call) => call.sql.includes("SELECT boosts FROM gc_servers")).length,
+    db.calls.filter((call) => FOLDED_GATE_READ_TEST(call.sql)).length,
     1,
-    "ONE boost read answers the seat (the shared resolver's single-lookup law)",
+    "ONE folded gc_servers read answers the boost seat AND the gates (T-AUD-M1's single-lookup law)",
   );
 });
 

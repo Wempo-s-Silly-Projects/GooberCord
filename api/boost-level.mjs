@@ -48,6 +48,23 @@ function levelEntry(level) {
   return GC_BOOST_LEVELS.find((entry) => entry.level === level) ?? null;
 }
 
+// The standalone boosts read's one SQL shape (T-AUD-M1): the same
+// PK-indexed walk the recounts' column always got — both the standalone
+// helpers and the folded gate read (messages.mjs SERVER_GATE_SQL, which now
+// carries boosts too) answer the tier from THIS statement or its folded twin.
+const BOOSTS_READ_SQL =
+  "SELECT boosts FROM gc_servers WHERE id = ? LIMIT 1";
+
+// The FOLDED-row resolver (T-AUD-M1): a caller already holding the folded
+// gc_servers row (messages.mjs SERVER_GATE_SQL — verification_level,
+// rules_text, and now boosts in one read) derives the level's upload
+// blessing OFF that row, no second ladder probe. The exact numbers
+// serverUploadBytesCap always answered: 0 for a missing row (a lapsed recount
+// lifts nothing), the level's uploadBytes otherwise.
+export function uploadBytesForServerRow(serverRow) {
+  return Number(levelEntry(boostLevelFor(Number(serverRow?.boosts ?? 0)))?.uploadBytes) || 0;
+}
+
 // The ONE read every consumer rides. `caps` carries the effective inventory
 // numbers (a level can never LOWER an inventory — the effective cap is the
 // larger of the shipped base and the level's blessing; the 0020 sticker base
@@ -57,10 +74,10 @@ function levelEntry(level) {
 // the full level entry (stream height/fps, bitrate, upload size, seats, the
 // named feature gates) as-is for the payloads to expose; level 0 answers a
 // null entry and the base caps only.
+
 export async function serverBoostTier(env, serverId) {
-  const row = await env.GOOBER_DB.prepare(
-    "SELECT boosts FROM gc_servers WHERE id = ? LIMIT 1",
-  ).bind(Number(serverId)).first();
+  const row = await env.GOOBER_DB.prepare(BOOSTS_READ_SQL)
+    .bind(Number(serverId)).first();
   const boosts = Number(row?.boosts ?? 0);
   const level = boostLevelFor(boosts);
   const entry = levelEntry(level);
@@ -82,8 +99,9 @@ export { LEVEL_BASE_CAPS };
 // destination-less seat never consults the ladder.
 export async function serverUploadBytesCap(env, serverId) {
   if (serverId === null || serverId === undefined) return 0;
-  const tier = await serverBoostTier(env, serverId);
-  return Number(tier.levelPerks?.uploadBytes) || 0;
+  return uploadBytesForServerRow(
+    await env.GOOBER_DB.prepare(BOOSTS_READ_SQL).bind(Number(serverId)).first(),
+  );
 }
 
 // The GREEDIER-of merge (T96): the effective per-file cap is the LARGER of

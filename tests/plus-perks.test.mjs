@@ -588,11 +588,12 @@ test("every surface binds the badge's `now` FIRST in textual order (the fragment
 test("the media intake consumes the tier pair (messages.mjs passes attachmentCapBytes through)", () => {
   const messages = readFileSync(new URL("../api/messages.mjs", import.meta.url), "utf8");
   assert.match(messages, /import \{ attachmentCapBytes, plusActiveExpr, plusPerkActive, publicIsPlus \} from "\.\/plus\.mjs";/);
-  assert.match(messages, /attachmentCapBytes\(env, Number\(session\.user\.id\), nowSeconds\(\)\)/);
-  // T96: the frame is now the GREEDIER-of seat (the tier pair merges with
-  // the destination's level blessing in boost-level.mjs) — the prepared
-  // bytes keep the merged seat too (tests/upload-boost.test.mjs pins the
-  // behavior).
-  assert.match(messages, /readMultipartWithImage\(request, \{\s*maxFileBytes: frameFileBytes,\s*maxRequestBytes: frameFileBytes \+ 512 \* 1024,\s*\}\)/);
-  assert.match(messages, /prepareAttachmentBytes\(files\[0\], preparedFileBytes\)/);
+  // The staged large-file lane passes the tier pair through (the buffered
+  // image lane rides the frame — T-AUD-M1 folded the boost seat into the gate
+  // read, and T-AUD-M2 dropped its dead second merge over the tier pair).
+  assert.match(messages, /attachmentCapBytes\(env, authorId, now\)/);
+  // Whitespace-tolerant (T-AUD-M2): the pins bind tokens, not the one
+  // formatting they happened to ship with.
+  assert.match(messages, /readMultipartWithImage\(request,\s*\{\s*maxFileBytes:\s*frameFileBytes,\s*maxRequestBytes:\s*frameFileBytes\s*\+\s*512\s*\*\s*1024,\s*\}\)/);
+  assert.match(messages, /prepareAttachmentBytes\(files\[0\],\s*frameFileBytes\)/);
 });

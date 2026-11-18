@@ -38,7 +38,7 @@
 // attachment — the attachment's intake INSERT and chunks in that same batch).
 import { publicAccent } from "./accent.mjs";
 import { activeBanRow } from "./accounts.mjs";
-import { greedierUploadFileBytes, serverUploadBytesCap } from "./boost-level.mjs";
+import { greedierUploadFileBytes, uploadBytesForServerRow } from "./boost-level.mjs";
 import { grantMessageCoins } from "./coins.mjs";
 import { grantCampfireFuel } from "./campfire.mjs";
 import { recordJobProgress } from "./jobs.mjs";
@@ -242,10 +242,13 @@ const MEMBER_GATE_SQL =
   "FROM gc_server_members m JOIN users u ON u.id = m.user_id " +
   "WHERE m.server_id = ? AND m.user_id = ? LIMIT 1";
 
-// The server's two gate switches in one row read (0008's verification level +
-// 0012's rules text): one statement, one indexed id walk.
+// The server's two gate switches + the T96 boost column in one row read
+// (0008's verification level, 0012's rules text, and — T-AUD-M1's fold — 0023's
+// recounted boosts): one statement, one indexed id walk. With the boost column
+// riding THIS read, the buffered send path (the boost seat below hands the same
+// row down to the gate) answers ONE gc_servers read per send.
 const SERVER_GATE_SQL =
-  "SELECT verification_level, rules_text FROM gc_servers WHERE id = ? LIMIT 1";
+  "SELECT verification_level, rules_text, boosts FROM gc_servers WHERE id = ? LIMIT 1";
 
 // The bypass mask: the filed "owner/mods bypassing" — the owner tier plus any
 // KICK_MEMBERS holder (the v1 kick-lite reading) skips all three gates. The
@@ -279,9 +282,14 @@ export class RulesGateError extends HttpError {
   }
 }
 
-// enforceMemberGates(env, serverId, userId): the member-state 403s, shared by
-// the send and the voice-join doors. Not a member: silent return — the
-// caller's own channel-access gate answers first. Order inside: the timeout
+// enforceMemberGates(env, serverId, userId, serverRow = null): the
+// member-state 403s, shared by the send and the voice-join doors. Not a
+// member: silent return — the caller's own channel-access gate answers first.
+// A caller already holding the folded server row (the buffered send's boost
+// seat reads it before the multipart parse) hands it in as serverRow, and the
+// gate consumes that row without a second gc_servers walk; every other caller
+// keeps its own read at the same position it has always sat (the bypass tiers
+// still never touch it). Order inside: the timeout
 // ALWAYS answers first (and a timed-out send never even reaches slowmode, per
 // the filed "403, not a 429-class reply" wording), then the owner/KICK
 // bypass, then the rules gate (0012: the one ONCE-per-member acceptance,
@@ -299,7 +307,7 @@ async function enforceAccountNotBanned(env, userId) {
   if (activeBan) throw new HttpError(403, "This account is currently banned.");
 }
 
-export async function enforceMemberGates(env, serverId, userId) {
+export async function enforceMemberGates(env, serverId, userId, serverRow = null) {
   // The account-ban rider (T58): a ban landed mid-session answers here on the
   // ONE active-ban read the login and SSO gates already share, before any
   // member-state read — the open session loses the doors the moment the row
@@ -327,7 +335,11 @@ export async function enforceMemberGates(env, serverId, userId) {
     return;
   }
 
-  const server = await env.GOOBER_DB.prepare(SERVER_GATE_SQL)
+  // The ONE gc_servers read (T-AUD-M1): a caller holding the folded row
+  // (SERVER_GATE_SQL, the boost seat's pre-parse read) hands it in and this
+  // gate consumes it without a second walk — the rules text and the
+  // verification ladder ride the same row the boost seat just answered.
+  const server = serverRow ?? await env.GOOBER_DB.prepare(SERVER_GATE_SQL)
     .bind(Number(serverId)).first();
 
   // The rules gate (0012): NULL rules_text is the gate OFF (the same row the
@@ -391,18 +403,19 @@ export async function enforceDmBlockGate(env, channelId, authorId) {
 // The channelId wrapper for the send primitive (and the voice-join door, which
 // already holds the channel row): resolves the server once, passes dm/group
 // channels through untouched.
-export async function enforceMemberGatesForChannel(env, channelId, userId) {
+export async function enforceMemberGatesForChannel(env, channelId, userId, serverRow = null) {
   const channel = await env.GOOBER_DB.prepare(
     "SELECT server_id FROM gc_channels WHERE id = ? LIMIT 1",
   ).bind(Number(channelId)).first();
   if (!channel || channel.server_id === null || channel.server_id === undefined) {
     // The DM/group arm skips the member-state gates for want of a server row,
     // but the account-ban rider still answers (T58): a ban is an account-level
-    // state, not a server-local one.
+    // state, not a server-local one. (Any hand-carried serverRow is the
+    // server arm's shape — a DM/group send carries none.)
     await enforceAccountNotBanned(env, userId);
     return;
   }
-  return enforceMemberGates(env, Number(channel.server_id), Number(userId));
+  return enforceMemberGates(env, Number(channel.server_id), Number(userId), serverRow);
 }
 
 // readLayerContext(env, channel, userId) -> { membershipRole, roleRows, chainRows }
@@ -763,6 +776,7 @@ export async function sendMessageToChannel(
   clientMessageId = null,
   preparedAttachment = null,
   referencedAttachmentId = null,
+  serverGateRow = null,
 ) {
   const text = await filterMessageBody(
     env,
@@ -774,8 +788,11 @@ export async function sendMessageToChannel(
   // callers): an expired-or-absent timeout and a zero verification level both
   // cost one cheap indexed read at most on today's default server. A
   // timed-out member is answered HERE — the filed 403 wording, never the
-  // slowmode 429 — so the cooldown is untouched by their sends.
-  await enforceMemberGatesForChannel(env, channelId, Number(user.id));
+  // slowmode 429 — so the cooldown is untouched by their sends. A caller
+  // holding the folded server row (the buffered image lane's boost seat,
+  // T-AUD-M1) hands it in, and the gates consume it without a second
+  // gc_servers walk; the DO and JSON callers keep their own read.
+  await enforceMemberGatesForChannel(env, channelId, Number(user.id), serverGateRow);
 
   // The social layer's DM gate (phase-3, shared by the REST and DO callers):
   // a blocked pair inside this conversation answers the unsendable-DM copy
@@ -1207,22 +1224,19 @@ async function handleSendMessageWithImageRoute(request, env, channelId, session)
   // Same pair of layer gates as the JSON send (VIEW vanishes, SEND 403s).
   await enforceChannelBits(env, channel, userId, ["VIEW", "SEND"]);
 
-  // The plus upload tier rides the member's own row (the free pair for a
-  // non-buyer or a grace member — attachmentCapBytes in api/plus.mjs).
-  const caps = await attachmentCapBytes(env, Number(session.user.id), nowSeconds());
-
-  // The T96 boost seat: the destination's level blessing (L1 10 MiB / L2 50
-  // MiB / L3 100 MiB, constants.mjs GC_BOOST_LEVELS uploadBytes) rides the
-  // SAME recounted column the shared resolver trusts — ONE gc_servers read —
-  // and merges GREEDIER into the frame. The buffered image lane's account
-  // envelope is the free pair this route has always enforced (the tier raise
-  // is the staged lane's seat; DMs keep it byte-for-byte), so the merge can
-  // only LIFT a server channel by the blessing — never lower, and a DM/group
-  // channel (server_id NULL, no read) is the default pair exactly as before.
-  const serverUploadBytes = await serverUploadBytesCap(
-    env,
-    channel.server_id === null || channel.server_id === undefined ? null : Number(channel.server_id),
-  );
+  // The T96 boost seat, folded (T-AUD-M1): the destination's level blessing
+  // (L1 10 MiB / L2 50 MiB / L3 100 MiB, constants.mjs GC_BOOST_LEVELS
+  // uploadBytes) rides the SAME recounted column the shared resolver trusts —
+  // and now the SAME ROW as the member-state gate, so the whole send path
+  // answers ONE gc_servers read: this read answers the boost seat, then rides
+  // down to the gates inside sendMessageToChannel. The merge stays GREEDIER
+  // onto the frame, so it can only LIFT a server channel by the blessing —
+  // never lower. A DM/group channel (server_id NULL): no read at all, 0
+  // blessing — the default pair, exactly as before.
+  const serverGateRow = channel.server_id === null || channel.server_id === undefined
+    ? null
+    : await env.GOOBER_DB.prepare(SERVER_GATE_SQL).bind(Number(channel.server_id)).first();
+  const serverUploadBytes = uploadBytesForServerRow(serverGateRow);
   // The buffered lane's memory-safe ceiling (GC_BUFFERED_FRAME_CEILING): the
   // multipart parse buffers the whole body, so the frame never rides a
   // blessing above it — free/L1 frames (20 MiB) sit under and stay
@@ -1237,8 +1251,11 @@ async function handleSendMessageWithImageRoute(request, env, channelId, session)
   });
   if (files.length > 1) throw new HttpError(400, "Attach at most one image.");
 
-  const preparedFileBytes = greedierUploadFileBytes(caps.fileBytes, serverUploadBytes);
-  const preparedAttachment = files.length === 1 ? prepareAttachmentBytes(files[0], preparedFileBytes) : null;
+  // The frame IS this lane's effective per-file cap (the parser refused
+  // everything above it, and the frame never sits below the account seat: the
+  // T-AUD-M2 dead merge — the intake's second walk over the member's tier
+  // pair — rode an envelope the parse always bounds first).
+  const preparedAttachment = files.length === 1 ? prepareAttachmentBytes(files[0], frameFileBytes) : null;
   const bodyValue = typeof fields.body === "string" ? fields.body : undefined;
   const clientMessageId =
     fields.clientMessageId === undefined || fields.clientMessageId === ""
@@ -1261,6 +1278,9 @@ async function handleSendMessageWithImageRoute(request, env, channelId, session)
     clientMessageId,
     preparedAttachment,
     referencedAttachmentId,
+    // The folded gate row (T-AUD-M1): ONE gc_servers read answers the boost
+    // seat AND the member-state gates.
+    serverGateRow,
   );
   return json(careNotice ? { message, careNotice } : { message }, created ? 201 : 200);
 }

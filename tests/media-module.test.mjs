@@ -839,7 +839,7 @@ test("the multipart send stores the message WITH its attachment in one batch", a
   assert.deepEqual(payload.message.attachmentIds, [77]);
 });
 
-test("the multipart send refuses two images and, through createAttachment, an oversized one", async () => {
+test("the multipart send route refuses two images; createAttachment's standalone intake refuses oversized bytes on its own", async () => {
   const { row, headers } = await sessionFixtures();
   // T96 reordered the route auth-first (the boost seat needs the destination
   // before any body read), so the two-image probe dispatches against a real

@@ -182,9 +182,10 @@ const MEMBER_GATE_SQL_TEST = (sql) =>
   sql.includes("SELECT m.timed_out_until AS timed_out_until") &&
   sql.includes("m.rules_accepted_at AS rules_accepted_at") &&
   sql.includes("FROM gc_server_members m JOIN users u ON u.id = m.user_id");
-// The two server-side switches share ONE row read.
+// The two server-side switches share ONE row read (T-AUD-M1: the boost tier
+// column rides the same fold).
 const SERVER_GATE_SQL_TEST = (sql) =>
-  sql.includes("SELECT verification_level, rules_text FROM gc_servers WHERE id = ? LIMIT 1");
+  sql.includes("SELECT verification_level, rules_text, boosts FROM gc_servers WHERE id = ? LIMIT 1");
 
 function gateRoutes({
   timed_out_until = null, rules_accepted_at = null, role = "member", permissions = 0,

@@ -992,7 +992,7 @@ const MEMBER_GATE_SQL_TEST = (sql) =>
 const MEMBER_GATE_CHANNEL_SQL_TEST = (sql) =>
   sql.includes("SELECT server_id FROM gc_channels WHERE id = ? LIMIT 1");
 const SERVER_LEVEL_SQL_TEST = (sql) =>
-  sql.includes("SELECT verification_level, rules_text FROM gc_servers WHERE id = ? LIMIT 1");
+  sql.includes("SELECT verification_level, rules_text, boosts FROM gc_servers WHERE id = ? LIMIT 1");
 // The account-ban rider's shared read (api/accounts.mjs's activeBanRow) — the
 // same WHERE the login screen and the SSO redeem ran before T58.
 const ACTIVE_BAN_SQL_TEST = (sql) =>
