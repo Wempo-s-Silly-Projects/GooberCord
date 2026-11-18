@@ -16,10 +16,12 @@
 // GNU Affero General Public License along with this program.  If not,
 // see <https://www.gnu.org/licenses/>
 
-// The LARGE-FILE upload lane — D1-ONLY since 2026-11-17 (owner ruling: "no
-// park, and no r2"). The object-store design is gone: no binding check, no
-// bucket, no key families, no serving fallback. The lane streams a large
-// upload through D1 using the proven chunk machinery's pre-commit half —
+// The LARGE-FILE upload lane — D1 staging since 2026-11-17 (owner ruling
+// then: "no park, and no r2" — REVIVED 2026-11-18 by the T100 order: the
+// committed bytes now ALSO stream into R2, the GC_MEDIA binding, best-effort
+// with D1 staying the serving fallback; the part contract below is
+// unchanged). The lane streams a large upload through D1 using the proven
+// chunk machinery's pre-commit half —
 // each part request slices its ≤1 MiB body into GC_UPLOAD_PART_CHUNKS
 // 64,000-byte rows in the gc_upload_parts staging table (migration 0025,
 // the same row shape gc_attachment_chunks carries, keyed by the client-held
@@ -40,6 +42,7 @@ import { nowSeconds, randomToken } from "./core/crypto.mjs";
 import { HttpError, json, rateLimit, readLimitedBody } from "./core/http.mjs";
 import { blobToUint8Array, sniffImageMime } from "./core/images.mjs";
 import { attachmentCapBytes } from "./plus.mjs";
+import { exportAttachmentObjectStreamed } from "./media.mjs";
 import {
   ATTACHMENT_CHUNK_BYTES,
   GC_UPLOAD_LANE_MAX_BYTES,
@@ -279,7 +282,7 @@ export async function handleUploadChunkRoute(request, env) {
   return json({ uploadId }, 201);
 }
 
-export async function handleCommitUploadRoute(request, env, uploadId) {
+export async function handleCommitUploadRoute(request, env, uploadId, ctx) {
   const session = await requireUser(request, env);
   await rateLimit(request, env, "upload", "uploads-commit:" + session.user.id);
   if (!UPLOAD_ID_RE.test(String(uploadId || ""))) {
@@ -357,6 +360,12 @@ export async function handleCommitUploadRoute(request, env, uploadId) {
       "AND mime = ? AND size_bytes = ? AND created_at = ? ORDER BY id DESC LIMIT 1",
   ).bind(uploaderId, mime, size, now).first();
   const attachmentId = Number(row.id);
+  // The object copy (T100): the verified chunk set streams page-by-page into
+  // the GC_MEDIA object at the derived key — the isolate never holds more
+  // than one serving page. Best-effort: a missed put leaves the complete D1
+  // copy in charge (the orphan-sweep repair lane back-fills); the part
+  // contract above is UNCHANGED.
+  await exportAttachmentObjectStreamed(env, ctx, attachmentId, size);
   return json({ attachment: { id: attachmentId, status: "pending" } }, 201);
 }
 
@@ -388,7 +397,6 @@ export async function handleAbandonUploadRoute(request, env, uploadId) {
 
 export async function handleUploadRoutes(request, env, url, path, method, ctx) {
   void url;
-  void ctx;
 
   if (method === "POST" && path === "/api/uploads/chunks") {
     return handleUploadChunkRoute(request, env);
@@ -398,7 +406,7 @@ export async function handleUploadRoutes(request, env, url, path, method, ctx) {
     ? path.match(/^\/api\/uploads\/([A-Za-z0-9_-]{12})\/commit$/)
     : null;
   if (commitMatch) {
-    return handleCommitUploadRoute(request, env, commitMatch[1]);
+    return handleCommitUploadRoute(request, env, commitMatch[1], ctx);
   }
 
   const abandonMatch = method === "DELETE"

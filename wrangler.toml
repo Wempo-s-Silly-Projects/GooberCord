@@ -24,6 +24,16 @@ database_name = "wempo-forum-data"
 database_id = "e648d306-2c2b-4ddc-aaf1-cef2e023a88c"
 migrations_dir = "migrations"
 
+# Media objects (T100, 2026-11-18 owner revival): the same R2 Basin bucket the
+# forum app binds, carrying the D1 byte surfaces (attachment/emoji/sticker/
+# sound bytes; avatars stay forum-coordinate-gated). Native binding only —
+# the owner's S3 endpoint/keys stay out of the repo and the worker. D1 keeps
+# its byte copy in v1 as the serving fallback; an env without this binding
+# (tests, local dev) falls back to pure D1 with zero regression.
+[[r2_buckets]]
+binding = "GC_MEDIA"
+bucket_name = "wempos-forum-r2"
+
 # Rate limiters are GooberCord's own (binding names GC_*; ids in a fresh
 # range), so the two apps never contend for each other's throttle.
 [[ratelimits]]

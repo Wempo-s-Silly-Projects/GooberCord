@@ -206,8 +206,12 @@ export const GC_MINI_ATTACHMENT_REQUEST_BYTES = GC_MINI_ATTACHMENT_BYTES + 512 *
 export const GC_PLUS_ATTACHMENT_BYTES = 1_073_741_824;
 export const GC_PLUS_ATTACHMENT_REQUEST_BYTES = GC_PLUS_ATTACHMENT_BYTES + 512 * 1024;
 
-// The LARGE-FILE upload lane — D1-ONLY since 2026-11-17 (owner ruling: "no
-// park, and no r2"): a part request carries GC_UPLOAD_PART_CHUNKS of the
+// The LARGE-FILE upload lane — D1 staging since 2026-11-17 (owner ruling
+// then: "no park, and no r2" — REVIVED 2026-11-18, owner order moving the D1
+// byte surfaces to R2: the GC_MEDIA binding now carries a second copy of the
+// committed bytes, while this part lane keeps its D1 staging exactly as
+// shipped — docs/drafts/t100-r2-image-migration-spec.md is the doc of
+// record): a part request carries GC_UPLOAD_PART_CHUNKS of the
 // proven 64 KiB intake chunks in ONE batched write (the shipped small
 // intake already lands up to 320 chunk statements in a single batch — the
 // measured envelope — so 16 sits far inside it), sliced off one ≤-part-sized
