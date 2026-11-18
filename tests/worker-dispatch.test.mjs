@@ -180,3 +180,84 @@ test("a script asset keeps its conditionals (the 304 revalidation path survives)
   assert.equal(response.headers.get("X-Frame-Options"), "DENY", "the re-wrap still applies");
 });
 
+// --- the wedged-en poison vector: /locales/*.json must NEVER ride the SPA fallback
+//
+// not_found_handling = "single-page-application" is a GLOBAL setting — a missing
+// asset path (e.g. /locales/it.json from a churn-era seat) answers index.html at
+// 200 text/html. The i18n loader's `!response.ok` guard only filters 4xx/5xx, so
+// the fallback HTML rode straight into JSON.parse, the cache kept the poisoned
+// 200 forever, and signed-in tabs painted key tails (the 2026-11-17 incident,
+// loader-side hardened in aa6979a). The guard makes a missing bundle a plain 404
+// the loader's existing branch answers — the two response facts of this suite.
+test("a missing locale bundle never rides the SPA fallback — the HTML-fallback MISS answers a plain 404", async () => {
+  const env = {
+    ASSETS: {
+      fetch() {
+        // What the SPA-fallback config answers for a missing asset path.
+        return new Response("<!DOCTYPE html><html><head></head></html>", {
+          status: 200,
+          headers: { "Content-Type": "text/html; charset=utf-8" },
+        });
+      },
+    },
+  };
+  const response = await worker.fetch(
+    new Request("https://goobercord.itswempo.workers.dev/locales/it.json"),
+    env,
+    undefined,
+  );
+  assert.equal(response.status, 404, "a 200-HTML 'bundle' must die at the funnel, not reach the loader");
+  assert.equal(response.headers.get("Cache-Control"), "no-store", "the 404 itself must never be cached");
+  assert.equal(await response.text(), "Locale bundle not found.");
+});
+
+test("a real locale bundle rides the funnel untouched — JSON type passes, the re-wrap applies", async () => {
+  const env = {
+    ASSETS: {
+      fetch() {
+        // Cache behavior for a real bundle comes from the assets pipe
+        // (prod answers en.json with public,max-age=0,must-revalidate); the
+        // funnel's job is security re-wrap + passthrough, not a rewrite.
+        return new Response('{"gc.app.title":"GooberCord"}', {
+          status: 200,
+          headers: {
+            "Content-Type": "application/json; charset=utf-8",
+            "ETag": '"v1"',
+            "Cache-Control": "public, max-age=0, must-revalidate",
+          },
+        });
+      },
+    },
+  };
+  const response = await worker.fetch(
+    new Request("https://goobercord.itswempo.workers.dev/locales/en.json"),
+    env,
+    undefined,
+  );
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get("Content-Type"), "application/json; charset=utf-8");
+  assert.equal(response.headers.get("X-Frame-Options"), "DENY", "the security re-wrap still applies");
+  assert.equal(response.headers.get("Cache-Control"), "public, max-age=0, must-revalidate",
+    "the assets pipe's revalidate-every-time cache behavior rides through untouched");
+});
+
+test("a non-locale HTML-fallback path is untouched — the SPA routing for documents is not the defect", async () => {
+  const env = {
+    ASSETS: {
+      fetch() {
+        return new Response("<html><head></head></html>", {
+          status: 200,
+          headers: { "Content-Type": "text/html; charset=utf-8" },
+        });
+      },
+    },
+  };
+  const response = await worker.fetch(
+    new Request("https://goobercord.itswempo.workers.dev/some/deep/link"),
+    env,
+    undefined,
+  );
+  assert.equal(response.status, 200, "documents keep the SPA fallback");
+  assert.notEqual(response.headers.get("X-Frame-Options"), null, "document re-wrap still rides");
+});
+

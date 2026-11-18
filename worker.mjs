@@ -238,6 +238,25 @@ export default {
     }
     if (!env.ASSETS) return json({ error: "Static assets are not configured." }, 503);
     try {
+      // The wedged-en law: the SPA fallback (not_found_handling =
+      // "single-page-application", GLOBAL — there is no per-path knob) answers
+      // a MISSING asset path with index.html at 200 text/html. For a locale
+      // bundle path that 200-HTML rides the loader's `!response.ok` guard,
+      // poisons the bundle cache, and paints key tails (2026-11-17: it did,
+      // for two hours, console-silent). A missing bundle is a plain 404 here —
+      // the loader's existing branch answers it; a real bundle (or any other
+      // path, documents included) rides the funnel exactly as before.
+      if (/^\/locales\/[^/]+\.json$/.test(url.pathname)) {
+        const asset = await env.ASSETS.fetch(unconditional(request));
+        const type = asset.status === 200 ? asset.headers.get("Content-Type") || "" : "";
+        if (asset.status !== 200 || type.includes("text/html")) {
+          return new Response("Locale bundle not found.", {
+            status: 404,
+            headers: { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-store" },
+          });
+        }
+        return secureResponse(await stampedAssetResponse(asset, env));
+      }
       return secureResponse(await stampedAssetResponse(await env.ASSETS.fetch(unconditional(request)), env));
     } catch (error) {
       console.error("Static asset request failed:", error);
