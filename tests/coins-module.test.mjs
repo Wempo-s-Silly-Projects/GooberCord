@@ -57,6 +57,7 @@ import {
   GC_ROLLUP_GRANT,
   GC_SERVER_GRANT,
   GC_SERVER_MINT_DAILY_CAP,
+  GC_WELL_STREAK_STEP_PERCENT,
 } from "../constants.mjs";
 
 const ORIGIN = "http://localhost";
@@ -496,7 +497,9 @@ test("POST /api/coins/claim mints the daily grant through ONE guarded INSERT", a
   const body = await bodyOf(response);
   assert.equal(body.claimed, true);
   assert.equal(body.daily.claimedToday, true);
-  assert.equal(body.balance, 4 + GC_COIN_DAILY_GRANT, "the minted delta IS the balance's change");
+  assert.equal(body.claimed, true);
+  assert.equal(body.balance, 4 + Math.round(GC_COIN_DAILY_GRANT * (1 + GC_WELL_STREAK_STEP_PERCENT / 100)),
+    "the minted delta IS the balance's change (the Well's first-step grant)");
 
   const claim = db.calls.find((entry) => entry.call === "run" && entry.sql.includes("'daily'"));
   assert.ok(claim, "exactly one ledger INSERT ran");
@@ -504,8 +507,12 @@ test("POST /api/coins/claim mints the daily grant through ONE guarded INSERT", a
     assert.ok(pin(claim.sql), "the claim SQL carries its guard arm: " + label);
   }
   // bound[1] = grant, bound[8..9] = the ceiling arm's (delta, ceiling) pair.
-  assert.equal(claim.bound[1], GC_COIN_DAILY_GRANT);
-  assert.equal(claim.bound[8], GC_COIN_DAILY_GRANT);
+  // T76 supersession (2026-11-18): the claim no longer mints a flat 25 — the
+  // Well's streak rider multiplies the grant, and a fresh Well claims WITH
+  // the first step (20% → 30), so both seats carry the multiplied delta and
+  // the ceiling arm guards what actually mints.
+  assert.equal(claim.bound[1], Math.round(GC_COIN_DAILY_GRANT * (1 + GC_WELL_STREAK_STEP_PERCENT / 100)));
+  assert.equal(claim.bound[8], Math.round(GC_COIN_DAILY_GRANT * (1 + GC_WELL_STREAK_STEP_PERCENT / 100)));
   assert.equal(claim.bound[9], GC_COIN_DAILY_CEILING);
   assert.ok(limitCalls.includes(await sha256Hex("write:coins:daily:" + USER_ID)));
 });
@@ -537,7 +544,8 @@ test("yesterday's daily row is outside the window: today's claim still mints", a
   const { built } = await authed("/api/coins/claim", { method: "POST", body: {} });
   const body = await bodyOf(await dispatch(built, env));
   assert.equal(body.claimed, true);
-  assert.equal(body.balance, 25 + 40 + 25);
+  // T76: the minted delta is the Well's first-step grant (25 * 1.2 = 30).
+  assert.equal(body.balance, 25 + 40 + Math.round(GC_COIN_DAILY_GRANT * (1 + GC_WELL_STREAK_STEP_PERCENT / 100)));
 });
 
 test("the claim's ceiling arm refuses a grant that would pass the daily ceiling", async () => {

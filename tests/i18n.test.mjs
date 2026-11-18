@@ -268,16 +268,18 @@ test("setLang strips path/realm chars before the store and any fetch (ship-revie
   const previous = globalThis.fetch;
   try {
     globalThis.fetch = async (path) => { seen.push(String(path)); return previous(path); };
-    globalThis.localStorage.setItem("lang", "../../etc/passwd");
+    freshBundles({ en: LOCALES.en, "ar-eg": { "gc.chat.pins.empty": "لا شيء بعد." } });
+    globalThis.localStorage.setItem("lang", "en");
     await i18n.setLang("../../etc/passwd");
-    assert.equal(globalThis.localStorage.getItem("lang"), "etcpasswd",
-      "only letters, digits and dashes survive — no traversal shape is stored");
+    assert.equal(globalThis.localStorage.getItem("lang"), "en",
+      "the traversal shape dies at the sanitize gate — the unlawful seat never enters the store");
     for (const path of seen) {
       assert.doesNotMatch(path, /\.\.|%2F|%2f/gi, `the loader's fetch URL never carries the refused chars: ${path}`);
     }
     globalThis.localStorage.setItem("lang", "ar-EG");
     await i18n.setLang("ar-EG");
-    assert.equal(globalThis.localStorage.getItem("lang"), "ar-eg", "the lawful regional tag rides untouched");
+    assert.equal(globalThis.localStorage.getItem("lang"), "ar-eg",
+      "the lawful regional tag rides untouched (an ar-eg bundle ships above the law's floor)");
   } finally {
     globalThis.fetch = previous;
   }
@@ -518,6 +520,75 @@ test("an unshipped stored seat (or a 404 seat) fails open to English", async () 
   await i18n.initI18n();
 });
 
+// --- the setLang seat gate (the seat hole: setLang now rides the same
+// base-script law storedLang() has carried since aa6979a) ------------------------
+
+test("setLang refuses any seat whose base script is not in BUNDLE_LANGS", async () => {
+  // The bork arc: setLang stored+activated ANY sanitized key with no bundle
+  // gate, so a shipless seat rode lang onto an empty catalog — every t()
+  // painted humanized key tails with zero self-heal. Refusal means: no
+  // store write, no switch, strings keep resolving on the untouched seat.
+  await i18n.initI18n(); // the en seat, no stored choice
+  assert.equal(await i18n.setLang("it"), "en", "a seatless refusal returns the unchanged seat");
+  assert.equal(i18n.currentLang(), "en", "lang never rides the refused key");
+  assert.equal(globalThis.localStorage.getItem("lang"), null,
+    "the refused seat never enters the store");
+  assert.equal(i18n.t("gc.chat.pins.empty"), "Nothing pinned in this channel yet.",
+    "strings keep resolving — the empty-catalog tail-paint is dead");
+  await i18n.setLang("xx-wemponese"); // the regional tags of shipless bases refuse too
+  assert.equal(i18n.currentLang(), "en");
+  assert.equal(globalThis.localStorage.getItem("lang"), null);
+});
+
+test("setLang keeps riding lawful regional seats: 'zh-hans' → base 'zh' ships", async () => {
+  freshBundles({ en: LOCALES.en, "zh-hans": LOCALES["zh-hans"] });
+  try {
+    await i18n.initI18n();
+    await i18n.setLang("zh-hans");
+    assert.equal(i18n.currentLang(), "zh-hans", "the base-script seat stays lawful through setLang");
+    assert.equal(globalThis.localStorage.getItem("lang"), "zh-hans", "the lawful choice rides the store");
+    assert.equal(i18n.t("gc.chat.pins.empty"), "Nothing pinned here yet, in Chinese.");
+  } finally {
+    freshBundles({ en: LOCALES.en });
+    globalThis.localStorage.store.clear();
+    await i18n.initI18n();
+  }
+});
+
+test("a lawful seat whose bundle 404s rolls back to the previous seat, scrubbed", async () => {
+  const previousDoc = globalThis.document;
+  try {
+    const holder = new StubNode("doc");
+    holder.documentElement = new StubNode("html");
+    const node = new StubNode("p");
+    node.setAttribute("data-i18n", "gc.chat.pins.empty");
+    holder.append(node);
+    globalThis.document = holder;
+    await i18n.initI18n(); // en; the boot pass painted the en copy
+    assert.equal(node.textContent, "Nothing pinned in this channel yet.");
+    assert.equal(await i18n.setLang("fr"), "en", "the failed switch returns the rolled-back seat");
+    assert.equal(i18n.currentLang(), "en", "lang rolled back to the previous seat");
+    assert.equal(globalThis.localStorage.getItem("lang"), null,
+      "the failure key was never left in storage");
+    assert.equal(holder.documentElement.lang, "en",
+      "setHtmlLang returned to the previous seat");
+    assert.equal(holder.documentElement.dir, "ltr", "the rollback keeps the dir law's ltr for en");
+    assert.equal(node.textContent, "Nothing pinned in this channel yet.",
+      "applyDom re-ran on the rollback — no empty-catalog state survives");
+  } finally {
+    globalThis.document = previousDoc;
+  }
+});
+
+test("initI18n scrubs an unlawful stored key from storage at boot (defense-in-depth)", async () => {
+  freshBundles({ en: LOCALES.en });
+  globalThis.localStorage.setItem("lang", "it"); // the churn-era browser's stale row
+  await i18n.initI18n();
+  assert.equal(globalThis.localStorage.getItem("lang"), null,
+    "the rejected stored key is scrubbed — no stale row re-wedges a future lane");
+  assert.equal(i18n.currentLang(), "en", "the boot still lands on en");
+});
+
 // --- the plural rule seat --------------------------------------------------------
 
 test("t(key, {n}) picks key_<rule> and falls back key_other → key", async () => {
@@ -631,9 +702,9 @@ test("fmtNumber and fmtDate ride the active locale and never throw on a bad seat
     String(new Intl.DateTimeFormat("en", { year: "numeric", timeZone: "UTC" })
       .format(Date.UTC(2026, 10, 17))));
   globalThis.localStorage.setItem("lang", "xx-broken");
-  await i18n.setLang("xx-broken"); // 404 seat
-  assert.equal(i18n.currentLang(), "xx-broken", "the chosen seat stays chosen");
-  assert.equal(i18n.fmtNumber(7, {}).length >= 1, true, "a broken seat still formats");
+  await i18n.setLang("xx-broken"); // the seat gate refuses — no catalogless seat ever rides
+  assert.equal(i18n.currentLang(), "en", "the refused seat never becomes the active locale");
+  assert.equal(i18n.fmtNumber(7, {}).length >= 1, true, "a refused seat still leaves formatting lawful");
   globalThis.localStorage.store.clear();
   await i18n.initI18n();
 });

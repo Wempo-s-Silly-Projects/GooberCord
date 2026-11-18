@@ -26,7 +26,7 @@
 
 import test from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
 const HERE = dirname(new URL(import.meta.url).pathname);
@@ -34,16 +34,33 @@ const FORUM_ROOT = process.env.GC_FORUM_DIR || "/Users/itswempo/wempos-forum";
 
 const COMMIT_SHA_BINDING = "--var COMMIT_SHA:$(git rev-parse --short HEAD)";
 
+// R3 skip-if-absent guard: a fresh clone of this repo may not have the
+// sibling wempos-forum checkout on disk, and an ENOENT crash there would read
+// as red for a pin the clone cannot see. Each sibling pin skips itself (with
+// the reason in the report) when its read target is absent; this tree's own
+// pins are NEVER guarded — they must stay hard-failing everywhere.
+const FORUM_SKIP_REASON =
+  "sibling wempos-forum tree absent (fresh clone) — forum pin skipped, GC pins still enforced";
+
+function skipForumPinIfNeeded(t, root, targetRelPath) {
+  if (root === FORUM_ROOT && !existsSync(join(root, targetRelPath))) {
+    t.skip(FORUM_SKIP_REASON);
+    return true;
+  }
+  return false;
+}
+
 function deployScriptOf(root) {
   const pkg = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
   return pkg.scripts?.deploy ?? "";
 }
 
-test("deploy script pins the COMMIT_SHA binding + --keep-vars in both trees", () => {
+test("deploy script pins the COMMIT_SHA binding + --keep-vars in both trees", (t) => {
   for (const [root, name] of [
     [join(HERE, ".."), "GooberCord"],
     [FORUM_ROOT, "wempos-forum"],
   ]) {
+    if (skipForumPinIfNeeded(t, root, "package.json")) continue;
     const deploy = deployScriptOf(root);
     assert.ok(
       deploy.includes(COMMIT_SHA_BINDING),
@@ -56,11 +73,12 @@ test("deploy script pins the COMMIT_SHA binding + --keep-vars in both trees", ()
   }
 });
 
-test("worker stamp fallback answers empty string, never a fabricated build", () => {
+test("worker stamp fallback answers empty string, never a fabricated build", (t) => {
   for (const { root, name, relPath } of [
     { root: join(HERE, ".."), name: "GooberCord", relPath: "api/accounts.mjs" },
     { root: FORUM_ROOT, name: "wempos-forum", relPath: "api/session.mjs" },
   ]) {
+    if (skipForumPinIfNeeded(t, root, relPath)) continue;
     const source = readFileSync(join(root, relPath), "utf8");
     assert.match(
       source,

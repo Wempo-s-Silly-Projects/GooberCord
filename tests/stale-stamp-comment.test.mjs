@@ -116,3 +116,105 @@ test("a non-html asset passes through unstamped", async () => {
   const html = await serveShell('<p>not html, plain text</p>', "text/plain; charset=utf-8");
   assert.ok(!html.includes("app-build"));
 });
+
+// ---- Module-import stamping (v4.4): the false inherit-claim's replacement.
+// A relative reference drops the base query under WHATWG URL resolution, so
+// only the HTML's stamped entry used to ride ?v= — every other module sat at
+// a FIXED url where a churn-era cache entry replayed old bytes forever.
+
+const JS_TYPE = "text/javascript; charset=utf-8";
+async function serveModule(source, path = "/js/i18n.js") {
+  const response = await worker.fetch(
+    new Request(`https://goobercord.itswempo.workers.dev${path}`),
+    { ...BUILD, ASSETS: stubAssets(source, JS_TYPE) },
+    {},
+  );
+  assert.equal(response.status, 200);
+  return response;
+}
+
+// (a) static imports, export-from, and multiple specifiers all stamp.
+test("served module import/export specifiers carry the build stamp", async () => {
+  const source = [
+    'import { initI18n, t } from "./i18n.js";',
+    'import store from "../js/core/store.js";',
+    'export { render } from "./ui/chat.js";',
+    'import { renderModDesk } from \'./ui/mod.js\';',
+  ].join("\n");
+  const text = await (await serveModule(source)).text();
+  assert.match(text, /from "\.\/i18n\.js\?v=0\.1\.0@tests123";/);
+  assert.match(text, /from "\.\.\/js\/core\/store\.js\?v=0\.1\.0@tests123";/);
+  assert.match(text, /export \{ render \} from "\.\/ui\/chat\.js\?v=0\.1\.0@tests123";/);
+  assert.match(text, /from '\.\/ui\/mod\.js\?v=0\.1\.0@tests123';/);
+});
+
+// (d) dynamic import() is stamped too — the loader's lazy bundles ride it.
+test("dynamic import() specifiers carry the build stamp", async () => {
+  const source = 'const mod = await import("./late.js");\nvoid mod;\n';
+  const text = await (await serveModule(source)).text();
+  assert.match(text, /import\("\.\/late\.js\?v=0\.1\.0@tests123"\)/);
+});
+
+// (c) a ?v already present is left alone — no double-stamp on re-serve.
+test("an already-stamped specifier is not double-stamped", async () => {
+  const source = 'import { t } from "./i18n.js?v=0.1.0@tests123";\n';
+  const text = await (await serveModule(source)).text();
+  assert.equal(text, source);
+});
+
+// (b) VENDORED-VERBATIM byte-parity law: vendor-path bytes are NEVER
+// rewritten — excluded by path, headers and validators included.
+test("a vendor module rides through byte-untouched", async () => {
+  const source = [
+    'export * from "./sibling.js";',
+    'import { dom } from "../ui/dom.js";',
+    'const late = await import("./lazy.js");',
+  ].join("\n");
+  const response = await serveModule(source, "/js/vendor/frontload/dom.js");
+  assert.equal(await response.text(), source);
+  assert.match(response.headers.get("content-type") || "", /javascript/);
+});
+
+// (b, specifier-level) a NON-vendor module importing into vendor leaves the
+// vendor specifier alone; the sibling .js next to it still stamps.
+test("a /vendor/ specifier inside a non-vendor module is left alone", async () => {
+  const source = [
+    'import { kit } from "./vendor/designer/kit.js";',
+    'import { t } from "./i18n.js";',
+  ].join("\n");
+  const text = await (await serveModule(source)).text();
+  assert.ok(text.includes('"./vendor/designer/kit.js"'));
+  assert.match(text, /"\.\/i18n\.js\?v=0\.1\.0@tests123"/);
+});
+
+// (e) .css and other non-.js string literals are untouched.
+test("a .css or .json string literal is never rewritten", async () => {
+  const source = [
+    'const href = "./styles.css";',
+    'const bundle = await fetch("./en.json");',
+  ].join("\n");
+  const text = await (await serveModule(source)).text();
+  assert.equal(text, source);
+});
+
+// (f) bare specifiers (none in the vanilla graph) are never rewritten.
+test("bare import specifiers are left alone", async () => {
+  const source = [
+    'import dayjs from "dayjs";',
+    'import "polyfills";',
+    'const mod = await import("some-module");',
+  ].join("\n");
+  const text = await (await serveModule(source)).text();
+  assert.equal(text, source);
+});
+
+// No build (VERSION unset) → module bytes pass through untouched.
+test("module responses pass through unstamped without a build", async () => {
+  const source = 'import { t } from "./i18n.js";\n';
+  const response = await worker.fetch(
+    new Request("https://goobercord.itswempo.workers.dev/js/i18n.js"),
+    { ASSETS: stubAssets(source, JS_TYPE) },
+    {},
+  );
+  assert.equal(await response.text(), source);
+});

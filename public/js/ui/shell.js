@@ -50,6 +50,13 @@ import { loadMentions } from "./mentions.js";
 import { coinFooterLine } from "./economy.js";
 import { serverAdminRights } from "./settings.js";
 import { wempoAccountsSignOutUrl } from "./landing.js";
+import { renderPaper } from "./paper.js";
+
+// The Morning Paper surface (T87): the route registers from the shell's
+// module scope — this module evaluates BEFORE main.js's boot() pushes the
+// generic "/s/:serverId/:channelId" catch, so insertion order resolves
+// "/s/:serverId/paper" to this seat, never to a "paper" channel.
+router.addRoute("/s/:serverId/paper", "paper", renderPaper);
 
 // AGPL §13's source-offer rides the shell's user footer: every signed-in
 // screen carries the quiet anchor next to sign-out, pointing at the repo.
@@ -72,6 +79,69 @@ export const appearance = makeAppearance({
 
 export function currentTheme() {
   return document.documentElement.dataset.theme === "light" ? "light" : "dark";
+}
+
+// The a11y rows (T81, spec §3): the same text-and-label grammar as the
+// theme row, riding the token var/attr on documentElement. Storage keys
+// goober-hc / goober-font-scale; theme-preload.js re-reads both before
+// first paint (its FONT_STEPS copy is pinned to this list — the preload
+// can't import).
+const HC_STORE_KEY = "goober-hc";
+const FONT_STORE_KEY = "goober-font-scale";
+const FONT_STEPS = [0.875, 1, 1.25];
+
+export function highContrastOn() {
+  if (document.documentElement.dataset.hc === "on") return true;
+  try {
+    return localStorage.getItem(HC_STORE_KEY) === "on";
+  } catch {
+    // Storage blocked — the attribute half still answers for this page.
+    return false;
+  }
+}
+
+export function currentFontScale() {
+  let scale = Number.NaN;
+  try {
+    scale = parseFloat(
+      document.documentElement.style.getPropertyValue("--font-scale"),
+    );
+  } catch {
+    // No inline var — the :root default (1) is the seat.
+  }
+  return FONT_STEPS.includes(scale) ? scale : 1;
+}
+
+function nextFontStep() {
+  const index = FONT_STEPS.indexOf(currentFontScale());
+  return FONT_STEPS[(index + 1) % FONT_STEPS.length];
+}
+
+function textScaleLabel(step) {
+  return `${t("gc.shell.theme.textSize")} ${Math.round(step * 100)}%`;
+}
+
+// Cross-tab sync (T81 advisory 2): an hc/font-scale write in one tab lands
+// in the others through the storage event — the same localStorage keys the
+// rows write. Wired once at module scope (guarded for the node-pinning
+// importers), read-only apply: the labels repaint on the next render.
+if (typeof window !== "undefined" && typeof window.addEventListener === "function") {
+  window.addEventListener("storage", (event) => {
+    if (event.key !== HC_STORE_KEY && event.key !== FONT_STORE_KEY && event.key !== null) return;
+    try {
+      if (localStorage.getItem(HC_STORE_KEY) === "on") {
+        document.documentElement.dataset.hc = "on";
+      } else {
+        delete document.documentElement.dataset.hc;
+      }
+      const scale = parseFloat(localStorage.getItem(FONT_STORE_KEY));
+      if (FONT_STEPS.includes(scale)) {
+        document.documentElement.style.setProperty("--font-scale", String(scale));
+      }
+    } catch {
+      // Storage blocked — nothing to sync.
+    }
+  });
 }
 
 // The initials on a server tile: up to two characters, Space Grotesk 700.
@@ -277,6 +347,15 @@ function channelRail() {
     text: Array.isArray(mentions) ? String(mentions.length) : t("gc.shell.mentions.loading"),
   })));
 
+  // The Morning Paper door (T87): every member of an active server can ride
+  // the link (the read's own gates decide what answers); the surface sits
+  // inside the paper pane, never in the rail.
+  if (server) {
+    rail.append(h("a", { class: "channel-row paper-item", href: `/s/${server.id}/paper`,
+      "aria-label": t("gc.paper.nav"), title: t("gc.paper.nav") },
+    h("span", { class: "channel-hash", text: "📰" }), t("gc.paper.nav")));
+  }
+
   if (server && Array.isArray(server.channels)) {
     // Channels file under their categories when the server has any;
     // otherwise one shared "Text channels" section carries them all.
@@ -376,6 +455,42 @@ function userBlock() {
         // Kit's engine: attribute, browser chrome, storage — in one call.
         appearance.setThemeChoice(document, localStorage, next);
         event.currentTarget.textContent = next === "dark" ? t("gc.shell.theme.light") : t("gc.shell.theme.dark");
+      },
+    }),
+    h("button", {
+      class: "control-quiet",
+      type: "button",
+      text: highContrastOn() ? t("gc.shell.theme.hcOff") : t("gc.shell.theme.hcOn"),
+      onClick: function toggleHighContrast(event) {
+        const next = highContrastOn() ? "off" : "on";
+        if (next === "on") {
+          document.documentElement.dataset.hc = "on";
+        } else {
+          delete document.documentElement.dataset.hc;
+        }
+        try {
+          localStorage.setItem(HC_STORE_KEY, next);
+        } catch {
+          // Storage blocked — the row still flips the live attribute.
+        }
+        event.currentTarget.textContent = next === "on"
+          ? t("gc.shell.theme.hcOff")
+          : t("gc.shell.theme.hcOn");
+      },
+    }),
+    h("button", {
+      class: "control-quiet",
+      type: "button",
+      text: textScaleLabel(nextFontStep()),
+      onClick: function cycleFontScale(event) {
+        const next = nextFontStep();
+        try {
+          document.documentElement.style.setProperty("--font-scale", String(next));
+          localStorage.setItem(FONT_STORE_KEY, String(next));
+        } catch {
+          // Storage blocked — the inline var half still takes the click.
+        }
+        event.currentTarget.textContent = textScaleLabel(nextFontStep());
       },
     }),
     h("a", {

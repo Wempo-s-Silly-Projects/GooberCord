@@ -34,7 +34,8 @@ test("the theme engine is the vendored Kit — no bespoke theme module remains",
   assert.match(SHELL, /import \{ makeAppearance \} from "\.\.\/vendor\/frontload\/tokens\.mjs";/);
   assert.match(SHELL, /themeKey: "goober-theme"/);
   assert.match(SHELL, /legacyThemeKeys: \["forum-theme"\]/, "the forum key reads along only");
-  assert.doesNotMatch(SHELL, /localStorage\.setItem/, "the engine writes; the shell never does");
+  assert.doesNotMatch(SHELL, /localStorage\.setItem\("goober-theme/,
+    "the engine writes the theme family; the shell never does (T81's goober-hc / goober-font-scale are their own storage family per the spec's §3 — docs/drafts/t81-a11y-theme-spec.md)");
   assert.match(SHELL, /setThemeChoice\(document, localStorage, next\)/);
   assert.match(SHELL, /chromeColors: \{ brand: \{ light: "#f7efdc", dark: "#131b27" \} \}/,
     "browser chrome follows the forum palette");

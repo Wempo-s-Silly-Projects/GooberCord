@@ -11,7 +11,10 @@ coverage/
 
 *.swp
 *.kate-swp
-.claude/
+.claude/*
+# the fleet's seat definitions are PUBLIC (owner order Nov 18: "push out agents");
+# the rest of .claude/ (local settings, hooks, plugin state) stays private
+!.claude/agents/
 .superpowers/
 
 # the team board (internal ops data — never publish)

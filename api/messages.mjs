@@ -39,6 +39,8 @@
 import { publicAccent } from "./accent.mjs";
 import { activeBanRow } from "./accounts.mjs";
 import { grantMessageCoins } from "./coins.mjs";
+import { grantCampfireFuel } from "./campfire.mjs";
+import { recordJobProgress } from "./jobs.mjs";
 import { requireSignedInRead, requireUser } from "./core/auth.mjs";
 import { nowSeconds } from "./core/crypto.mjs";
 import { HttpError, json, rateLimit, readJson, requiredText } from "./core/http.mjs";
@@ -934,6 +936,28 @@ export async function sendMessageToChannel(
     } catch (grantError) {
       console.warn("Coin grant skipped:", grantError && grantError.name ? grantError.name : "UnknownError");
     }
+    // The Campfire's message rider (T76 §2): a fresh send in a SERVER-bound
+    // channel feeds that server's fire (the send handler's channel read
+    // already answered the server — a NULL server is the DM/group exclusion,
+    // exactly the spec's law). Best-effort, like the grant — the fuel accrual
+    // statement's own day cap rides inside its upsert, and a fuel miss only
+    // delays the fire, never the send.
+    if (expressionChannel && expressionChannel.server_id !== null &&
+        expressionChannel.server_id !== undefined) {
+      try {
+        await grantCampfireFuel(env, Number(expressionChannel.server_id), now);
+      } catch (fuelError) {
+        console.warn("Campfire fuel skipped:", fuelError && fuelError.name ? fuelError.name : "UnknownError");
+      }
+      // The Goober Jobs message rider (T86): a fresh send in a SERVER-bound
+      // channel is the 'message' chore. Best-effort — a jobs miss only
+      // delays the finish, never the send.
+      try {
+        await recordJobProgress(env, Number(expressionChannel.server_id), "message", 1, now);
+      } catch (jobsError) {
+        console.warn("Job progress skipped:", jobsError && jobsError.name ? jobsError.name : "UnknownError");
+      }
+    }
   }
 
   // The alert-only hit's bookkeeping, now that the message id exists — in a
@@ -964,6 +988,36 @@ export async function sendMessageToChannel(
   // careNotice rides the response ONLY when the care class hit (additive —
   // the REST handlers inline it, the DO sends the care frame to the author).
   return { message: publicMessage(row, attachmentIds), created, careNotice: careNotice ?? null };
+}
+
+// The mirrored-card insert (T79, docs/drafts/t79-post-boost-spec.md): the
+// cross-app boost card rides THE ONE gc_messages writer — this helper reuses
+// the module's own MESSAGE_INSERT_SQL + CHANNEL_LAST_MESSAGE_UPDATE_SQL (no
+// rival SQL anywhere) with the same filter pipeline the member send runs, but
+// skips the member-gate stack (slowmode, member state, DM block): the card is
+// composed server-side from the boost row, the consume route owns the
+// authorization, and a slowmode must never gate a mirror render the member
+// already minted on the forum side. NULL client id can't occur (the consume
+// always passes the boost-derived id); a DO-NOTHING replay returns null so
+// the caller knows the card already rode an earlier batch.
+export async function insertMirroredCardMessage(env, channelId, authorId, body, clientMessageId) {
+  const text = await filterMessageBody(env, body);
+  const now = nowSeconds();
+  const results = await env.GOOBER_DB.batch([
+    env.GOOBER_DB.prepare(MESSAGE_INSERT_SQL)
+      .bind(channelId, authorId, text, clientMessageId, now),
+    env.GOOBER_DB.prepare(CHANNEL_LAST_MESSAGE_UPDATE_SQL)
+      .bind(channelId, channelId, channelId),
+    env.GOOBER_DB.prepare(
+      MESSAGE_SELECT +
+        " WHERE m.channel_id = ? AND m.author_id = ? AND m.client_message_id = ?" +
+        " ORDER BY m.id DESC LIMIT 1",
+    ).bind(channelId, authorId, clientMessageId),
+  ]);
+  const row = results[results.length - 1]?.results?.[0];
+  if (!row) return null;
+  const attachmentIds = await loadAttachmentIds(env, Number(row.id), authorId);
+  return { message: publicMessage(row, attachmentIds), created: results[0]?.meta?.changes === 1 };
 }
 
 async function handleListMessagesRoute(request, env, url, channelId) {

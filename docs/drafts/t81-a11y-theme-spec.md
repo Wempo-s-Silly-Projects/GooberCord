@@ -112,3 +112,17 @@ the sheet.
 2. `--font-scale: 1;` at :root + `calc(100% * var(--font-scale))` seat;
 3. the a11y rules section carries zero hex literals;
 4. the hc token values hold their WCAG floors (recomputed in-test).
+
+## 7. Follow-up row (advisory 3, logged 2026-11-18 — its own lane)
+
+The text-scale meta opt-in (`<meta name="text-scale" content="scale">`)
+is NOT taken tonight: it requires a stylesheet-wide rem audit plus a
+Firefox visual pass at 320px reflow. Static gates ALREADY verified for
+the shipped seat: zero px-valued font-size declarations in
+public/styles.css (grep count 0 — text scales purely through rem/zoom,
+so the "resizable to at least 200% without loss of content" gate rides
+browser zoom), and the sheet's existing 900px/640px mobile breakpoints
+carry the 320px reflow pins. Open items for the follow-up lane:
+the meta opt-in itself, a full rem audit (the sheet's px values are
+borders/indents only by intent — enforce that), and the 320px reflow
+screenshot pass (Firefox-only lane per the standing law).

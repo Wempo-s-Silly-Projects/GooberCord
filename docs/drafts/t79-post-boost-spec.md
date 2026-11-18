@@ -33,6 +33,17 @@ member sees the same community from both rooms.
   author, and already-rendered card messages die through the same
   `gc_messages.author_id` CASCADE t64 records — no ghost cards, no orphan
   boost rows.
+- **Contract amendment (the 0029 scoping pin's findings, 2026-11-18):** the
+  card does NOT survive its author's deletion — `gc_messages.author_id`'s
+  CASCADE is the law (an authored card is the author's message; per the t64
+  §2 row the author's messages vanish from every surface), so the cascade
+  deleting the boost row and the cascade deleting its card are the SAME
+  event, both firing on the one `users` delete. The stamps therefore carry no
+  `rendered_at` (no FK can clear a plain column) and no inter-column CHECK
+  (the card's SET-NULL deletion action clears `rendered_message_id` while
+  `rendered_channel_id` stays; a pair CHECK would refuse every card delete at
+  its own action). Pending stays defined by `rendered_message_id IS NULL`;
+  the surviving channel stamp names the boost's render target.
 
 ### 2.2 The shared table (`fleet_boosts`, migration on BOTH sides)
 
@@ -42,34 +53,66 @@ vendored copy in GC's `migrations/`, exactly the G2 vendored-copy pattern
 migration itself is a separate lane, NOT this deliverable:
 
 ```sql
-CREATE TABLE IF NOT EXISTS fleet_boosts (
+CREATE TABLE IF NOT EXISTS gc_fleet_boosts (
   id INTEGER PRIMARY KEY,
-  forum_post_id INTEGER NOT NULL REFERENCES forum_posts(id),
+  forum_post_id INTEGER NOT NULL REFERENCES posts(id),
   author_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   thread_title TEXT NOT NULL,
   thread_excerpt TEXT NOT NULL,
   created_at INTEGER NOT NULL,
   rendered_channel_id INTEGER NULL,
   rendered_message_id INTEGER NULL,
-  rendered_at INTEGER NULL
+  -- no rendered_at column (the card message row carries the render
+  -- timestamp) and no pair CHECK: the card's SET-NULL deletion action
+  -- clears rendered_message_id while rendered_channel_id stays — a
+  -- both-or-neither CHECK would refuse every card delete at its own
+  -- action (the scoping pin found both while probing)
 );
 ```
 
-(`forum_posts` is the canonical posts table name in the shared schema — the
-forum migration resolves the exact lineage: wempos-forum
-migrations/0001_initial.sql:32 `posts` → later renames; the migration lane
-picks the surviving table name and records it here.)
-
-- `forum_post_id` + `rendered_channel_id` make a boost idempotent: one
-  boost renders at most ONE card per announcement channel (UNIQUE partial
-  index on `(forum_post_id, rendered_channel_id)` where
-  `rendered_message_id IS NOT NULL`). Duplicate render returns the
-  existing card, not a second copy.
+(`forum_post_id` + `rendered_channel_id` make a boost idempotent: one boost
+  renders at most ONE card per announcement channel (UNIQUE partial index on
+  `(forum_post_id, rendered_channel_id)` where `rendered_message_id IS NOT
+  NULL`). Duplicate render returns the existing card, not a second copy.
 - NULL `rendered_message_id` = pending mirror. GC renders PENDING rows for
-  the target channel and stamps the rendered ids back.
+  the target channel and stamps the rendered ids back. The render timestamp
+  rides the card message row (the boost carries no rendered_at column — a
+  SET-NULL deletion action can never clear a plain column).
 - Retract: DELETE the forum boost row → the GC mirror pass, on its next
-  run, deletes the stamped card message by `rendered_message_id` (the
-  card is the boost's shadow, not an independent message).
+  run, deletes the stamped card message by `rendered_message_id` (the card
+  is the boost's shadow, not an independent message).
+- Name + FK notes (GREEN-lane resolution): the table rides GC's scoping
+  pin as `gc_fleet_boosts` (tests/migration-scoping.test.mjs requires
+  GC-created tables to be gc_-prefixed); the forum mint's later IF NOT
+  EXISTS copy carries the same name. `posts` is the canonical posts table
+  in the shared schema — the surviving name after the forum-ledger
+  rebuilds (forum 0002 + 0034; GC code reads it at api/coins.mjs:179) —
+  and the GC ledger vendors it IF NOT EXISTS per the 0002 pattern so its
+  own-chain fresh-DB apply keeps FK-valid. The stamps carry no
+  rendered_at and no inter-column CHECK (the SET-NULL deletion actions
+  cannot clear a plain column and would break a pair CHECK at its own
+  action).)
+- **The 0035 fix-forward (board row FK35, 2026-11-18):** `forum_post_id` now
+  carries **ON DELETE CASCADE** — the ecc-security finding (0029 shipped a
+  bare `REFERENCES posts(id)`, SQLite NO ACTION; the forum hard-deletes post
+  rows at api/posts-write.mjs:444 today, so a boosted post's first delete
+  500s on the FK). 0029 was already ritual-applied remotely when the finding
+  landed, so the fix rides a NEW migration, not a 0029 amend:
+  `migrations/0035_fleet_boosts_fk_cascade.sql` rebuilds the table the 0029
+  way (create-new → explicit-id copy → drop-old → rename → the index
+  recreated verbatim; no canary — nothing references `gc_fleet_boosts`; no
+  child-FK-AROUND machinery — the DROP is a child-table drop). Deletion law
+  after 0035: the post delete kills its boost rows (the shadow dies WITH the
+  post, same t64 §2 idiom as the author CASCADE) and the already-rendered
+  card becomes an orphan whose removal rides the parked GC mirror/retract
+  sweep lane — that lane owns every card-removal byte; the ghost is
+  transient until it exists. Both live DDL copies carry the fix going
+  forward: 0029's DDL is the remote-applied history ONLY (pinned as
+  shipped, never amended); 0035's rebuild DDL + the forum 0043 copy
+  (created post-finding) are the live shapes. Tests:
+  tests/migration-scoping-0035.test.mjs (the static rebuild-order pins + the
+  enforced-FK live-ness pin + the real delete-the-post cascade regression
+  row the 0029 suite's static pin could not give).
 
 ### 2.3 Forum side (mint)
 
@@ -81,6 +124,17 @@ picks the surviving table name and records it here.)
 - Row lands pending (`rendered_message_id NULL`). Forum does NOT insert into
   `gc_*` tables — the GC render pass owns every card byte, per the render
   section. Forum responds `{ boostId }` + the mirror card preview.
+- **Title/excerpt derivation ruling (the forum `6fcf1a0` lane, lead-ratified):**
+  the forum has no thread titles, so the mint derives both card fields from
+  the post's body — flattened to ONE line first (every whitespace run to a
+  single space, the card must survive both pipelines as plain text). The
+  title is the first **100** flat characters, ellipsized when the body ran
+  longer; the excerpt is the body **after** that first 100 (no duplicate
+  head in the card), capped at **240**, ellipsized when truncated. A body at
+  or under the cap leaves an empty excerpt — the card's excerpt line stays
+  present, just blank. The GC renderer re-applies its own 240 cap over
+  whatever the forum stored, so the byte contract holds even if the two
+  caps ever drift (the forum caps are conveniences, the render cap is law).
 
 ### 2.4 GC side (render)
 
@@ -131,3 +185,42 @@ failure IS the red state):
 GREEN lane for a later commit: write `api/boost.mjs` to the spec (§2.4-2.5),
 run `node --test tests/boost-mirror-lane.test.mjs` to green, then build the
 route + migration lane.
+
+## 4. The riders (wave-3 ruling, R5 + R6)
+
+### 4.1 R6 — the ban gate rides the consume (module law)
+
+The chair flagged the boost mirror skipping the T58 ban rider BY DESIGN —
+this section is the explicit ruling. The mirrored card is the boosting
+member's OWN gc_messages row (the author of the card, per §2.4), so the ban
+law rides the consume pass in the T58 idiom:
+
+- The consume pass reads the pending boosts' authors through the ONE shared
+  ban screen read — `activeBanRow` (api/accounts.mjs:397, the exact read the
+  password login and the SSO redeem already run) — BEFORE any boost renders.
+- An actively banned author → the whole call refuses **409** with the copy
+  `"A banned member's boost cannot render."` and nothing renders. Fail-closed
+  by design: no partial render, no half-queue; the caller re-fires the
+  consume once the mod lane moves.
+- A forum-only author carries no GC bans row → `activeBanRow` answers null →
+  the render proceeds. Identity stays the shared users row (t64 G1); the
+  pending SELECT's shared-users JOIN is the identity source, so the card's
+  provenance line shows the shared username, never a copy.
+
+Placement (api/boost.mjs): at the END of the route's gate order — the kind
+gate first, then the member gate, then the SEND bit, then the R5 wall, then
+this ban screen (inside the consume pass, before the first card insert).
+
+### 4.2 R5 — the consume rides the message writer bucket
+
+The render IS a message write (the card rides the one gc_messages writer,
+§2.4), so the consume-boost route rate-limits in the T30 writer bucket with
+the send path's exact idiom shape:
+
+```js
+await rateLimit(request, env, "message", "user:" + user.id);
+```
+
+placed after the SEND gate and before any render — one wall, the shared
+`GC_MESSAGE_RATE_LIMITER` binding, so a consume burst can never sidestep the
+wall every other message write already stands behind.

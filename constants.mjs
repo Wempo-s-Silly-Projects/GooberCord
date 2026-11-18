@@ -309,6 +309,135 @@ export const GC_COIN_VOICE_GRANT = 5;
 export const GC_COIN_VOICE_TICK_SECONDS = 600;
 export const GC_COIN_VOICE_DAILY_CAP = 150;
 
+// T76 economy slate (docs/drafts/t76-economy-slate-spec.md; sink coverage
+// source: docs/drafts/economy-sink-levers.md — baseline sink 13.1%). These 16
+// are ECONOMY caps, not Discord parity numbers: every mint they admit names a
+// sink (the Campfire pool or the Well's absorbed streak lane), and every one
+// feeds a guard arm that rides INSIDE its statement (api/coins.mjs,
+// api/campfire.mjs). The Well ships WITH the Campfire, never before a sink
+// exists (the spec's sink law).
+// The Well — the daily claim's streak rider. The bonus is a mint-side
+// multiplier (base 25 → up to 50 at the cap); its mint cost is absorbed by
+// the Campfire's pool-funded redistribution lane + the rotating-cosmetic
+// catalog the T62 sequencing requires.
+export const GC_WELL_STREAK_STEP_PERCENT = 20;
+export const GC_WELL_STREAK_MAX_BONUS_PERCENT = 100;
+// One missed day halves (never zeroes); this many missed days reset to the
+// base claim.
+export const GC_WELL_MISSED_DAYS_BEFORE_RESET = 5;
+// The Campfire — the server-wide meter. The fire is a PURE sink: the pool
+// only ever receives coins that already left circulation (stokes, chain
+// fees), its draws pay out no more than the pool holds, and overflow at the
+// pool cap burns. Net supply change of any Campfire act: <= 0.
+export const GC_CAMPFIRE_FUEL_THRESHOLD = 400;
+export const GC_CAMPFIRE_FUEL_DAILY_CAP = 200;
+export const GC_CAMPFIRE_LEDGER_WINDOW_SECONDS = 2592000;
+export const GC_CAMPFIRE_DRAW_GAP_SECONDS = 86400;
+export const GC_CAMPFIRE_DRAW_ONLINE_BONUS = 10;
+export const GC_CAMPFIRE_BANNER_HOURS = 24;
+export const GC_CAMPFIRE_MAX_POOL = 5000;
+export const GC_CAMPFIRE_STOKE_MAX = 500;
+// Gift chains — supply-neutral member→member transfers; every pass re-sinks
+// the fee into a Campfire pool (supply change per chain: strictly negative).
+export const GC_CHAIN_FEE_PERCENT = 5;
+export const GC_CHAIN_FEE_MIN_COINS = 1;
+export const GC_CHAIN_MIN_AMOUNT = 5;
+export const GC_CHAIN_MAX_AMOUNT = 200;
+export const GC_CHAIN_DEPTH_MAX = 7;
+export const GC_CHAIN_HOP_TTL_SECONDS = 172800;
+
+// Goober Jobs (T86, wave 4 — docs/drafts/t86-goober-jobs-spec.md): the
+// weekly quests. SINK LAW front and center: every finish mint routes to the
+// server's Campfire pool FIRST (the pool credit rides api/campfire.mjs's
+// campfirePoolCreditStatement — reuse, never a second cap) and members only
+// second, split across the members ONLINE at finish time; a finish with zero
+// online members burns its whole member share into the pool. Cap arithmetic
+// (the T62 sink analysis): <= GC_JOB_FINISH_BONUS * 3 = 300 coins minted per
+// server-week, of which the pool share (80%) is pre-sunk capacity and the
+// circulating growth is <= 60/week/server.
+export const GC_JOB_FINISH_BONUS = 100;
+export const GC_JOB_POOL_SHARE_PERCENT = 80;
+export const GC_JOB_MEMBER_SHARE_PERCENT = 20;
+export const GC_JOB_WEEK_SECONDS = 604800;
+export const GC_JOB_DEFS_PER_WEEK = 3;
+// The five static defs' goals (kind = the activity counter the def feeds;
+// counters count ACTIVITY, never coins, and never members).
+export const GC_JOB_GOAL_MESSAGES = 250;
+export const GC_JOB_GOAL_VOICE = 60;
+export const GC_JOB_GOAL_REACTIONS = 100;
+export const GC_JOB_GOAL_JOINS = 5;
+export const GC_JOB_GOAL_STOKES = 5;
+// The upsert's growth arm: a counter can never spiral past this, even with
+// the whole server mashing the same lane for a week.
+export const GC_JOB_COUNTER_SANITY_CAP = 1000000;
+
+// Time Capsules (T82, wave 4 — docs/drafts/t82-time-capsules-spec.md §3):
+// the scheduled letter's four caps. One schedule, one reveal, ZERO timers —
+// every number here is a cap or a schedule bound, nothing else.
+export const GC_CAPSULE_BODY_MAX = 2000;
+export const GC_CAPSULE_MIN_AHEAD_SECONDS = 300;
+export const GC_CAPSULE_MAX_AHEAD_SECONDS = 2592000;
+export const GC_CAPSULES_MAX_OPEN_PER_MEMBER = 10;
+
+// Goober of the Day (T83, wave 4 — docs/drafts/t83-goober-of-the-day-spec.md
+// §3): the per-server spotlight's three numbers. Kindness as a game, a gift
+// NOT a ladder — the votes PK is the one-vote law itself, nothing else here
+// is a cap.
+export const GC_GOOBER_DAY_SECONDS = 86400;
+export const GC_GOOBER_DAY_TAGLINE_MAX = 64;
+export const GC_GOOBER_DAY_MIN_VOTES_FOR_CARD = 1;
+
+// Server Seasons (T84, wave 4 — docs/drafts/t84-server-seasons-spec.md §3):
+// the mod-configured calendar's caps. Pure numbers only — the finish's
+// Campfire-pool split REUSES the jobs lane's GC_JOB_POOL_SHARE_PERCENT /
+// GC_JOB_MEMBER_SHARE_PERCENT (one sink share law, one declaration; a
+// season-named share re-declaration would break the caps law).
+export const GC_SEASON_WEEK_SECONDS = 604800;
+export const GC_SEASON_MAX_WEEKS = 12;
+export const GC_SEASON_NAME_MAX = 64;
+export const GC_SEASON_METER_GOAL_MAX = 100000;
+export const GC_SEASON_REWARD_COINS = 250;
+// The color seat is an enum of the EXISTING accent tokens (the slate: "a
+// color accent on the existing token set") — the client paints
+// var(--<token>), never raw hex from a client.
+export const GC_SEASON_COLOR_TOKENS = ["green", "coral", "yellow", "blue"];
+
+// The Morning Paper (T87, wave 4 — docs/drafts/t87-morning-paper-spec.md §5):
+// the opt-in daily digest's window bounds. The paper is DERIVED ON REQUEST —
+// it mints nothing, sinks nothing, tracks nothing (sink law N/A by spec), and
+// every number here is a window bound or a section cap, nothing else.
+export const GC_PAPER_DAY_SECONDS = 86400;
+export const GC_PAPER_CHANNELS_MAX = 10;
+export const GC_PAPER_THREADS_MAX = 5;
+export const GC_PAPER_CAPSULES_MAX = 25;
+export const GC_PAPER_YESTERDAY_KEYS = 1;
+
+// Bookmarks (T88, wave 5 — docs/drafts/t88-bookmarks-spec.md §6): the private
+// reading list's only cap — the newest N own pointers the GET answers. A cut
+// beyond it is a pagination owner-gate, not a cap raise.
+export const GC_BOOKMARKS_LIST_MAX = 100;
+
+// Reaction tags (T89, wave 5 — docs/drafts/t89-reaction-tags-spec.md §6): the
+// per-server emoji→tag map cap and the short server-native tag-text bound.
+// Tags are FREE cosmetics (the economy re-rule) — no price, no paid cap raise.
+export const GC_REACTION_TAGS_MAX = 20;
+export const GC_REACTION_TAG_TEXT_MAX = 32;
+
+// Anniversaries (T91, wave 5 — docs/drafts/t91-anniversaries-spec.md §5):
+// the month-day seat's STRUCTURAL bounds only. Month rides the calendar's
+// own 0-11, day the structural 1-31 (no per-month counts, no leap math —
+// the calendar is not the validator); the paper's celebrants section rides
+// its own cap. There is NO year bound — no year is ever collected
+// (LIMIT COLLECTION NOT ACCESS).
+export const GC_USER_ANNIVERSARY_MONTH_MAX = 11;
+export const GC_USER_ANNIVERSARY_DAY_MAX = 31;
+export const GC_PAPER_ANNIVERSARIES_MAX = 25;
+
+// Server welcome card (T92, wave 5 — docs/drafts/t92-welcome-card-spec.md §5):
+// the mod-authored blurb's only cap, and a HOUSE cap, not a parity claim —
+// no Discord source rides it, so no URL is cited.
+export const GC_WELCOME_CARD_BLURB_MAX = 300;
+
 // Goober+ (owner decisions: ONE bundle, MONTHLY renewal, a grace window,
 // boosts stay free, GIFT Goober+ in). The price buys gc_plus_state term
 // extensions; the coin spend itself is gc_coin_ledger's negative row.
@@ -355,6 +484,11 @@ export const GC_SOUNDBOARD_MAX_PER_SERVER = 8;
 // 512 KB per sound. The request ceiling adds multipart envelope slack.
 export const GC_SOUNDBOARD_SOUND_MAX_BYTES = 524_288;
 export const GC_SOUNDBOARD_SOUND_REQUEST_BYTES = GC_SOUNDBOARD_SOUND_MAX_BYTES + 512 * 1024;
+// Pack clips (T85, GC-beyond-parity: the server's own theater packs — the
+// PARITY board sounds cap above stays 512 KB untouched): the tier caps law's
+// floor — a pack clip intake may never admit LESS than 5 MB. The client's
+// G-4 mirror (public/js/ui/soundboard-studio.js) pins equality to this seat.
+export const GC_SOUND_PACK_CLIP_MAX_BYTES = 5_242_880;
 // Expression FILE caps (the W-B0 parity law pass):
 // docs/parity-limits.md — Emoji ≤256 KB (animated = own pool, filed wave);
 // Stickers ≤512 KB, 320×320 (APNG = Lottie). Both caps gate the expression
