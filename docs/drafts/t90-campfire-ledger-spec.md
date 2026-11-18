@@ -105,16 +105,37 @@ exist — one companion INSERT inside the SAME batch, never a new write surface:
    that did not mint does not book). The seat refund books
    `class='seat-refund', source=NULL, direction='in'`; the claim reversal
    books `class='draw-reversal', source=NULL, direction='in'`.
-5. KNOWN v1 PARTIAL (parked as the T90-c completeness lane): the
-   `campfirePoolCreditStatement` callers outside §3's file list —
-   api/jobs.mjs job-finish pool shares and api/seasons.mjs seasonal credits —
-   book NO ledger row (v1 scope ends at the four append points above;
-   `campfirePoolCreditStatement` itself is C1-pinned single-statement and its
-   callers are outside this spec's file list). For those servers the
-   conservation read shows `in` visibly UNDER the true credit. T90-c books
-   the job-finish/season classes with companion statements at those call
-   sites and amends this section; until then the read's payload stays
-   aggregate-per-class honest — the missing rows simply don't exist.
+5. T90-c BUILT: the `campfirePoolCreditStatement` callers outside the
+   coins.mjs chain site now book their own companion rows, one per pool
+   credit, riding the SAME batch (books and money commit together; zero
+   verdict change):
+   - api/jobs.mjs job-finish pool shares — `class='pool-credit',
+     source='job_finish', direction='in'`, two append points: the claim
+     batch's folded pool share (the companion rides the fold order's LAST
+     seat, after the claim marker; its changes arm reads the marker's fresh
+     insert, its EXISTS arm the claimed finish row `lc`) and the delivery
+     batch's burned unsplit share (the companion rides beside its credit,
+     under the claimed marker's counter = 1 gauntlet, before the delivered
+     stamp).
+   - api/seasons.mjs seasonal credits — `class='pool-credit',
+     source='season_finish', direction='in'`, one companion directly after
+     each credit upsert in the finish batch, guarded on the landed
+     gc_season_completions row.
+   Both files bound the source (no literal in the SQL text) and mirror the
+   call site's own gc_coin_ledger label — 'job_finish'
+   (api/jobs.mjs MEMBER_SHARE_MINT_SQL), 'season_finish'
+   (api/seasons.mjs MEMBER_SHARE_MINT_SQL) — never a new label. Booked
+   shape: the jobs and seasons companions cannot ride AHEAD of their credit
+   (the claim batch's [0]=finish/[1]=credit/[2]=marker order is pinned by
+   the fold's own pins; the delivery batch leads with its credit), so they
+   read the pool at their own execution time and the guard requires
+   post-credit headroom (pool + amount <= GC_CAMPFIRE_MAX_POOL): a row
+   banks only when the booked delta IS the amount verbatim, and a credit
+   with no such headroom banks NO row — so a clipped credit leaves the
+   books UNDER, never over (the same honesty note 4's cap-burn parking
+   rests on, and 0039's CHECK (delta <> 0) never trips). The conservation
+   read's `in` lines now carry these classes; the silent clipped-credit
+   corner remains the parked note-4 lane.
 4. Cap burn PARKED: the pool-cap `MIN` arm (api/campfire.mjs:84,168) discards
    overflow silently today and stays silent in v1 — rows record the ACTUAL
    post-arm delta, so a later lane can derive burn as (requested − booked).

@@ -36,7 +36,14 @@ import assert from "node:assert/strict";
 import { readdirSync, readFileSync } from "node:fs";
 
 import worker from "../worker.mjs";
-import { RATE_LIMIT_BINDINGS } from "../constants.mjs";
+import { pickJobs, recordJobProgress, jobWeekKey } from "../api/jobs.mjs";
+import {
+  GC_JOB_FINISH_BONUS,
+  GC_JOB_MEMBER_SHARE_PERCENT,
+  GC_JOB_POOL_SHARE_PERCENT,
+  GC_SEASON_REWARD_COINS,
+  RATE_LIMIT_BINDINGS,
+} from "../constants.mjs";
 import { nowSeconds, sha256Hex } from "../api/core/crypto.mjs";
 
 const ORIGIN = "https://goobercord.itswempo.workers.dev";
@@ -360,4 +367,266 @@ test("an empty ledger answers { window, flows: [] } with status 200 — a quiet 
   assert.equal(typeof payload.window.endSeconds, "number", "the window's end is a number");
   assert.equal(payload.window.endSeconds - payload.window.startSeconds, WINDOW_SECONDS,
     "the fixed 30-day lookback rides the window shape");
+});
+
+// --- T90-c: the companion book rows at the jobs/seasons pool-credit call sites
+// (spec §3 note 5) -------------------------------------------------------------
+//
+// The pool ledger's v1 shipped with a KNOWN PARTIAL: the two campfirePoolCreditStatement
+// callers outside api/campfire.mjs — the jobs finish's pool shares and the
+// seasonal credits — booked NOTHING, so the conservation read showed `in`
+// visibly under the true credit. T90-c books the job-finish/season classes:
+// a companion INSERT INTO gc_campfire_pool_ledger rides the SAME batch as its
+// credit (books and money commit together), class='pool-credit',
+// direction='in', and the source mirrors the call site's own gc_coin_ledger
+// label — 'job_finish' (api/jobs.mjs MEMBER_SHARE_MINT_SQL), 'season_finish'
+// (api/seasons.mjs MEMBER_SHARE_MINT_SQL) — never a new label. These pins go
+// RED first: a RED here is the missing companion, not a broken economy (the
+// credit upserts and their verdicts stay untouched by the lane).
+
+const JOB_LEDGER_SOURCE = "job_finish";
+const SEASON_LEDGER_SOURCE = "season_finish";
+const POOL_SHARE = Math.round(GC_JOB_FINISH_BONUS * GC_JOB_POOL_SHARE_PERCENT / 100);
+const MEMBER_SHARE = Math.round(GC_JOB_FINISH_BONUS * GC_JOB_MEMBER_SHARE_PERCENT / 100);
+
+// The batched companion list, read straight off the call log: only rows that
+// rode a batch count — a free-running book row outside its credit's batch is
+// the shape this pin refuses (the campfire.mjs companions are batch members).
+function batchedCompanions(calls) {
+  return calls.flatMap((entry) =>
+    entry.call === "batch"
+      ? entry.statements.filter((statement) =>
+          statement.sql.startsWith("INSERT INTO gc_campfire_pool_ledger"))
+      : []);
+}
+
+// The jobs-side fake: a strip of the jobsRaceDb fake (the
+// jobs-finish-retry-race.test.mjs lanes) cut to the statements the finish
+// fires — activity counters keyed by kind, the marker keyed by job id, the
+// credit upsert banking plainly under the same 5000 cap, and everything else
+// (the companion itself) defaulting to changes 1. Zero online members (no
+// PRESENCE binding), so both pool credits fire: the claim's 80 and the
+// burned unsplit 20.
+function t90cJobsDb(seedCounters) {
+  const counters = seedCounters.map((row) => ({ ...row }));
+  const finishes = [];
+  const campfires = [];
+  const calls = [];
+  const counterOf = (serverId, weekKey, key) =>
+    counters.find((row) => Number(row.server_id) === Number(serverId) &&
+      Number(row.week_key) === Number(weekKey) && row.kind === key)?.counter ?? 0;
+  const routes = [
+    { test: (sql) => sql.startsWith("SELECT enabled FROM gc_server_jobs"), first: async () => ({ enabled: 1 }) },
+    { test: (sql) => sql.startsWith("INSERT INTO gc_job_counters"), run: (bound) => {
+        const row = counters.find((candidate) =>
+          Number(candidate.server_id) === Number(bound[0]) &&
+          Number(candidate.week_key) === Number(bound[1]) &&
+          candidate.kind === bound[2]);
+        if (row) row.counter = Number(row.counter) + Number(bound[3]);
+        else counters.push({
+          server_id: Number(bound[0]), week_key: Number(bound[1]),
+          kind: bound[2], counter: Number(bound[3]),
+        });
+        return { meta: { changes: 1 } };
+      } },
+    { test: (sql) => sql.startsWith("SELECT counter FROM gc_job_counters"),
+      first: (bound) => ({ counter: counterOf(bound[0], bound[1], bound[2]) }) },
+    { test: (sql) => sql.startsWith("INSERT INTO gc_job_finishes"), run: (bound) => {
+        const existing = finishes.some((row) =>
+          Number(row.server_id) === Number(bound[0]) &&
+          Number(row.week_key) === Number(bound[1]) && row.job_id === bound[2]);
+        if (existing) return { meta: { changes: 0 } };
+        finishes.push({
+          server_id: Number(bound[0]), week_key: Number(bound[1]),
+          job_id: bound[2], paid_total: Number(bound[3]),
+        });
+        return { meta: { changes: 1 } };
+      } },
+    { test: (sql) => sql.startsWith("INSERT INTO gc_campfires"), run: (bound) => {
+        let row = campfires.find((candidate) =>
+          Number(candidate.server_id) === Number(bound[0]));
+        if (!row) {
+          row = { server_id: Number(bound[0]), pool: 0 };
+          campfires.push(row);
+        }
+        row.pool = Math.min(row.pool + Number(bound[1]), 5000);
+        return { meta: { changes: 1 } };
+      } },
+    { test: (sql) => sql.startsWith("UPDATE gc_job_counters"), run: () => ({ meta: { changes: 1 } }) },
+  ];
+  const db = {
+    calls,
+    finishes,
+    campfires,
+    prepare(sql) {
+      const route = routes.find((candidate) => candidate.test(sql));
+      const statement = { sql, bound: [] };
+      statement.bind = (...values) => {
+        statement.bound = values;
+        return statement;
+      };
+      statement.run = async () =>
+        route && route.run ? route.run(statement.bound) : { meta: { changes: 1 } };
+      statement.first = async () =>
+        route && route.first ? route.first(statement.bound) : null;
+      statement.all = async () =>
+        route && route.all ? route.all(statement.bound) : { results: [] };
+      return statement;
+    },
+    async batch(statements) {
+      const results = [];
+      for (const statement of statements) results.push(await statement.run());
+      calls.push({ call: "batch", statements: statements.map((entry) => ({
+        sql: entry.sql, bound: entry.bound,
+      })) });
+      return results;
+    },
+  };
+  return db;
+}
+
+test("T90-c: a job-finish pool share books a pool-credit ledger row in the SAME batch (spec §3 note 5)", async () => {
+  const weekFloor = jobWeekKey(NOW);
+  const def = pickJobs(SERVER_ID, weekFloor)[0];
+  const db = t90cJobsDb([{
+    server_id: SERVER_ID, week_key: weekFloor, kind: def.kind, counter: def.goal,
+  }]);
+  const outcome = await recordJobProgress({ GOOBER_DB: db }, SERVER_ID, def.kind, 1, NOW);
+  assert.ok(outcome && outcome.finished, "the finish ran");
+  // ONE companion per pool credit — the claim's share and the burned unsplit
+  // share each book; a free-running book row outside a batch never counts.
+  const companions = batchedCompanions(db.calls);
+  assert.equal(companions.length, 2,
+    "the claim share AND the burned unsplit share each book one ledger row, inside their own batches");
+  for (const companion of companions) {
+    assert.ok(companion.sql.includes("'pool-credit'"), "class is the pool-credit flow class");
+    assert.ok(companion.sql.includes("'direction', 'in'") || companion.sql.includes(", 'in', "),
+      "direction is pool-in");
+  }
+  assert.deepEqual(companions.map((companion) => companion.bound[1]),
+    [JOB_LEDGER_SOURCE, JOB_LEDGER_SOURCE],
+    "the source mirrors the finish's own gc_coin_ledger label ('job_finish', MEMBER_SHARE_MINT_SQL), never a new one");
+  assert.deepEqual(companions.map((companion) => companion.bound[2]),
+    [POOL_SHARE, MEMBER_SHARE],
+    "each book carries its own credit's amount, verbatim");
+  // Same-batch pin: the claim batch carries BOTH the money (the credit
+  // upsert) and the book row.
+  const claimBatch = db.calls.find((entry) =>
+    entry.call === "batch" &&
+    entry.statements[0].sql.startsWith("INSERT INTO gc_job_finishes"));
+  assert.ok(claimBatch.statements.some((statement) =>
+    statement.sql.startsWith("INSERT INTO gc_campfires")),
+    "the credit rides the claim batch");
+  assert.ok(claimBatch.statements.some((statement) =>
+    statement.sql.startsWith("INSERT INTO gc_campfire_pool_ledger")),
+    "the book row rides the SAME batch");
+  // ZERO behavioral change: the pool still holds exactly the finish's coins.
+  assert.equal(db.campfires[0]?.pool, POOL_SHARE + MEMBER_SHARE,
+    "the credit verdicts are untouched — the pool conserves the finish's 100");
+});
+
+// The seasons-side fake: a strip of the seasons route's statements — the
+// session hash read, the member gate, the current-season lookup (an expired
+// met season), the frozen meter, the guarded completion claim, the credit
+// upsert, and the mint. Zero online members, so the finish banks poolShare +
+// the burned unsplit share.
+function t90cSeasonsDb(season) {
+  const completions = [];
+  const campfires = [];
+  const calls = [];
+  const routes = [
+    { test: (sql) => sql.includes("FROM sessions s LEFT JOIN users u"),
+      first: async (bound) => String(bound[0]) === MEMBER_HASH ? MEMBER_SESSION : null },
+    { test: (sql) => sql.startsWith("SELECT role FROM gc_server_members"),
+      first: async () => ({ role: "member" }) },
+    { test: (sql) => sql.includes("FROM gc_server_seasons"), first: async () => ({ ...season }) },
+    { test: (sql) => sql.includes("FROM gc_message_reactions"), first: async () => ({ meter: 5 }) },
+    { test: (sql) => sql.startsWith("INSERT INTO gc_season_completions"), run: () => {
+        completions.push({ server_id: SERVER_ID, season_started_at: season.started_at });
+        return { meta: { changes: 1 } };
+      } },
+    { test: (sql) => sql.startsWith("SELECT completed_at FROM gc_season_completions"),
+      first: async () => completions.length > 0 ? completions[0] : null },
+    { test: (sql) => sql.startsWith("INSERT INTO gc_campfires"), run: (bound) => {
+        let row = campfires.find((candidate) => Number(candidate.server_id) === Number(bound[0]));
+        if (!row) {
+          row = { server_id: Number(bound[0]), pool: 0 };
+          campfires.push(row);
+        }
+        row.pool = Math.min(row.pool + Number(bound[1]), 5000);
+        return { meta: { changes: 1 } };
+      } },
+    { test: (sql) => sql.startsWith("INSERT INTO gc_coin_ledger"), run: () => ({ meta: { changes: 1 } }) },
+  ];
+  const db = {
+    calls,
+    campfires,
+    prepare(sql) {
+      const route = routes.find((candidate) => candidate.test(sql));
+      const statement = { sql, bound: [] };
+      statement.bind = (...values) => {
+        statement.bound = values;
+        return statement;
+      };
+      statement.run = async () =>
+        route && route.run ? route.run(statement.bound) : { meta: { changes: 1 } };
+      statement.first = async () =>
+        route && route.first ? route.first(statement.bound) : null;
+      statement.all = async () =>
+        route && route.all ? route.all(statement.bound) : { results: [] };
+      return statement;
+    },
+    async batch(statements) {
+      const results = [];
+      for (const statement of statements) results.push(await statement.run());
+      calls.push({ call: "batch", statements: statements.map((entry) => ({
+        sql: entry.sql, bound: entry.bound,
+      })) });
+      return results;
+    },
+  };
+  return db;
+}
+
+test("T90-c: a seasonal pool credit books a season_finish ledger row in the SAME batch (spec §3 note 5)", async () => {
+  const season = {
+    started_at: NOW - 2 * 604800, // a one-week season, long closed
+    name: "Ledger", color: "green", goal: 1, week_count: 1,
+    created_by: 999, created_at: NOW - 2 * 604800,
+  };
+  const db = t90cSeasonsDb(season);
+  const response = await worker.fetch(
+    authed("GET", "/api/servers/" + SERVER_ID + "/seasons/current", MEMBER_SESSION), envOf(db), {},
+  );
+  assert.equal(response.status, 200);
+  const payload = await response.json();
+  assert.equal(payload.completed, true, "the expired met season completed lazily");
+  const seasonPoolShare = Math.round(GC_SEASON_REWARD_COINS * GC_JOB_POOL_SHARE_PERCENT / 100);
+  const seasonMemberShare = Math.round(GC_SEASON_REWARD_COINS * GC_JOB_MEMBER_SHARE_PERCENT / 100);
+  const companions = batchedCompanions(db.calls);
+  assert.equal(companions.length, 2,
+    "the pool share AND the burned unsplit share each book one ledger row");
+  for (const companion of companions) {
+    assert.ok(companion.sql.includes("'pool-credit'"), "class is the pool-credit flow class");
+  }
+  assert.deepEqual(companions.map((companion) => companion.bound[1]),
+    [SEASON_LEDGER_SOURCE, SEASON_LEDGER_SOURCE],
+    "the source mirrors the finish's own gc_coin_ledger label ('season_finish', MEMBER_SHARE_MINT_SQL), never a new one");
+  assert.deepEqual(companions.map((companion) => companion.bound[2]),
+    [seasonPoolShare, seasonMemberShare],
+    "each book carries its own credit's amount, verbatim");
+  const finishBatch = db.calls.find((entry) =>
+    entry.call === "batch" &&
+    entry.statements.some((statement) => statement.sql.startsWith("INSERT INTO gc_campfires")));
+  assert.ok(finishBatch.statements.some((statement) =>
+    statement.sql.startsWith("INSERT INTO gc_season_completions") === false),
+    "the finish's batch exists");
+  assert.equal(finishBatch.statements.some((statement) =>
+    statement.sql.startsWith("INSERT INTO gc_campfires")), true,
+    "the credits ride the finish's batch");
+  assert.equal(finishBatch.statements.filter((statement) =>
+    statement.sql.startsWith("INSERT INTO gc_campfire_pool_ledger")).length, 2,
+    "both book rows ride the SAME batch as their credits");
+  assert.equal(db.campfires[0]?.pool, seasonPoolShare + seasonMemberShare,
+    "the credit verdicts are untouched — the pool conserves the season's 250");
 });

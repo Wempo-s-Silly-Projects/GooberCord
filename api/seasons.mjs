@@ -34,6 +34,7 @@ import { requireUser } from "./core/auth.mjs";
 import { nowSeconds } from "./core/crypto.mjs";
 import { HttpError, json, rateLimit, readJson } from "./core/http.mjs";
 import {
+  GC_CAMPFIRE_MAX_POOL,
   GC_JOB_MEMBER_SHARE_PERCENT,
   GC_JOB_POOL_SHARE_PERCENT,
   GC_SEASON_COLOR_TOKENS,
@@ -104,6 +105,31 @@ const MEMBER_SHARE_MINT_SQL =
     "WHERE EXISTS (SELECT 1 FROM gc_server_members sm " +
       "WHERE sm.server_id = ? AND sm.user_id = ?)";
 
+// T90-c (spec §3 note 5): the seasonal pool credit's book row — the pool
+// ledger companion riding the SAME batch as its campfirePoolCreditStatement,
+// in the jobs finish's booked shape (api/jobs.mjs jobPoolLedgerStatement):
+// the guard fingerprints the season's landed completion row and requires
+// post-credit headroom (pool + amount <= GC_CAMPFIRE_MAX_POOL), so the
+// booked delta IS the amount verbatim and a clipped credit banks nothing
+// (books under, never over — 0039's CHECK (delta <> 0) never trips). The
+// source is BOUND and mirrors the finish's own gc_coin_ledger label
+// ('season_finish', MEMBER_SHARE_MINT_SQL above), never a new one.
+const SEASON_POOL_LEDGER_SOURCE = "season_finish";
+
+const SEASON_POOL_LEDGER_FP_SQL =
+  "EXISTS (SELECT 1 FROM gc_season_completions sc " +
+    "WHERE sc.server_id = ? AND sc.season_started_at = ?)";
+
+function seasonPoolLedgerStatement(db, serverId, amount, now, startedAt) {
+  return db.prepare(
+    "INSERT INTO gc_campfire_pool_ledger (server_id, class, source, direction, delta, created_at) " +
+      "SELECT ?, 'pool-credit', ?, 'in', ?, ? " +
+      "WHERE " + SEASON_POOL_LEDGER_FP_SQL + " " +
+      "AND COALESCE((SELECT cf.pool FROM gc_campfires cf WHERE cf.server_id = ?), 0) + ? <= " +
+      GC_CAMPFIRE_MAX_POOL,
+  ).bind(serverId, SEASON_POOL_LEDGER_SOURCE, amount, now, serverId, startedAt, serverId, amount);
+}
+
 // The pure window arithmetic: active while now < started_at + weeks * week.
 function seasonEndsAt(row) {
   return Number(row.started_at) + Number(row.week_count) * GC_SEASON_WEEK_SECONDS;
@@ -140,8 +166,12 @@ async function finishSeason(env, db, serverId, startedAt, now) {
   const unsplit = memberShare - perMember * online.length;
 
   const statements = [campfirePoolCreditStatement(db, serverId, poolShare, now)];
+  // T90-c: each pool credit's book row rides the finish's own batch, right
+  // beside its credit — books and money commit together, verdicts untouched.
+  statements.push(seasonPoolLedgerStatement(db, serverId, poolShare, now, startedAt));
   if (unsplit > 0) {
     statements.push(campfirePoolCreditStatement(db, serverId, unsplit, now));
+    statements.push(seasonPoolLedgerStatement(db, serverId, unsplit, now, startedAt));
   }
   for (const memberId of online) {
     if (perMember <= 0) break;

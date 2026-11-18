@@ -43,6 +43,7 @@ import { requireUser } from "./core/auth.mjs";
 import { nowSeconds } from "./core/crypto.mjs";
 import { HttpError, json, rateLimit, readJson } from "./core/http.mjs";
 import {
+  GC_CAMPFIRE_MAX_POOL,
   GC_JOB_COUNTER_SANITY_CAP,
   GC_JOB_DEFS_PER_WEEK,
   GC_JOB_FINISH_BONUS,
@@ -110,6 +111,38 @@ const FINISH_INSERT_SQL =
   "INSERT INTO gc_job_finishes (server_id, week_key, job_id, paid_total, finished_at) " +
     "SELECT ?, ?, ?, ?, ? WHERE NOT EXISTS (SELECT 1 FROM gc_job_finishes lf " +
       "WHERE lf.server_id = ? AND lf.week_key = ? AND lf.job_id = ?) LIMIT 1";
+
+// T90-c (spec §3 note 5): the job-finish pool share's book row — the pool
+// ledger companion riding the SAME batch as its campfirePoolCreditStatement.
+// The claim batch's fold order is pinned finish → credit → marker (the C1
+// fold), so the companion rides LAST and reads the pool at its own execution
+// time: the guard requires post-credit headroom (pool + amount <=
+// GC_CAMPFIRE_MAX_POOL), so the booked delta IS the amount verbatim — a pool
+// with no headroom for a second credit of the same size banks NO book row
+// (0039's CHECK (delta <> 0) would abort the whole batch instead — never a
+// booked zero), so a clipped credit leaves the books UNDER, never over. The
+// guard fingerprints the credit's own cause row, so a refused credit banks
+// no book row either. The source is BOUND, not literal: it mirrors the
+// finish's own gc_coin_ledger label ('job_finish') and keeps the companion's
+// SQL text from masquerading as a member mint in statement-matching fakes.
+const JOB_POOL_LEDGER_SOURCE = "job_finish";
+
+const CLAIM_CREDIT_FP_SQL =
+  "(SELECT changes()) = 1 AND EXISTS (SELECT 1 FROM gc_job_finishes lc " +
+    "WHERE lc.server_id = ? AND lc.week_key = ? AND lc.job_id = ?)";
+const UNSPLIT_CREDIT_FP_SQL =
+  "EXISTS (SELECT 1 FROM gc_job_counters md " +
+    "WHERE md.server_id = ? AND md.week_key = ? AND md.kind = ? AND md.counter = 1)";
+
+function jobPoolLedgerStatement(db, serverId, amount, now, fingerprint) {
+  return db.prepare(
+    "INSERT INTO gc_campfire_pool_ledger (server_id, class, source, direction, delta, created_at) " +
+      "SELECT ?, 'pool-credit', ?, 'in', ?, ? " +
+      "WHERE " + fingerprint.sql + " " +
+      "AND COALESCE((SELECT cf.pool FROM gc_campfires cf WHERE cf.server_id = ?), 0) + ? <= " +
+      GC_CAMPFIRE_MAX_POOL,
+  ).bind(serverId, JOB_POOL_LEDGER_SOURCE, amount, now, ...fingerprint.binds, serverId, amount);
+}
 
 // The member share's mint: one guarded row per online member. A member who
 // left between the presence read and the batch finds the EXISTS false — the
@@ -236,11 +269,18 @@ async function finishJob(env, serverId, weekKey, jobId, now) {
         serverId, weekKey, jobId,
       ),
       campfirePoolCreditStatement(db, serverId, poolShare, now, {
-        sql: "(SELECT changes()) = 1 AND EXISTS (SELECT 1 FROM gc_job_finishes lc " +
-          "WHERE lc.server_id = ? AND lc.week_key = ? AND lc.job_id = ?)",
+        sql: CLAIM_CREDIT_FP_SQL,
         binds: [serverId, weekKey, jobId],
       }),
       db.prepare(CLAIM_MARKER_INSERT_SQL).bind(serverId, weekKey, jobId, 1),
+      // T90-c: the pool share's book row rides the claim's own batch (the
+      // fold order's LAST seat — books and money commit together), under the
+      // claimed marker's fresh insert for its changes arm and the claimed
+      // finish row for its EXISTS arm.
+      jobPoolLedgerStatement(db, serverId, poolShare, now, {
+        sql: CLAIM_CREDIT_FP_SQL,
+        binds: [serverId, weekKey, jobId],
+      }),
     ]);
     if (Number(results[0].meta?.changes) !== 1) {
       return { finished: false, alreadyPaid: true };
@@ -268,8 +308,13 @@ async function finishJob(env, serverId, weekKey, jobId, now) {
     // past another delivery's stamp can never double-bank: the marker leaving
     // claimed(1) means someone already delivered, so the credit refuses.
     delivery.push(campfirePoolCreditStatement(db, serverId, unsplit, now, {
-      sql: "EXISTS (SELECT 1 FROM gc_job_counters md " +
-        "WHERE md.server_id = ? AND md.week_key = ? AND md.kind = ? AND md.counter = 1)",
+      sql: UNSPLIT_CREDIT_FP_SQL,
+      binds: [serverId, weekKey, jobId],
+    }));
+    // T90-c: the burned share's book row, the same batch, under the claimed
+    // marker's own counter = 1 gauntlet (the delivered stamp rides last).
+    delivery.push(jobPoolLedgerStatement(db, serverId, unsplit, now, {
+      sql: UNSPLIT_CREDIT_FP_SQL,
       binds: [serverId, weekKey, jobId],
     }));
   }
