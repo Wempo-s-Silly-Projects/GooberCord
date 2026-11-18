@@ -45,6 +45,8 @@
 import { requireSignedInRead, requireUser } from "./core/auth.mjs";
 import { nowSeconds, randomToken } from "./core/crypto.mjs";
 import { HttpError, json, rateLimit, readJson, requiredText } from "./core/http.mjs";
+import { handleConsumeBoostsRoute } from "./boost.mjs";
+import { handleApplyGroveRoute } from "./starter-grove.mjs";
 import {
   GC_CATEGORIES_MAX_PER_SERVER,
   GC_INVITES_MAX_PER_SERVER,
@@ -866,8 +868,8 @@ async function handleCreateChannelRoute(request, env, serverId) {
   const session = await requireUser(request, env);
   const body = await readJson(request);
 
-  if (body.kind !== "text" && body.kind !== "voice") {
-    throw new HttpError(400, "Channel kind must be either text or voice.");
+  if (body.kind !== "text" && body.kind !== "voice" && body.kind !== "announcement") {
+    throw new HttpError(400, "Channel kind must be text, voice or announcement.");
   }
 
   const name = requiredText(body.name, "channel name", CHANNEL_NAME_MAX);
@@ -3460,6 +3462,29 @@ export async function handleServerRoutes(request, env, url, path, method, ctx) {
     : null;
   if (channelsMatch) {
     return handleCreateChannelRoute(request, env, Number(channelsMatch[1]));
+  }
+
+  // T78 (docs/drafts/t78-starter-grove-spec.md): the Grove apply — a template
+  // document seeds roles/channels/overwrites through the hand-rolled shapes
+  // (api/starter-grove.mjs); the module's own gate answers the 403 copy.
+  const groveMatch = method === "POST"
+    ? path.match(/^\/api\/servers\/(0|[1-9][0-9]*)\/grove$/)
+    : null;
+  if (groveMatch) {
+    return handleApplyGroveRoute(request, env, Number(groveMatch[1]));
+  }
+
+  // T79 (docs/drafts/t79-post-boost-spec.md): the mirrored-boost consume —
+  // pending gc_fleet_boosts render as cards into an announcement channel.
+  // The kind gate answers FIRST inside the handler (404 unknown / 409 other
+  // kinds), then the membership read, then the channel's SEND bit.
+  const consumeBoostsMatch = method === "POST"
+    ? path.match(/^\/api\/servers\/(0|[1-9][0-9]*)\/channels\/(0|[1-9][0-9]*)\/consume-boosts$/)
+    : null;
+  if (consumeBoostsMatch) {
+    return handleConsumeBoostsRoute(
+      request, env, Number(consumeBoostsMatch[1]), Number(consumeBoostsMatch[2]),
+    );
   }
 
   // --- phase-3 roles, roster, nicknames, kicks, spoiler channels ---------------

@@ -42,9 +42,9 @@ vendored copy in GC's `migrations/`, exactly the G2 vendored-copy pattern
 migration itself is a separate lane, NOT this deliverable:
 
 ```sql
-CREATE TABLE IF NOT EXISTS fleet_boosts (
+CREATE TABLE IF NOT EXISTS gc_fleet_boosts (
   id INTEGER PRIMARY KEY,
-  forum_post_id INTEGER NOT NULL REFERENCES forum_posts(id),
+  forum_post_id INTEGER NOT NULL REFERENCES posts(id),
   author_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   thread_title TEXT NOT NULL,
   thread_excerpt TEXT NOT NULL,
@@ -55,21 +55,24 @@ CREATE TABLE IF NOT EXISTS fleet_boosts (
 );
 ```
 
-(`forum_posts` is the canonical posts table name in the shared schema — the
-forum migration resolves the exact lineage: wempos-forum
-migrations/0001_initial.sql:32 `posts` → later renames; the migration lane
-picks the surviving table name and records it here.)
-
-- `forum_post_id` + `rendered_channel_id` make a boost idempotent: one
-  boost renders at most ONE card per announcement channel (UNIQUE partial
-  index on `(forum_post_id, rendered_channel_id)` where
-  `rendered_message_id IS NOT NULL`). Duplicate render returns the
-  existing card, not a second copy.
+(`forum_post_id` + `rendered_channel_id` make a boost idempotent: one boost
+  renders at most ONE card per announcement channel (UNIQUE partial index on
+  `(forum_post_id, rendered_channel_id)` where `rendered_message_id IS NOT
+  NULL`). Duplicate render returns the existing card, not a second copy.
 - NULL `rendered_message_id` = pending mirror. GC renders PENDING rows for
   the target channel and stamps the rendered ids back.
 - Retract: DELETE the forum boost row → the GC mirror pass, on its next
-  run, deletes the stamped card message by `rendered_message_id` (the
-  card is the boost's shadow, not an independent message).
+  run, deletes the stamped card message by `rendered_message_id` (the card
+  is the boost's shadow, not an independent message).
+- Name + FK notes (GREEN-lane resolution): the table rides GC's scoping
+  pin as `gc_fleet_boosts` (tests/migration-scoping.test.mjs requires
+  GC-created tables to be gc_-prefixed); the forum mint's later IF NOT
+  EXISTS copy carries the same name. `posts` is the canonical posts table
+  in the shared schema — the surviving name after the forum-ledger
+  rebuilds (forum 0002 + 0034; GC code reads it at api/coins.mjs:179) —
+  and the GC ledger vendors it IF NOT EXISTS per the 0002 pattern so its
+  own-chain fresh-DB apply keeps FK-valid. The stamp pair is
+  CHECK-guarded both-or-neither.)
 
 ### 2.3 Forum side (mint)
 

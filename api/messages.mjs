@@ -966,6 +966,36 @@ export async function sendMessageToChannel(
   return { message: publicMessage(row, attachmentIds), created, careNotice: careNotice ?? null };
 }
 
+// The mirrored-card insert (T79, docs/drafts/t79-post-boost-spec.md): the
+// cross-app boost card rides THE ONE gc_messages writer — this helper reuses
+// the module's own MESSAGE_INSERT_SQL + CHANNEL_LAST_MESSAGE_UPDATE_SQL (no
+// rival SQL anywhere) with the same filter pipeline the member send runs, but
+// skips the member-gate stack (slowmode, member state, DM block): the card is
+// composed server-side from the boost row, the consume route owns the
+// authorization, and a slowmode must never gate a mirror render the member
+// already minted on the forum side. NULL client id can't occur (the consume
+// always passes the boost-derived id); a DO-NOTHING replay returns null so
+// the caller knows the card already rode an earlier batch.
+export async function insertMirroredCardMessage(env, channelId, authorId, body, clientMessageId) {
+  const text = await filterMessageBody(env, body);
+  const now = nowSeconds();
+  const results = await env.GOOBER_DB.batch([
+    env.GOOBER_DB.prepare(MESSAGE_INSERT_SQL)
+      .bind(channelId, authorId, text, clientMessageId, now),
+    env.GOOBER_DB.prepare(CHANNEL_LAST_MESSAGE_UPDATE_SQL)
+      .bind(channelId, channelId, channelId),
+    env.GOOBER_DB.prepare(
+      MESSAGE_SELECT +
+        " WHERE m.channel_id = ? AND m.author_id = ? AND m.client_message_id = ?" +
+        " ORDER BY m.id DESC LIMIT 1",
+    ).bind(channelId, authorId, clientMessageId),
+  ]);
+  const row = results[results.length - 1]?.results?.[0];
+  if (!row) return null;
+  const attachmentIds = await loadAttachmentIds(env, Number(row.id), authorId);
+  return { message: publicMessage(row, attachmentIds), created: results[0]?.meta?.changes === 1 };
+}
+
 async function handleListMessagesRoute(request, env, url, channelId) {
   const session = await requireSignedInRead(request, env);
   const userId = Number(session.user.id);

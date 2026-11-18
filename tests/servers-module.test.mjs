@@ -524,7 +524,7 @@ test("a non-member's channel create 403s and reveals no server existence", async
   assert.equal(state.channels, 0);
 });
 
-test("channel create rejects a non-text/voice kind with 400 before any write", async () => {
+test("channel create rejects a non-text/voice/announcement kind with 400 before any write", async () => {
   const { routes } = channelCapRoutes("owner", 0);
   const { db, createChannelRequest } = await sessioned(routes);
   const response = await dispatch(createChannelRequest({ name: "dm-ish", kind: "dm" }), {
@@ -532,7 +532,7 @@ test("channel create rejects a non-text/voice kind with 400 before any write", a
   });
   assert.equal(response.status, 400);
   assert.deepEqual(await bodyOf(response), {
-    error: "Channel kind must be either text or voice.",
+    error: "Channel kind must be text, voice or announcement.",
   });
   assert.equal(
     db.calls.find((call) => CHANNEL_INSERT_TEST(call.sql)),
