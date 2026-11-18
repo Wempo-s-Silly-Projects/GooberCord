@@ -221,10 +221,12 @@ const CARVE_GATES = {
   // at 212c883, scan-proven here key-for-key — the same set asserted third
   // time running, the declaration pattern stable).
   ar: [
+    "gc.app.title",
     "gc.chat.gif.short",
     "gc.shell.mentions.loading",
   ],
   es: [
+    "gc.app.title",
     "gc.chat.expressions.stickerTitle",
     "gc.chat.gif.short",
     "gc.expressions.kinds.stickers",
@@ -237,6 +239,7 @@ const CARVE_GATES = {
     "gc.shell.mentions.loading",
   ],
   de: [
+    "gc.app.title",
     "gc.chat.gif.short",
     "gc.chat.pins.heading",
     "gc.chat.pins.link",
@@ -255,9 +258,11 @@ const CARVE_GATES = {
     "gc.social.presence.online",
   ],
   ja: [
+    "gc.app.title",
     "gc.shell.mentions.loading",
   ],
   fr: [
+    "gc.app.title",
     "gc.chat.compose.aria",
     "gc.chat.expressions.emojiTitle",
     "gc.chat.expressions.stickerTitle",
@@ -275,6 +280,7 @@ const CARVE_GATES = {
     "gc.social.row.message",
   ],
   pt: [
+    "gc.app.title",
     "gc.chat.expressions.emojiTitle",
     "gc.chat.expressions.stickerTitle",
     "gc.chat.gif.short",
@@ -286,6 +292,7 @@ const CARVE_GATES = {
     "gc.shell.mentions.loading",
   ],
   ru: [
+    "gc.app.title",
     "gc.chat.expressions.emojiTitle",
     "gc.chat.expressions.stickerTitle",
     "gc.expressions.kinds.emojis",
@@ -296,6 +303,7 @@ const CARVE_GATES = {
   // verified: ja one cognate-carve, zh three). Wave-3 intake passed with the
   // gate's first-subject claim true; they are gate-visible from this commit.
   zh: [
+    "gc.app.title",
     "gc.chat.expressions.emojiTitle",
     "gc.expressions.kinds.emojis",
     "gc.shell.mentions.loading",
