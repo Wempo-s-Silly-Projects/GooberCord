@@ -345,6 +345,14 @@ export const GC_CHAIN_MAX_AMOUNT = 200;
 export const GC_CHAIN_DEPTH_MAX = 7;
 export const GC_CHAIN_HOP_TTL_SECONDS = 172800;
 
+// Time Capsules (T82, wave 4 — docs/drafts/t82-time-capsules-spec.md §3):
+// the scheduled letter's four caps. One schedule, one reveal, ZERO timers —
+// every number here is a cap or a schedule bound, nothing else.
+export const GC_CAPSULE_BODY_MAX = 2000;
+export const GC_CAPSULE_MIN_AHEAD_SECONDS = 300;
+export const GC_CAPSULE_MAX_AHEAD_SECONDS = 2592000;
+export const GC_CAPSULES_MAX_OPEN_PER_MEMBER = 10;
+
 // Goober+ (owner decisions: ONE bundle, MONTHLY renewal, a grace window,
 // boosts stay free, GIFT Goober+ in). The price buys gc_plus_state term
 // extensions; the coin spend itself is gc_coin_ledger's negative row.
