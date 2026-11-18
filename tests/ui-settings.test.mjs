@@ -186,7 +186,7 @@ test("settings.js speaks through gc.settings.* (and the shared seats only)", () 
   };
   for (const [key, value] of Object.entries(pinned)) {
     assert.equal(en[key], value, `the bundle carries ${key} as the source used to say it`);
-    assert.match(SETTINGS, new RegExp(`t\\("${key.replace(/\./g, "\\.")}`),
+    assert.ok(SETTINGS.includes(`t("${key}`),
       `the call site rides ${key}`);
   }
   // The adjudicated grammar ride: the use/member count seats flex at

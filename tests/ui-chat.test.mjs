@@ -227,7 +227,7 @@ test("the riders are the ONLY icon buttons in the chat surface (G-7)", () => {
 
 test("the GIF display rides ONLY the same-origin proxy", () => {
   const codeOnly = CHAT.replace(/\/\/[^\n]*/g, "").replace(/\/\*[\s\S]*?\*\//g, "");
-  assert.doesNotMatch(codeOnly, /tenor\.com/, "a direct tenor URL never touches code");
+  assert.ok(!codeOnly.includes("tenor.com"), "a direct tenor URL never touches code");
   assert.match(CHAT, /gifProxyUrl/);
   assert.match(CHAT, /\/api\/gifs\/image\?u=/, "insertion pins the proxied URL as body text");
   assert.match(CHAT, /Search for something|gifQuery|UI_GIF_QUERY_MAX/);
