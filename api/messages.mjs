@@ -39,6 +39,7 @@
 import { publicAccent } from "./accent.mjs";
 import { activeBanRow } from "./accounts.mjs";
 import { grantMessageCoins } from "./coins.mjs";
+import { grantCampfireFuel } from "./campfire.mjs";
 import { requireSignedInRead, requireUser } from "./core/auth.mjs";
 import { nowSeconds } from "./core/crypto.mjs";
 import { HttpError, json, rateLimit, readJson, requiredText } from "./core/http.mjs";
@@ -933,6 +934,20 @@ export async function sendMessageToChannel(
       await grantMessageCoins(env, authorId, now);
     } catch (grantError) {
       console.warn("Coin grant skipped:", grantError && grantError.name ? grantError.name : "UnknownError");
+    }
+    // The Campfire's message rider (T76 §2): a fresh send in a SERVER-bound
+    // channel feeds that server's fire (the send handler's channel read
+    // already answered the server — a NULL server is the DM/group exclusion,
+    // exactly the spec's law). Best-effort, like the grant — the fuel accrual
+    // statement's own day cap rides inside its upsert, and a fuel miss only
+    // delays the fire, never the send.
+    if (expressionChannel && expressionChannel.server_id !== null &&
+        expressionChannel.server_id !== undefined) {
+      try {
+        await grantCampfireFuel(env, Number(expressionChannel.server_id), now);
+      } catch (fuelError) {
+        console.warn("Campfire fuel skipped:", fuelError && fuelError.name ? fuelError.name : "UnknownError");
+      }
     }
   }
 

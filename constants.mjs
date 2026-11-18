@@ -309,6 +309,42 @@ export const GC_COIN_VOICE_GRANT = 5;
 export const GC_COIN_VOICE_TICK_SECONDS = 600;
 export const GC_COIN_VOICE_DAILY_CAP = 150;
 
+// T76 economy slate (docs/drafts/t76-economy-slate-spec.md; sink coverage
+// source: docs/drafts/economy-sink-levers.md — baseline sink 13.1%). These 16
+// are ECONOMY caps, not Discord parity numbers: every mint they admit names a
+// sink (the Campfire pool or the Well's absorbed streak lane), and every one
+// feeds a guard arm that rides INSIDE its statement (api/coins.mjs,
+// api/campfire.mjs). The Well ships WITH the Campfire, never before a sink
+// exists (the spec's sink law).
+// The Well — the daily claim's streak rider. The bonus is a mint-side
+// multiplier (base 25 → up to 50 at the cap); its mint cost is absorbed by
+// the Campfire's pool-funded redistribution lane + the rotating-cosmetic
+// catalog the T62 sequencing requires.
+export const GC_WELL_STREAK_STEP_PERCENT = 20;
+export const GC_WELL_STREAK_MAX_BONUS_PERCENT = 100;
+// One missed day halves (never zeroes); this many missed days reset to the
+// base claim.
+export const GC_WELL_MISSED_DAYS_BEFORE_RESET = 5;
+// The Campfire — the server-wide meter. The fire is a PURE sink: the pool
+// only ever receives coins that already left circulation (stokes, chain
+// fees), its draws pay out no more than the pool holds, and overflow at the
+// pool cap burns. Net supply change of any Campfire act: <= 0.
+export const GC_CAMPFIRE_FUEL_THRESHOLD = 400;
+export const GC_CAMPFIRE_FUEL_DAILY_CAP = 200;
+export const GC_CAMPFIRE_DRAW_GAP_SECONDS = 86400;
+export const GC_CAMPFIRE_DRAW_ONLINE_BONUS = 10;
+export const GC_CAMPFIRE_BANNER_HOURS = 24;
+export const GC_CAMPFIRE_MAX_POOL = 5000;
+export const GC_CAMPFIRE_STOKE_MAX = 500;
+// Gift chains — supply-neutral member→member transfers; every pass re-sinks
+// the fee into a Campfire pool (supply change per chain: strictly negative).
+export const GC_CHAIN_FEE_PERCENT = 5;
+export const GC_CHAIN_FEE_MIN_COINS = 1;
+export const GC_CHAIN_MIN_AMOUNT = 5;
+export const GC_CHAIN_MAX_AMOUNT = 200;
+export const GC_CHAIN_DEPTH_MAX = 7;
+export const GC_CHAIN_HOP_TTL_SECONDS = 172800;
+
 // Goober+ (owner decisions: ONE bundle, MONTHLY renewal, a grace window,
 // boosts stay free, GIFT Goober+ in). The price buys gc_plus_state term
 // extensions; the coin spend itself is gc_coin_ledger's negative row.

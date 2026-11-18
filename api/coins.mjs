@@ -55,9 +55,15 @@
 // predicates (perks = strict active term; the coins payload's display
 // active = shipped grace-inclusive shape) are documented in api/plus.mjs.
 import { requireSignedInRead, requireUser } from "./core/auth.mjs";
-import { nowSeconds } from "./core/crypto.mjs";
+import { nowSeconds, randomToken } from "./core/crypto.mjs";
 import { HttpError, json, rateLimit, readJson } from "./core/http.mjs";
 import {
+  GC_CHAIN_DEPTH_MAX,
+  GC_CHAIN_FEE_MIN_COINS,
+  GC_CHAIN_FEE_PERCENT,
+  GC_CHAIN_HOP_TTL_SECONDS,
+  GC_CHAIN_MAX_AMOUNT,
+  GC_CHAIN_MIN_AMOUNT,
   GC_COIN_DAILY_CEILING,
   GC_COIN_DAILY_GRANT,
   GC_COIN_MESSAGE_DAILY_CAP,
@@ -87,9 +93,13 @@ import {
   GC_ROLLUP_MIN_BODY,
   GC_SERVER_GRANT,
   GC_SERVER_MINT_DAILY_CAP,
+  GC_WELL_MISSED_DAYS_BEFORE_RESET,
+  GC_WELL_STREAK_MAX_BONUS_PERCENT,
+  GC_WELL_STREAK_STEP_PERCENT,
 } from "../constants.mjs";
 import { plusPerkActive } from "./plus.mjs";
 import { isValidUsername } from "./usernames.mjs";
+import { campfirePoolCreditStatement, grantCampfireFuel } from "./campfire.mjs";
 
 // UTC day floor. Every cap — the daily grant, the per-source caps, and the
 // ceiling — rides this one boundary, so "today" is one thing everywhere.
@@ -207,6 +217,91 @@ const SERVER_MINT_SQL =
     "SELECT COUNT(*) FROM gc_coin_ledger sv WHERE sv.user_id = ? " +
     "AND sv.source = 'server' AND sv.created_at >= ?" +
   ") < ?";
+
+// The Well's streak rider (T76 §1): the state read + the explicit-delta
+// upsert (every number rides a bind — no stored math). The upsert rides
+// AFTER the claim's mint (only a minted claim renews the streak).
+const WELL_READ_SQL =
+  "SELECT streak_days, bonus_percent, last_claim_day FROM gc_well_streaks " +
+  "WHERE user_id = ? LIMIT 1";
+
+const WELL_UPSERT_SQL =
+  "INSERT INTO gc_well_streaks (user_id, streak_days, bonus_percent, last_claim_day, updated_at) " +
+  "VALUES (?, ?, ?, ?, ?) " +
+  "ON CONFLICT (user_id) DO UPDATE SET " +
+    "streak_days = ?, bonus_percent = ?, last_claim_day = ?, updated_at = ?";
+
+// The gift chains (T76 §3): the anonymous hop chain. The send's spend pair
+// (gift + fee) rides the PLUS_SPEND shape generalized — BOTH rows are
+// sender-owned spends, NEITHER carries a related_user_id column (the hop's
+// anonymity law: the chain_fee row answers nothing but the pool it fed),
+// and the fee's pool credit upsert names gc_campfires in the SAME batch.
+const CHAIN_SEND_SPEND_SQL =
+  "INSERT INTO gc_coin_ledger (user_id, delta, source, created_at) " +
+  "SELECT ?, ?, 'chain_gift', ? " +
+  "WHERE (SELECT COALESCE(SUM(le.delta), 0) FROM gc_coin_ledger le " +
+    "WHERE le.user_id = ?) >= ? LIMIT 1";
+
+const CHAIN_FEE_SPEND_SQL =
+  "INSERT INTO gc_coin_ledger (user_id, delta, source, created_at) " +
+  "SELECT ?, ?, 'chain_fee', ? " +
+  "WHERE (SELECT COALESCE(SUM(le.delta), 0) FROM gc_coin_ledger le " +
+    "WHERE le.user_id = ?) >= ? LIMIT 1";
+
+const CHAIN_HOP_INSERT_SQL =
+  "INSERT INTO gc_chain_hops (hop_token, depth, amount, pool_server_id, expires_at, created_at) " +
+  "VALUES (?, ?, ?, ?, ?, ?)";
+
+const CHAIN_HOLD_INSERT_SQL =
+  "INSERT INTO gc_chain_hold (hop_token, user_id, created_at) VALUES (?, ?, ?)";
+
+const CHAIN_DELETE_HOP_SQL =
+  "DELETE FROM gc_chain_hops WHERE hop_token = ?";
+
+const CHAIN_DELETE_HOLD_SQL =
+  "DELETE FROM gc_chain_hold WHERE hop_token = ?";
+
+// The member's own inbox (the only chain read): the hop rows join the
+// holder's own hold rows — the join names gc_chain_hold, never users (no
+// sender name can ride a row of this page by construction).
+const CHAIN_INBOX_READ_SQL =
+  "SELECT h.hop_token, h.depth, h.amount, h.expires_at " +
+  "FROM gc_chain_hops h JOIN gc_chain_hold c ON c.hop_token = h.hop_token " +
+  "WHERE c.user_id = ? ORDER BY h.created_at DESC, h.rowid DESC";
+
+// The expired-hop sweep (lazy, read-side): a hop past its TTL converts to
+// keep for its holder on the next inbox read — no silent loss, no fee.
+const CHAIN_EXPIRED_READ_SQL =
+  "SELECT h.hop_token, h.depth, h.amount, h.expires_at " +
+  "FROM gc_chain_hops h JOIN gc_chain_hold c ON c.hop_token = h.hop_token " +
+  "WHERE c.user_id = ? AND h.expires_at <= ?";
+
+const CHAIN_KEEP_MINT_SQL =
+  "INSERT INTO gc_coin_ledger (user_id, delta, source, created_at) " +
+  "SELECT ?, ?, 'chain_gift', ? " +
+  "WHERE EXISTS (" +
+    "SELECT 1 FROM gc_chain_hops gh JOIN gc_chain_hold gc ON gc.hop_token = gh.hop_token " +
+    "WHERE gh.hop_token = ? AND gc.user_id = ?)";
+
+// The chain's one hop read: the caller's own hold joins the hop (the ONLY
+// seat the token resolves through — a foreign token answers the same 404 as
+// a made-up one).
+const CHAIN_HOP_READ_SQL =
+  "SELECT h.hop_token, h.depth, h.amount, h.expires_at " +
+  "FROM gc_chain_hops h JOIN gc_chain_hold c ON c.hop_token = h.hop_token " +
+  "WHERE h.hop_token = ? AND c.user_id = ? LIMIT 1";
+
+// The two-hop shared-server pick: a server the two members share (the pass
+// fee banks there); falls back to the sender's own membership for the send.
+const SHARED_SERVER_READ_SQL =
+  "SELECT one.server_id AS server_id FROM gc_server_members one " +
+  "WHERE one.user_id = ? AND EXISTS (" +
+    "SELECT 1 FROM gc_server_members two " +
+    "WHERE two.server_id = one.server_id AND two.user_id = ?) " +
+  "ORDER BY one.server_id LIMIT 1";
+
+const OWN_SERVER_READ_SQL =
+  "SELECT server_id FROM gc_server_members WHERE user_id = ? ORDER BY server_id LIMIT 1";
 
 // The term upsert, conditioned on the spend row THIS batch minted (the
 // fingerprint arm rides the INSERT's SELECT, so a skipped spend can never
@@ -683,6 +778,53 @@ async function handleLedgerReadRoute(request, env, url) {
   });
 }
 
+// The Well's streak arithmetic (T76 §1 — route-side math, explicit binds):
+//   * first claim ever (no row)           → streak 1, bonus = step;
+//   * yesterday's claim (gap 1)           → streak +1, bonus capped step;
+//   * missed days (gap 2..4)              → THE gentle decay: each missed day
+//     halves streak AND bonus (floor, never zeroed — a half of 1 stays 1);
+//   * gap >= MISSED_DAYS_BEFORE_RESET     → reset: today's claim reads the
+//     base shape (streak 1, bonus 0);
+//   * a same-day re-claim never reaches this (the mint's once-per-day arm
+//     refuses first — the upsert rides ONLY a minted claim).
+function nextWell(prevRow, today) {
+  if (!prevRow) {
+    return { streakDays: 1, bonusPercent: GC_WELL_STREAK_STEP_PERCENT };
+  }
+  const priorStreak = Number(prevRow.streak_days) || 0;
+  const priorBonus = Number(prevRow.bonus_percent) || 0;
+  const priorDay = Number(prevRow.last_claim_day) || 0;
+  const gapDays = Math.floor((today - priorDay) / 86400);
+  if (gapDays >= GC_WELL_MISSED_DAYS_BEFORE_RESET) {
+    return { streakDays: 1, bonusPercent: 0 };
+  }
+  const missedDays = Math.max(gapDays - 1, 0);
+  if (missedDays === 0) {
+    return {
+      streakDays: priorStreak + 1,
+      bonusPercent: Math.min(
+        priorBonus + GC_WELL_STREAK_STEP_PERCENT,
+        GC_WELL_STREAK_MAX_BONUS_PERCENT,
+      ),
+    };
+  }
+  let streakDays = Math.max(priorStreak, 0);
+  let bonusPercent = Math.max(priorBonus, 0);
+  for (let i = 0; i < missedDays; i += 1) {
+    streakDays = Math.floor(streakDays / 2);
+    bonusPercent = Math.floor(bonusPercent / 2);
+  }
+  return { streakDays: Math.max(streakDays, 1), bonusPercent: Math.max(bonusPercent, 0) };
+}
+
+// The claim's multiplied grant (T76 §1): the minted delta IS the Well's
+// math — 25 base up to 50 at the cap — still under the existing ceiling arm
+// (the multiplied delta rides the grant seat, so the ceiling guards what
+// actually mints).
+function wellGrantAmount(bonusPercent) {
+  return Math.round(GC_COIN_DAILY_GRANT * (1 + bonusPercent / 100));
+}
+
 async function handleClaimRoute(request, env) {
   const session = await requireUser(request, env);
   const userId = Number(session.user.id);
@@ -694,21 +836,32 @@ async function handleClaimRoute(request, env) {
   // arm. changes = 0 → the same "come back tomorrow" copy either way (no
   // oracle between the two refusals; both are "no coins for you today").
   // The ECONOMY RE-RULE retires the claim's TIER (25 FLAT) but the ceiling
-  // stays the member's own (250 / 500).
+  // stays the member's own (250 / 500); the WELL rider (T76) multiplies the
+  // grant by the streak's bonus.
   const perks = await plusPerkActive(env, userId, now);
+  // The Well state read happens BEFORE the mint (the multipliers come from
+  // yesterday's row; the upsert rides only a minted claim, so a refused
+  // claim never renews the streak).
+  const prevRow = await env.GOOBER_DB.prepare(WELL_READ_SQL).bind(userId).first();
+  const next = nextWell(prevRow, dayStart);
+  const delta = wellGrantAmount(next.bonusPercent);
   const minted = await mint(env, CLAIM_INSERT_SQL, [
-    userId, GC_COIN_DAILY_GRANT, now,
+    userId, delta, now,
     userId,
     userId, dayStart,
     userId, dayStart,
-    GC_COIN_DAILY_GRANT,
+    delta,
     perks ? GC_PLUS_DAILY_CEILING : GC_COIN_DAILY_CEILING,
   ]);
   if (!minted) {
     throw new HttpError(409, "Already claimed today. Come back tomorrow.");
   }
+  await env.GOOBER_DB.prepare(WELL_UPSERT_SQL).bind(
+    userId, next.streakDays, next.bonusPercent, dayStart, now,
+    next.streakDays, next.bonusPercent, dayStart, now,
+  ).run();
   const snapshot = await coinsSnapshot(env, userId, nowSeconds());
-  return json({ claimed: true, ...snapshot });
+  return json({ claimed: true, streak: next.streakDays, bonusPercent: next.bonusPercent, ...snapshot });
 }
 
 async function handleVoiceTickRoute(request, env) {
@@ -728,6 +881,17 @@ async function handleVoiceTickRoute(request, env) {
   // mints nothing answers granted:false with the standing numbers. No oracle —
   // a foreign channel and a reached cap both look exactly the same.
   const perks = await plusPerkActive(env, userId, now);
+  // The Campfire's voice rider (T76 §2): one indexed channel read answers the
+  // server the tick sits in (a DM/group or unknown channel reads NULL/none and
+  // feeds no fire); the fuel accrual rides ONLY a minted tick, best-effort —
+  // a fuel miss delays the fire, never the voice mint.
+  const channelRow = await env.GOOBER_DB.prepare(
+    "SELECT server_id FROM gc_channels WHERE id = ? LIMIT 1",
+  ).bind(channelId).first();
+  const tickServerId = channelRow === null || channelRow === undefined ||
+    channelRow.server_id === null || channelRow.server_id === undefined
+    ? null
+    : Number(channelRow.server_id);
   const voiceGrant = perks ? GC_PLUS_VOICE_GRANT : GC_COIN_VOICE_GRANT;
   const voiceCeiling = perks ? GC_PLUS_DAILY_CEILING : GC_COIN_DAILY_CEILING;
   const minted = await mint(env, VOICE_GRANT_SQL, [
@@ -736,6 +900,11 @@ async function handleVoiceTickRoute(request, env) {
     userId, dayStart, voiceGrant, voiceCeiling,
     userId, dayStart, voiceGrant, GC_COIN_VOICE_DAILY_CAP,
   ]);
+  if (minted && tickServerId !== null) {
+    await grantCampfireFuel(env, tickServerId, now).catch(() => {
+      /* a fuel miss only delays the fire */
+    });
+  }
   const snapshot = await coinsSnapshot(env, userId, nowSeconds());
   return json({ granted: minted, ...snapshot });
 }
@@ -843,6 +1012,192 @@ async function handleGiftRoute(request, env) {
   });
 }
 
+// --- T76 §3: the pay-it-forward gift chains ----------------------------------
+
+// The fee's route-side math (explicit, never stored): MAX(1, ceil(amount * 5%)).
+function chainFee(amount) {
+  return Math.max(GC_CHAIN_FEE_MIN_COINS, Math.ceil(amount * GC_CHAIN_FEE_PERCENT / 100));
+}
+
+const CHAIN_TOKEN_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
+
+function chainTokenOr400(raw) {
+  if (typeof raw !== "string" || !CHAIN_TOKEN_PATTERN.test(raw)) {
+    throw new HttpError(400, "That chain hop is invalid.");
+  }
+  return raw;
+}
+
+// The target read + the not-self arm (the send and the pass share it).
+async function chainTarget(env, rawName, selfId) {
+  const username = isValidUsername(rawName) ? String(rawName).trim().toLowerCase() : null;
+  if (!username) throw new HttpError(400, "Enter the member you want to send to.");
+  const target = await env.GOOBER_DB.prepare(GIFT_TARGET_READ_SQL).bind(username).first();
+  if (!target) throw new HttpError(404, "No member by that name.");
+  const targetId = Number(target.id);
+  if (targetId === selfId) {
+    throw new HttpError(400, "A chain cannot ride back to its sender.");
+  }
+  return { targetId, targetName: String(target.username) };
+}
+
+// The pool pick: a server the two members share; the send's fallback is the
+// sender's own membership; the no-membership corner (fresh DM-only pairs)
+// banks the fee at the marker pool 0 (migration 0030's noted seat) — the fee
+// still leaves circulation either way.
+async function chainPoolServer(env, aId, bId) {
+  const shared = (await env.GOOBER_DB.prepare(SHARED_SERVER_READ_SQL)
+    .bind(aId, bId).all()).results || [];
+  if (shared.length > 0) return Number(shared[0].server_id);
+  if (aId === bId) return 0;
+  const own = (await env.GOOBER_DB.prepare(OWN_SERVER_READ_SQL)
+    .bind(aId).all()).results || [];
+  return own.length > 0 ? Number(own[0].server_id) : 0;
+}
+
+// POST /api/coins/chain { to, amount } — the anonymous chain gift. ONE batch:
+// the gift spend (− amount, chain_gift, no related identity), the fee spend
+// (− fee, chain_fee), the fee's Campfire pool credit (the SINK law — named
+// in-batch), the hop row, and the recipient's hold row. The recipient NEVER
+// sees the sender: the hold maps the token to the member, nothing else does.
+async function handleChainSendRoute(request, env) {
+  const session = await requireUser(request, env);
+  const userId = Number(session.user.id);
+  await rateLimit(request, env, "write", "coins:chain:write:" + userId);
+  const body = await readJson(request);
+
+  const amount = body && body.amount;
+  if (!Number.isInteger(amount) || amount < GC_CHAIN_MIN_AMOUNT || amount > GC_CHAIN_MAX_AMOUNT) {
+    throw new HttpError(400, "That gift amount is invalid.");
+  }
+  const { targetId } = await chainTarget(env, body && body.to, userId);
+  const fee = chainFee(amount);
+  const now = nowSeconds();
+  const hopToken = randomToken(32);
+  const poolServerId = await chainPoolServer(env, userId, targetId);
+
+  const results = await env.GOOBER_DB.batch([
+    env.GOOBER_DB.prepare(CHAIN_SEND_SPEND_SQL).bind(userId, -amount, now, userId, amount + fee),
+    env.GOOBER_DB.prepare(CHAIN_FEE_SPEND_SQL).bind(userId, -fee, now, userId, fee),
+    campfirePoolCreditStatement(env.GOOBER_DB, poolServerId, fee, now),
+    env.GOOBER_DB.prepare(CHAIN_HOP_INSERT_SQL).bind(
+      hopToken, 1, amount, poolServerId, now + GC_CHAIN_HOP_TTL_SECONDS, now,
+    ),
+    env.GOOBER_DB.prepare(CHAIN_HOLD_INSERT_SQL).bind(hopToken, targetId, now),
+  ]);
+  const spent = results[0] && Number(results[0].meta?.changes) === 1;
+  if (!spent) {
+    throw new HttpError(400, "Not enough Goober Coins for that.");
+  }
+  // The hop's coins never lose their anonymity either way: the statements
+  // named no member column — a refused spend refuses only the spend.
+  return json({ sent: true, amount, fee });
+}
+
+// GET /api/coins/chains — the member's pending hops, then the lazy expiry
+// sweep (an out-of-TTL hop converts to keep on this read: the coins land,
+// the hop goes, no fee). The page carries token/amount/depth/expiresAt and
+// NOTHING about a sender — the join names gc_chain_hold, never users.
+async function handleChainsReadRoute(request, env) {
+  const session = await requireUser(request, env);
+  const userId = Number(session.user.id);
+  await rateLimit(request, env, "read", "coins:chain:read:" + userId);
+  const now = nowSeconds();
+
+  // The expiry conversion rides the SAME keep-conversion the explicit keep
+  // route uses (one batch per hop: the mint, the hop delete, the hold delete).
+  const expired = (await env.GOOBER_DB.prepare(CHAIN_EXPIRED_READ_SQL)
+    .bind(userId, now).all()).results || [];
+  for (const hop of expired) {
+    const token = String(hop.hop_token);
+    await env.GOOBER_DB.batch([
+      env.GOOBER_DB.prepare(CHAIN_KEEP_MINT_SQL).bind(
+        userId, Number(hop.amount), now, token, userId,
+      ),
+      env.GOOBER_DB.prepare(CHAIN_DELETE_HOP_SQL).bind(token),
+      env.GOOBER_DB.prepare(CHAIN_DELETE_HOLD_SQL).bind(token),
+    ]);
+  }
+
+  const page = (await env.GOOBER_DB.prepare(CHAIN_INBOX_READ_SQL)
+    .bind(userId).all()).results || [];
+  return json({
+    hops: page.map((hop) => ({
+      token: String(hop.hop_token),
+      amount: Number(hop.amount),
+      depth: Number(hop.depth),
+      expiresAt: Number(hop.expires_at),
+    })),
+  });
+}
+
+// The keep conversion (route + the read-side sweep): the hop's amount lands
+// as ONE positive chain_gift row for the holder, the chain ENDS (no fee —
+// the fee rode the send), and both the hop row and the hold row go.
+async function handleChainKeepRoute(request, env, token) {
+  const session = await requireUser(request, env);
+  const userId = Number(session.user.id);
+  await rateLimit(request, env, "write", "coins:chain:write:" + userId);
+  const now = nowSeconds();
+
+  const hop = await env.GOOBER_DB.prepare(CHAIN_HOP_READ_SQL).bind(token, userId).first();
+  if (!hop) throw new HttpError(404, "That chain hop does not exist.");
+  await env.GOOBER_DB.batch([
+    env.GOOBER_DB.prepare(CHAIN_KEEP_MINT_SQL).bind(
+      userId, Number(hop.amount), now, token, userId,
+    ),
+    env.GOOBER_DB.prepare(CHAIN_DELETE_HOP_SQL).bind(token),
+    env.GOOBER_DB.prepare(CHAIN_DELETE_HOLD_SQL).bind(token),
+  ]);
+  return json({ kept: true, amount: Number(hop.amount) });
+}
+
+// POST /api/coins/chain/:token/pass { to } — pay it forward: the NEW fee
+// banks to the shared campfire, the carried coins shrink by it, the old hop
+// and its hold die, the new hop + hold ride in the same batch. Depth caps at
+// GC_CHAIN_DEPTH_MAX (the pass at the cap is a 400); the floor amount keeps
+// the chain from decaying into dust; every ledger row stays identity-free.
+async function handleChainPassRoute(request, env, token) {
+  const session = await requireUser(request, env);
+  const userId = Number(session.user.id);
+  await rateLimit(request, env, "write", "coins:chain:write:" + userId);
+  const body = await readJson(request);
+
+  const now = nowSeconds();
+  const hop = await env.GOOBER_DB.prepare(CHAIN_HOP_READ_SQL).bind(token, userId).first();
+  if (!hop) throw new HttpError(404, "That chain hop does not exist.");
+  const depth = Number(hop.depth);
+  const ridingAmount = Number(hop.amount);
+  if (depth >= GC_CHAIN_DEPTH_MAX) {
+    throw new HttpError(400, "This chain has gone as deep as it goes.");
+  }
+  const { targetId } = await chainTarget(env, body && body.to, userId);
+  const fee = chainFee(ridingAmount);
+  const carriedAmount = ridingAmount - fee;
+  if (carriedAmount < GC_CHAIN_MIN_AMOUNT) {
+    throw new HttpError(400, "What rides the chain has worn too thin.");
+  }
+  const poolServerId = await chainPoolServer(env, userId, targetId);
+  const newToken = randomToken(32);
+
+  await env.GOOBER_DB.batch([
+    env.GOOBER_DB.prepare(CHAIN_DELETE_HOLD_SQL).bind(token),
+    env.GOOBER_DB.prepare(CHAIN_DELETE_HOP_SQL).bind(token),
+    env.GOOBER_DB.prepare(CHAIN_FEE_SPEND_SQL).bind(userId, -fee, now, userId, fee),
+    campfirePoolCreditStatement(env.GOOBER_DB, poolServerId, fee, now),
+    env.GOOBER_DB.prepare(CHAIN_HOP_INSERT_SQL).bind(
+      newToken, depth + 1, carriedAmount, poolServerId, now + GC_CHAIN_HOP_TTL_SECONDS, now,
+    ),
+    env.GOOBER_DB.prepare(CHAIN_HOLD_INSERT_SQL).bind(newToken, targetId, now),
+  ]);
+  return json({
+    passed: true,
+    depth: depth + 1,
+    amount: carriedAmount,
+    fee,
+  });
+}
+
 export async function handleCoinRoutes(request, env, url, path, method) {
   if (path === "/api/coins" && method === "GET") {
     return handleCoinsReadRoute(request, env);
@@ -861,6 +1216,20 @@ export async function handleCoinRoutes(request, env, url, path, method) {
   }
   if (path === "/api/coins/voice/tick" && method === "POST") {
     return handleVoiceTickRoute(request, env);
+  }
+  if (path === "/api/coins/chain" && method === "POST") {
+    return handleChainSendRoute(request, env);
+  }
+  if (path === "/api/coins/chains" && method === "GET") {
+    return handleChainsReadRoute(request, env);
+  }
+  const chainActionMatch = method === "POST"
+    ? path.match(/^\/api\/coins\/chain\/([A-Za-z0-9_-]{1,64})\/(keep|pass)$/)
+    : null;
+  if (chainActionMatch) {
+    return chainActionMatch[2] === "keep"
+      ? handleChainKeepRoute(request, env, chainActionMatch[1])
+      : handleChainPassRoute(request, env, chainActionMatch[1]);
   }
   if (path === "/api/plus/renew" && method === "POST") {
     return handleRenewRoute(request, env);
