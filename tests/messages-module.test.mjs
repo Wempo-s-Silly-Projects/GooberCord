@@ -1088,6 +1088,15 @@ test("real-SQLite: a plain send with no client id echoes the row just sent", asy
     CREATE TABLE site_settings (key TEXT, value TEXT NOT NULL, updated_at INTEGER NOT NULL);
     INSERT INTO site_settings (key, value, updated_at) VALUES ('filtered_words', '', 1);
 
+    -- T58: the mid-session account-ban rider reads the shared bans table
+    -- (api/accounts.mjs's activeBanRow); the rider answers null here (no rows),
+    -- so these sends behave as before.
+    CREATE TABLE bans (
+      id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL REFERENCES users(id),
+      created_at INTEGER NOT NULL, expires_at INTEGER NULL,
+      revoked_at INTEGER NULL, reason TEXT NULL);
+    CREATE INDEX idx_bans_active ON bans(user_id, revoked_at, expires_at);
+
     CREATE TABLE gc_channels (id INTEGER PRIMARY KEY, server_id INTEGER NULL, kind TEXT NULL, slowmode_seconds INTEGER NOT NULL DEFAULT 0, last_message_id INTEGER, last_message_at INTEGER);
     INSERT INTO gc_channels (id) VALUES (${CHANNEL_ID});
 

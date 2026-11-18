@@ -37,6 +37,7 @@
 // last_message_* bump in one batch, plus — when called with a prepared
 // attachment — the attachment's intake INSERT and chunks in that same batch).
 import { publicAccent } from "./accent.mjs";
+import { activeBanRow } from "./accounts.mjs";
 import { grantMessageCoins } from "./coins.mjs";
 import { requireSignedInRead, requireUser } from "./core/auth.mjs";
 import { nowSeconds } from "./core/crypto.mjs";
@@ -285,7 +286,23 @@ export class RulesGateError extends HttpError {
 // behavior). Both server-side switches share the same one-row read, so a
 // gate-free server costs one extra one-row read at most — and none at all
 // for the bypass tiers.
+// The global-ban re-check (T58): one indexed one-row read, the same cost shape
+// the member-state gates accept. The copy is the login screen's verbatim, and
+// the WHERE lives in one place (accounts.mjs's activeBanRow) so the login, SSO
+// and mid-session arms can never drift.
+async function enforceAccountNotBanned(env, userId) {
+  const activeBan = await activeBanRow(env, userId);
+  if (activeBan) throw new HttpError(403, "This account is currently banned.");
+}
+
 export async function enforceMemberGates(env, serverId, userId) {
+  // The account-ban rider (T58): a ban landed mid-session answers here on the
+  // ONE active-ban read the login and SSO gates already share, before any
+  // member-state read — the open session loses the doors the moment the row
+  // lands, and no session invalidation is needed (the mint's INSERT predicate
+  // handles the fresh-login shape; this rider handles the standing one).
+  await enforceAccountNotBanned(env, userId);
+
   const context = await env.GOOBER_DB.prepare(MEMBER_GATE_SQL)
     .bind(serverId, userId, serverId, userId).first();
   if (!context) return; // not even a member: the caller's own gate answers
@@ -374,7 +391,13 @@ export async function enforceMemberGatesForChannel(env, channelId, userId) {
   const channel = await env.GOOBER_DB.prepare(
     "SELECT server_id FROM gc_channels WHERE id = ? LIMIT 1",
   ).bind(Number(channelId)).first();
-  if (!channel || channel.server_id === null || channel.server_id === undefined) return;
+  if (!channel || channel.server_id === null || channel.server_id === undefined) {
+    // The DM/group arm skips the member-state gates for want of a server row,
+    // but the account-ban rider still answers (T58): a ban is an account-level
+    // state, not a server-local one.
+    await enforceAccountNotBanned(env, userId);
+    return;
+  }
   return enforceMemberGates(env, Number(channel.server_id), Number(userId));
 }
 
