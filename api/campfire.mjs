@@ -40,6 +40,7 @@ import {
   GC_CAMPFIRE_DRAW_ONLINE_BONUS,
   GC_CAMPFIRE_FUEL_DAILY_CAP,
   GC_CAMPFIRE_FUEL_THRESHOLD,
+  GC_CAMPFIRE_LEDGER_WINDOW_SECONDS,
   GC_CAMPFIRE_MAX_POOL,
   GC_CAMPFIRE_STOKE_MAX,
 } from "../constants.mjs";
@@ -137,11 +138,91 @@ const DRAW_CLAIM_REVERSAL_SQL =
     "last_draw_at = ?, updated_at = ? " +
   "WHERE server_id = ? AND last_draw_at = ?";
 
+// The draw's book rows (spec §3.3): one row per minted seat ('out', source
+// 'campfire'), the seat refund, and the claim reversal. The mint companion
+// fingerprints the payout row itself (a seat that did not mint does not
+// book); the refund companion's guard mirrors the refund UPDATE's WHERE —
+// the refund moves only the pool, never last_draw_at, so the two answers
+// travel together. The reversal companion rides AHEAD of the reversal: the
+// reversal rewrites last_draw_at, so its own WHERE can only read the row
+// before it does.
+const DRAW_MINT_LEDGER_SQL =
+  "INSERT INTO gc_campfire_pool_ledger (server_id, class, source, direction, delta, created_at) " +
+    "SELECT ?, 'member-share-mint', 'campfire', 'out', ?, ? " +
+    "WHERE EXISTS (SELECT 1 FROM gc_coin_ledger le " +
+      "WHERE le.user_id = ? AND le.source = 'campfire' AND le.delta = ? AND le.created_at = ?)";
+const DRAW_SEAT_REFUND_LEDGER_SQL =
+  "INSERT INTO gc_campfire_pool_ledger (server_id, class, source, direction, delta, created_at) " +
+    "SELECT ?, 'seat-refund', NULL, 'in', ?, ? " +
+    "WHERE EXISTS (SELECT 1 FROM gc_campfires cf " +
+      "WHERE cf.server_id = ? AND cf.last_draw_at = ?)";
+const DRAW_REVERSAL_LEDGER_SQL =
+  "INSERT INTO gc_campfire_pool_ledger (server_id, class, source, direction, delta, created_at) " +
+    "SELECT ?, 'draw-reversal', NULL, 'in', ?, ? " +
+    "WHERE EXISTS (SELECT 1 FROM gc_campfires cf " +
+      "WHERE cf.server_id = ? AND cf.last_draw_at = ?)";
+
 const ROSTER_READ_SQL =
   "SELECT user_id FROM gc_server_members WHERE server_id = ?";
 
-// The pool credit primitive (api/coins.mjs's chain lane calls it for the
-// chain fee — the Campfire's second credit). Same upsert, same cap arm.
+// The ledger's ONE aggregate read (T90, spec §4.4): derived ON REQUEST over
+// the 0039 pool-flow rows, server-keyed by the WHERE, windowed by created_at,
+// grouped per (class, source, direction). Flow-class labels only — no coin
+// holder is nameable here even by accident (the schema has no such column).
+const POOL_LEDGER_READ_SQL =
+  "SELECT class, source, direction, SUM(delta) AS amount, COUNT(*) AS count " +
+    "FROM gc_campfire_pool_ledger " +
+    "WHERE server_id = ? AND created_at >= ? " +
+    "GROUP BY class, source, direction";
+
+// The pool-ledger companions (T90, spec §3): every pool-moving statement
+// gains ONE guarded INSERT into gc_campfire_pool_ledger riding INSIDE the
+// same batch as its cause — the books and the money commit together, and a
+// refused cause banks no row (the guard fingerprints the cause's own landed
+// row, the CHAIN_PASS_CREDIT_FP idiom). Companions are fire-and-forget batch
+// members: no economic statement reads their changes, and no member identity
+// is stored — any spender bind feeds the existence guard only (the
+// no-attribution law rides the 0039 schema, which has no column to hold one).
+// Deltas are pool magnitudes keyed by `direction`.
+const STOKE_LEDGER_SQL =
+  "INSERT INTO gc_campfire_pool_ledger (server_id, class, source, direction, delta, created_at) " +
+    "SELECT ?, 'pool-credit', 'campfire_stoke', 'in', ?, ? " +
+    "WHERE EXISTS (SELECT 1 FROM gc_coin_ledger le " +
+      "WHERE le.user_id = ? AND le.source = 'campfire_stoke' AND le.delta = ? AND le.created_at = ?)";
+// The stoke's booked delta IS the amount verbatim: the spend's own cap arm
+// (COALESCE(pool, 0) + amount <= GC_CAMPFIRE_MAX_POOL) already ran, so the
+// credit's MIN never clips — the actual post-arm delta equals the amount.
+const CHAIN_FEE_LEDGER_SQL =
+  "INSERT INTO gc_campfire_pool_ledger (server_id, class, source, direction, delta, created_at) " +
+    "SELECT ?, 'pool-credit', 'chain_fee', 'in', " +
+      "MIN(COALESCE((SELECT cf.pool FROM gc_campfires cf WHERE cf.server_id = ?), 0) + ?, " +
+        GC_CAMPFIRE_MAX_POOL + ") - " +
+      "COALESCE((SELECT cf.pool FROM gc_campfires cf WHERE cf.server_id = ?), 0), ? " +
+    "WHERE EXISTS (SELECT 1 FROM gc_coin_ledger le " +
+      "WHERE le.user_id = ? AND le.source = 'chain_fee' AND le.delta = ? AND le.created_at = ?) " +
+    // CRITICAL-1 (t90-b review): with the pool already AT the cap the booked
+    // delta computes to 0 and 0039's CHECK (delta <> 0) would abort the whole
+    // chain batch — zero movement banks NO row instead (spec §5: a zero flow
+    // line would be a lie). The booked delta is 0 exactly when the pre-arm
+    // pool already sits at the cap, so this WHERE arm is the delta <> 0 test
+    // with ONE bind (the arm rides the pool <= cap invariant both statements'
+    // MIN arms enforce; a broken-invariant pool refuses the book too).
+    "AND COALESCE((SELECT cf.pool FROM gc_campfires cf WHERE cf.server_id = ?), 0) < " +
+      GC_CAMPFIRE_MAX_POOL;
+// The chain fee's book row (spec §3.2) — the companion the chain call sites
+// spread beside campfirePoolCreditStatement in their own batch. It books the
+// ACTUAL post-arm credit (the credit's MIN arm may clip the fee at the cap —
+// spec §3.4), computed from the PRE-arm pool, so the companion rides AHEAD of
+// the credit upsert. Bind order: (SELECT) server, pool, amount, pool, now;
+// (WHERE guard) spender, spend delta, spend now, then the zero-delta arm's
+// pool server. poolServerId 0 is the marker pool: the no-membership corner's
+// fee has no server row beneath it and the 0039 schema refuses to invent one,
+// so the books stay silent there (the caller omits the companion).
+export function campfireChainFeeLedgerStatement(db, serverId, amount, spenderId, now) {
+  return db.prepare(CHAIN_FEE_LEDGER_SQL).bind(
+    serverId, serverId, amount, serverId, now, spenderId, -amount, now, serverId,
+  );
+}
 
 // --- grants ------------------------------------------------------------------
 
@@ -238,32 +319,64 @@ async function evaluateCampfireDraw(env, serverId, row, now2) {
     ).run();
     if (Number(claim.meta?.changes) !== 1) return null;
     let results;
+    // The book rows: one per seat, batched WITH the payouts (spec §3.3 — the
+    // books and the money commit together). Each guard fingerprints the
+    // payout row, so a seat that did not mint books nothing; the payout
+    // verdicts stay first in the results and the walk slices to them — the
+    // companions are fire-and-forget members, never walk inputs.
+    const mintBooks = online.map((memberId) =>
+      db.prepare(DRAW_MINT_LEDGER_SQL).bind(
+        serverId, GC_CAMPFIRE_DRAW_ONLINE_BONUS, now2,
+        memberId, GC_CAMPFIRE_DRAW_ONLINE_BONUS, now2,
+      ));
     try {
       // The payouts: each fingerprinted to THIS claim's last_draw_at — mint
       // exactly the debit's coins, never a second seat's worth.
-      results = await db.batch(online.map((memberId) =>
-        db.prepare(DRAW_PAYOUT_SQL).bind(
-          memberId, GC_CAMPFIRE_DRAW_ONLINE_BONUS, now2,
-          serverId, memberId,
-          serverId, now2,
-        )));
+      results = await db.batch([
+        ...online.map((memberId) =>
+          db.prepare(DRAW_PAYOUT_SQL).bind(
+            memberId, GC_CAMPFIRE_DRAW_ONLINE_BONUS, now2,
+            serverId, memberId,
+            serverId, now2,
+          )),
+        ...mintBooks,
+      ]);
     } catch (error) {
       // The payout batch aborted: reverse the claim wholesale (pool AND fuel
-      // back), so a crashed draw neither burns nor double-pays.
-      await db.prepare(DRAW_CLAIM_REVERSAL_SQL).bind(
-        cost, lastDrawAt, now2, serverId, now2,
-      ).catch(() => { /* the reversal is best-effort */ });
+      // back), so a crashed draw neither burns nor double-pays. The
+      // reversal's book row rides FIRST — the reversal rewrites last_draw_at,
+      // and the book guard reads that seat while the reversal's WHERE still
+      // holds (same batch, atomic: the book lands iff the reversal lands).
+      await db.batch([
+        db.prepare(DRAW_REVERSAL_LEDGER_SQL).bind(
+          serverId, cost, now2, serverId, now2,
+        ),
+        db.prepare(DRAW_CLAIM_REVERSAL_SQL).bind(
+          cost, lastDrawAt, now2, serverId, now2,
+        ),
+      ]).catch(() => { /* the reversal is best-effort */ });
       throw error;
     }
     // The verdict walk: a seat whose mint lost its membership (a member who
     // left mid-draw) refunds ITS bonus to the pool — conservation holds
-    // (minted == paid == debited minus refunded), never a free coin.
-    const mintedSeats = results.filter((seat) => Number(seat?.meta?.changes) === 1).length;
+    // (minted == paid == debited minus refunded), never a free coin. The
+    // walk reads only the payout seats: the mint books ride trailing.
+    const mintedSeats = results
+      .slice(0, online.length)
+      .filter((seat) => Number(seat?.meta?.changes) === 1).length;
     const missedSeats = online.length - mintedSeats;
     if (missedSeats > 0) {
-      await db.prepare(DRAW_SEAT_REFUND_SQL).bind(
-        missedSeats * GC_CAMPFIRE_DRAW_ONLINE_BONUS, now2, serverId, now2,
-      ).catch(() => { /* a missed refund only delays the fire */ });
+      // The refund books beside its cause: the guard mirrors the refund's
+      // own WHERE (the refund moves only the pool, never last_draw_at), so
+      // the book lands iff the refund's UPDATE did.
+      await db.batch([
+        db.prepare(DRAW_SEAT_REFUND_SQL).bind(
+          missedSeats * GC_CAMPFIRE_DRAW_ONLINE_BONUS, now2, serverId, now2,
+        ),
+        db.prepare(DRAW_SEAT_REFUND_LEDGER_SQL).bind(
+          serverId, missedSeats * GC_CAMPFIRE_DRAW_ONLINE_BONUS, now2, serverId, now2,
+        ),
+      ]).catch(() => { /* a missed refund only delays the fire */ });
     }
     return null;
   }
@@ -306,6 +419,14 @@ export async function handleCampfireRoutes(request, env, url, path, method, ctx)
     return handleCampfireReadRoute(request, env, serverId);
   }
 
+  const ledgerMatch = method === "GET"
+    ? path.match(/^\/api\/servers\/(0|[1-9][0-9]*)\/ledger$/)
+    : null;
+  if (ledgerMatch) {
+    const serverId = Number(ledgerMatch[1]);
+    return handleCampfireLedgerRoute(request, env, serverId);
+  }
+
   return undefined;
 }
 
@@ -320,6 +441,32 @@ async function handleCampfireReadRoute(request, env, serverId) {
   });
   const fresh = await env.GOOBER_DB.prepare(CAMPFIRE_ROW_READ_SQL).bind(serverId).first();
   return json(publicCampfire(fresh ?? row, now2));
+}
+
+// GET /api/servers/:id/ledger — the fire's books are open (T90, spec §4):
+// members only, DERIVED ON REQUEST, and it mints and sinks NOTHING. Unlike
+// the campfire read above, no draw evaluation, no fuel accrual — a book-keeper
+// who stokes the fire during the audit is an auditor wearing gloves to print
+// money. Aggregate flow lines only, never per-holder, never a top-list.
+async function handleCampfireLedgerRoute(request, env, serverId) {
+  const userId = await memberGate(request, env, serverId);
+  await rateLimit(request, env, "read", "campfire:ledger:" + serverId + ":" + userId);
+  const endSeconds = nowSeconds();
+  const startSeconds = endSeconds - GC_CAMPFIRE_LEDGER_WINDOW_SECONDS;
+  const rows = (await env.GOOBER_DB.prepare(POOL_LEDGER_READ_SQL)
+    .bind(serverId, startSeconds).all()).results || [];
+  return json({
+    window: { startSeconds, endSeconds },
+    flows: rows.map((row) => ({
+      class: String(row.class),
+      source: row.source === null || row.source === undefined
+        ? null
+        : String(row.source),
+      direction: String(row.direction),
+      amount: Number(row.amount),
+      count: Number(row.count),
+    })),
+  });
 }
 
 // POST /api/servers/:id/campfire/stoke { amount } — one batch: the paid spend
@@ -345,6 +492,14 @@ async function handleCampfireStokeRoute(request, env, serverId) {
     ),
     env.GOOBER_DB.prepare(POOL_CREDIT_UPSERT_SQL).bind(
       serverId, amount, now2, amount, now2,
+    ),
+    // The stoke's book row (T90 spec §3.1), fire-and-forget: the guard
+    // fingerprints the spend row, so a refused stoke banks no book row. The
+    // spend's own cap arm already bounded the credit, so the booked delta is
+    // the amount verbatim.
+    env.GOOBER_DB.prepare(STOKE_LEDGER_SQL).bind(
+      serverId, amount, now2,
+      userId, -amount, now2,
     ),
   ]);
   if (Number(results[0]?.meta?.changes) !== 1) {

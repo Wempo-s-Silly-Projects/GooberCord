@@ -39,11 +39,14 @@ import { requireUser } from "./core/auth.mjs";
 import { nowSeconds } from "./core/crypto.mjs";
 import { HttpError, json, rateLimit, readJson } from "./core/http.mjs";
 import {
+  GC_PAPER_ANNIVERSARIES_MAX,
   GC_PAPER_CAPSULES_MAX,
   GC_PAPER_CHANNELS_MAX,
   GC_PAPER_DAY_SECONDS,
   GC_PAPER_THREADS_MAX,
   GC_PAPER_YESTERDAY_KEYS,
+  GC_USER_ANNIVERSARY_DAY_MAX,
+  GC_USER_ANNIVERSARY_MONTH_MAX,
 } from "../constants.mjs";
 
 // --- the SQL -----------------------------------------------------------------
@@ -106,6 +109,32 @@ const CAPSULE_DUE_SQL =
     "WHERE c.server_id = ? AND c.reveal_at >= ? AND c.reveal_at < ? " +
     "ORDER BY c.reveal_at ASC LIMIT " + GC_PAPER_CAPSULES_MAX;
 
+// T91 (docs/drafts/t91-anniversaries-spec.md §2/§5): the month-day seat rides
+// the paper as its own opt-in surface. The upsert is the ONE set statement —
+// a second PUT overwrites in place on the user_id PK, no history, no
+// tombstone; month/day validation is STRUCTURAL ONLY (0-11 / 1-31, no
+// per-month day counts, no leap math — Feb 30 is stored verbatim and simply
+// never fires, because matching is pure (month, day) equality).
+const ANNIVERSARY_SET_SQL =
+  "INSERT INTO gc_user_anniversaries (user_id, month, day) VALUES (?, ?, ?) " +
+  "ON CONFLICT (user_id) DO UPDATE SET month = excluded.month, day = excluded.day";
+
+// The clear is idempotent (absence IS the off-state — the route answers its
+// state, never a 404): the whole off-transition is this row's absence.
+const ANNIVERSARY_CLEAR_SQL = "DELETE FROM gc_user_anniversaries WHERE user_id = ?";
+
+// The paper's ride-along: a READ-ONLY three-table join (seat ⋈ membership ⋈
+// users) — members of the server whose structural (month, day) equals the
+// UTC (month, day) of the same nowSeconds() clock the paper's day-key rides.
+// No year data exists to ride; the rows carry the member id + HANDLE only,
+// no write, no aggregate.
+const ANNIVERSARY_TODAY_SQL =
+  "SELECT u.id, u.username FROM gc_user_anniversaries a " +
+    "JOIN users u ON u.id = a.user_id " +
+    "JOIN gc_server_members m ON m.user_id = a.user_id " +
+    "WHERE a.month = ? AND a.day = ? AND m.server_id = ? " +
+    "LIMIT " + GC_PAPER_ANNIVERSARIES_MAX;
+
 // --- the gates ----------------------------------------------------------------
 
 async function membershipGate(request, env, serverId) {
@@ -124,6 +153,17 @@ async function membershipGate(request, env, serverId) {
 export async function handlePaperRoutes(request, env, url, path, method, ctx) {
   void url;
   void ctx;
+
+  // The T91 seat routes: self-scoped (/me), self-gated (requireUser inside,
+  // NOT the server membership gate) — exact matches, no prefix shadow.
+  const anniversaryMatch =
+    (method === "PUT" || method === "DELETE") &&
+    path === "/api/users/me/anniversary";
+  if (anniversaryMatch) {
+    return method === "PUT"
+      ? handleAnniversarySetRoute(request, env)
+      : handleAnniversaryClearRoute(request, env);
+  }
 
   const toggleMatch = method === "POST"
     ? path.match(/^\/api\/servers\/(0|[1-9][0-9]*)\/paper$/)
@@ -147,6 +187,40 @@ export async function handlePaperRoutes(request, env, url, path, method, ctx) {
   }
 
   return undefined;
+}
+
+// PUT /api/users/me/anniversary { month, day } — the member's self-scoped
+// opt-in. Both keys must be integers inside the structural range; a PUT
+// missing either key is a 400 — the off-state is never written on anyone's
+// behalf (defaults law). A re-set overwrites in place (no history exists).
+async function handleAnniversarySetRoute(request, env) {
+  const session = await requireUser(request, env);
+  const userId = Number(session.user.id);
+  await rateLimit(request, env, "write", "anniversary:set:" + userId);
+  const body = await readJson(request);
+  const month = body ? body.month : undefined;
+  const day = body ? body.day : undefined;
+  if (
+    !Number.isInteger(month) || !Number.isInteger(day) ||
+    month < 0 || month > GC_USER_ANNIVERSARY_MONTH_MAX ||
+    day < 1 || day > GC_USER_ANNIVERSARY_DAY_MAX
+  ) {
+    throw new HttpError(400, "An anniversary wants a month (0-11) and a day (1-31).");
+  }
+  await env.GOOBER_DB.prepare(ANNIVERSARY_SET_SQL).bind(userId, month, day).run();
+  return json({ month, day });
+}
+
+// DELETE /api/users/me/anniversary — the member's clear: immediate, total,
+// idempotent (an untouched member's clear clears nothing and answers its
+// state). The route's bind carries only the self user_id — a wrong-member
+// clear cannot exist structurally.
+async function handleAnniversaryClearRoute(request, env) {
+  const session = await requireUser(request, env);
+  const userId = Number(session.user.id);
+  await rateLimit(request, env, "write", "anniversary:clear:" + userId);
+  await env.GOOBER_DB.prepare(ANNIVERSARY_CLEAR_SQL).bind(userId).run();
+  return json({ month: null, day: null });
 }
 
 // POST /api/servers/:id/paper { enabled } — the mod-gated ON/OFF toggle, the
@@ -231,6 +305,20 @@ async function handlePaperReadRoute(request, env, serverId, previous) {
     senderHandle: String(row.username || ""),
   }));
 
+  // The anniversaries section (T91): today's UTC celebrants — the join only
+  // fires here, after the config row has answered enabled (the same dispatch
+  // order every other section rides). Handles only; there is no year data to
+  // ride and no aggregate to count.
+  const today = new Date(now * 1000);
+  const anniversaryRows = (await env.GOOBER_DB.prepare(ANNIVERSARY_TODAY_SQL)
+    .bind(today.getUTCMonth(), today.getUTCDate(), serverId).all()).results || [];
+  const anniversaries = anniversaryRows
+    .slice(0, GC_PAPER_ANNIVERSARIES_MAX)
+    .map((row) => ({
+      userId: Number(row.id),
+      handle: String(row.username || ""),
+    }));
+
   const activityRows =
     channelRows.reduce((total, row) => total + (Number(row.row_count) || 0), 0) +
     threadRows.reduce((total, row) => total + (Number(row.row_count) || 0), 0) +
@@ -245,6 +333,6 @@ async function handlePaperReadRoute(request, env, serverId, previous) {
     windowLabelUtc: iso(startSeconds) + "/" + iso(endSeconds),
     window: { startSeconds, endSeconds },
     activityRows,
-    sections: { channels, threads, capsules },
+    sections: { channels, threads, capsules, anniversaries },
   });
 }

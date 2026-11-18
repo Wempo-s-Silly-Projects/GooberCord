@@ -99,7 +99,11 @@ import {
 } from "../constants.mjs";
 import { plusPerkActive } from "./plus.mjs";
 import { isValidUsername } from "./usernames.mjs";
-import { campfirePoolCreditStatement, grantCampfireFuel } from "./campfire.mjs";
+import {
+  campfireChainFeeLedgerStatement,
+  campfirePoolCreditStatement,
+  grantCampfireFuel,
+} from "./campfire.mjs";
 import { recordJobProgress } from "./jobs.mjs";
 
 // UTC day floor. Every cap — the daily grant, the per-source caps, and the
@@ -1155,6 +1159,14 @@ async function handleChainSendRoute(request, env) {
   const results = await env.GOOBER_DB.batch([
     env.GOOBER_DB.prepare(CHAIN_SEND_SPEND_SQL).bind(userId, -amount, now, userId, amount + fee),
     env.GOOBER_DB.prepare(CHAIN_FEE_SPEND_SQL).bind(userId, -fee, now, userId, fee),
+    // The fee's book row (T90 spec §3.2) rides ahead of the credit: its guard
+    // fingerprints the fee row (a refused fee banks no book row) and reads
+    // the PRE-arm pool, so the booked delta is the credit's ACTUAL post-arm
+    // movement. The marker pool 0 has no server row to book against (0039's
+    // FK is the no-membership corner's honest silence) — no book there.
+    ...(poolServerId === 0 ? [] : [
+      campfireChainFeeLedgerStatement(env.GOOBER_DB, poolServerId, fee, userId, now),
+    ]),
     campfirePoolCreditStatement(env.GOOBER_DB, poolServerId, fee, now),
     env.GOOBER_DB.prepare(CHAIN_HOP_INSERT_SQL).bind(
       hopToken, 1, amount, poolServerId, now + GC_CHAIN_HOP_TTL_SECONDS, now,
@@ -1265,6 +1277,12 @@ async function handleChainPassRoute(request, env, token) {
     env.GOOBER_DB.prepare(CHAIN_PASS_FEE_SPEND_SQL).bind(
       userId, -fee, now, userId, fee, token, hopCreatedAt,
     ),
+    // The fee's book row rides ahead of the credit (same shape as the send):
+    // the guard fingerprints the fee row, so the loser's all-zero batch (the
+    // fee never spent) banks no book row either.
+    ...(poolServerId === 0 ? [] : [
+      campfireChainFeeLedgerStatement(env.GOOBER_DB, poolServerId, fee, userId, now),
+    ]),
     campfirePoolCreditStatement(env.GOOBER_DB, poolServerId, fee, now, CHAIN_PASS_CREDIT_FP(userId, fee, now)),
     env.GOOBER_DB.prepare(CHAIN_PASS_HOP_INSERT_SQL).bind(
       newToken, depth + 1, carriedAmount, poolServerId, now + GC_CHAIN_HOP_TTL_SECONDS, now,

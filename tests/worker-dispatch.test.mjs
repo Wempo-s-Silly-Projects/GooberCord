@@ -116,7 +116,10 @@ test("worker.mjs stops carrying the static-leg twins — they come from the core
   assert.match(WORKER_SOURCE, /async function stampedAssetResponse/);
   assert.match(WORKER_SOURCE, /escapeHtmlAttribute\(build\)/);
   // The static-leg call shape survives the swap: stamp first, re-wrap last.
-  assert.match(WORKER_SOURCE, /secureResponse\(await stampedAssetResponse\(await env\.ASSETS\.fetch\(unconditional\(request\)\), env\)\)/);
+  // (The stamp now carries the request path — the module-import stamper's
+  // /js/vendor/ byte-parity carve-out reads it; see
+  // tests/stale-stamp-comment.test.mjs.)
+  assert.match(WORKER_SOURCE, /secureResponse\(await stampedAssetResponse\(await env\.ASSETS\.fetch\(unconditional\(request\)\), env, url\.pathname\)\)/);
 });
 
 // Behavior through the static leg, driven exactly the way the stale-stamp

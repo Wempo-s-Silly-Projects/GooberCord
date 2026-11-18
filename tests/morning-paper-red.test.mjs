@@ -307,7 +307,10 @@ test("the zero-activity window serves the complete empty shape verbatim (no fill
   const response = await worker.fetch(authed("GET", `/api/servers/${SERVER_ID}/paper`), envOf(db), {});
   assert.equal(response.status, 200, "a quiet day is VALID, not an error");
   const payload = await response.json();
-  assert.deepEqual(payload.sections, { channels: [], threads: [], capsules: [] },
+  // The T91 ride-along rides the sections too (docs/drafts/t91-anniversaries-spec.md §2.5):
+  // the empty shape is now the 4-section pair — the anniversaries join
+  // answers its empty state like every other section, none dropped.
+  assert.deepEqual(payload.sections, { channels: [], threads: [], capsules: [], anniversaries: [] },
     "every section answers its empty state, none dropped");
   assert.equal(payload.activityRows, 0, "the zero-activity shape serves verbatim");
 });

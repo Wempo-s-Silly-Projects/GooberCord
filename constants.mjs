@@ -331,6 +331,7 @@ export const GC_WELL_MISSED_DAYS_BEFORE_RESET = 5;
 // pool cap burns. Net supply change of any Campfire act: <= 0.
 export const GC_CAMPFIRE_FUEL_THRESHOLD = 400;
 export const GC_CAMPFIRE_FUEL_DAILY_CAP = 200;
+export const GC_CAMPFIRE_LEDGER_WINDOW_SECONDS = 2592000;
 export const GC_CAMPFIRE_DRAW_GAP_SECONDS = 86400;
 export const GC_CAMPFIRE_DRAW_ONLINE_BONUS = 10;
 export const GC_CAMPFIRE_BANNER_HOURS = 24;
@@ -415,6 +416,27 @@ export const GC_PAPER_YESTERDAY_KEYS = 1;
 // reading list's only cap — the newest N own pointers the GET answers. A cut
 // beyond it is a pagination owner-gate, not a cap raise.
 export const GC_BOOKMARKS_LIST_MAX = 100;
+
+// Reaction tags (T89, wave 5 — docs/drafts/t89-reaction-tags-spec.md §6): the
+// per-server emoji→tag map cap and the short server-native tag-text bound.
+// Tags are FREE cosmetics (the economy re-rule) — no price, no paid cap raise.
+export const GC_REACTION_TAGS_MAX = 20;
+export const GC_REACTION_TAG_TEXT_MAX = 32;
+
+// Anniversaries (T91, wave 5 — docs/drafts/t91-anniversaries-spec.md §5):
+// the month-day seat's STRUCTURAL bounds only. Month rides the calendar's
+// own 0-11, day the structural 1-31 (no per-month counts, no leap math —
+// the calendar is not the validator); the paper's celebrants section rides
+// its own cap. There is NO year bound — no year is ever collected
+// (LIMIT COLLECTION NOT ACCESS).
+export const GC_USER_ANNIVERSARY_MONTH_MAX = 11;
+export const GC_USER_ANNIVERSARY_DAY_MAX = 31;
+export const GC_PAPER_ANNIVERSARIES_MAX = 25;
+
+// Server welcome card (T92, wave 5 — docs/drafts/t92-welcome-card-spec.md §5):
+// the mod-authored blurb's only cap, and a HOUSE cap, not a parity claim —
+// no Discord source rides it, so no URL is cited.
+export const GC_WELCOME_CARD_BLURB_MAX = 300;
 
 // Goober+ (owner decisions: ONE bundle, MONTHLY renewal, a grace window,
 // boosts stay free, GIFT Goober+ in). The price buys gc_plus_state term
