@@ -316,6 +316,9 @@ test("the static <title> binding rides en.json's gc.app.title 1:1 (ship-reviewer
 // asserted in BOTH directions: any future equal-but-undeclared row fails
 // red, and any future flex of a carved row (de "Roles" someday) fails red
 // until this list updates with its ruling. Scan-proven against the staged
+// wave-5 rider (locale lane): "gc.paper.channelRow" is a placeholders-only row
+// ("#{{name}} — {{count}}") — nothing is translatable in it, so all eight
+// bundles mirror en byte-for-byte, declared here rather than copied blind.
 // files at the pin's commit; es/de reproduce the reviewer's census
 // key-for-key, fr/pt/ru are this scan's enumeration.
 const CARVE_GATES = {
@@ -327,6 +330,7 @@ const CARVE_GATES = {
     "gc.chat.gif.button",
     "gc.chat.gif.short",
     "gc.shell.mentions.loading",
+    "gc.paper.channelRow",
   ],
   es: [
     "gc.app.title",
@@ -340,6 +344,7 @@ const CARVE_GATES = {
     "gc.settings.general",
     "gc.settings.roles.heading",
     "gc.shell.mentions.loading",
+    "gc.paper.channelRow",
   ],
   de: [
     "gc.app.title",
@@ -359,11 +364,13 @@ const CARVE_GATES = {
     "gc.shell.placeholder.serverTitle",
     "gc.shell.mentions.loading",
     "gc.social.presence.online",
+    "gc.paper.channelRow",
   ],
   ja: [
     "gc.app.title",
     "gc.chat.gif.button",
     "gc.shell.mentions.loading",
+    "gc.paper.channelRow",
   ],
   fr: [
     "gc.app.title",
@@ -383,6 +390,7 @@ const CARVE_GATES = {
     "gc.shell.nav.mentionsShort",
     "gc.social.dm.fallback",
     "gc.social.row.message",
+    "gc.paper.channelRow",
   ],
   pt: [
     "gc.app.title",
@@ -396,6 +404,7 @@ const CARVE_GATES = {
     "gc.mod.timeout.choice",
     "gc.settings.channels.spoiler",
     "gc.shell.mentions.loading",
+    "gc.paper.channelRow",
   ],
   ru: [
     "gc.app.title",
@@ -405,6 +414,7 @@ const CARVE_GATES = {
     "gc.expressions.kinds.emojis",
     "gc.expressions.kinds.stickers",
     "gc.shell.mentions.loading",
+    "gc.paper.channelRow",
   ],
   // ja/zh enter the gate with wave-3 (the values declared in 2c41d75, scan-
   // verified: ja one cognate-carve, zh three). Wave-3 intake passed with the
@@ -415,6 +425,7 @@ const CARVE_GATES = {
     "gc.chat.gif.button",
     "gc.expressions.kinds.emojis",
     "gc.shell.mentions.loading",
+    "gc.paper.channelRow",
   ],
 };
 

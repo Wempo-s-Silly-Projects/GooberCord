@@ -28,7 +28,8 @@
 //   class   class list: a string, or an array where falsy entries drop out
 //   text    textContent (a shorthand for a single string child)
 //   dataset { name: value } — the object spelling of data-* attributes
-//   on*     addEventListener(name, fn) — "onclick", "onkeydown", ...
+//   on*     addEventListener with the event name lowercased — "onClick",
+//           "onKeyDown" attach their dispatched types; no caller change
 //   *       setAttribute(name, value); true -> bare ("", boolean attribute),
 //           false/null/undefined -> absent
 //
@@ -64,7 +65,9 @@ function applyProps(node, props, svgElement = false) {
         node.dataset[name] = entry;
       }
     } else if (key.startsWith("on") && typeof value === "function") {
-      node.addEventListener(key.slice(2), value);
+      // DOM event types are case-sensitive: a user's click dispatches
+      // "click", never "Click" — the camel spellings lowercase once here.
+      node.addEventListener(key.slice(2).toLowerCase(), value);
     } else if (key === "text") {
       node.textContent = value;
     } else {

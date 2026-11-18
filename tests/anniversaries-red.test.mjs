@@ -109,7 +109,7 @@ function anniversaryDb(options = {}) {
     },
     {
       // The paper ride-along: the read-only three-table join (seat ⋈
-      // membership ⋈ users). Bound order under test: [month, day, serverId].
+      // membership ⋈ users). Bound order under test: [month, day, server_id].
       test: (sql) =>
         sql.includes("FROM gc_user_anniversaries") &&
         sql.includes("JOIN users") &&

@@ -35,6 +35,7 @@ import {
   GC_PAPER_CHANNELS_MAX,
   GC_PAPER_THREADS_MAX,
   GC_PAPER_CAPSULES_MAX,
+  GC_PAPER_ANNIVERSARIES_MAX,
   GC_PAPER_YESTERDAY_KEYS,
 } from "../constants.mjs";
 import { nowSeconds } from "../api/core/crypto.mjs";
@@ -79,6 +80,7 @@ function paperDb(options = {}) {
   const channelCounts = options.channelCounts || [];   // [{ channel_id, row_count }]
   const threadCounts = options.threadCounts || [];     // [{ thread_id, row_count }]
   const dueCapsules = options.dueCapsules || [];       // [{ id, reveal_at, author_id }]
+  const memberRows = options.memberRows || [];         // [{ user_id, month, day, username }]
   const calls = [];
 
   const routes = [
@@ -141,6 +143,21 @@ function paperDb(options = {}) {
       all: async () => ({ results: dueCapsules.map((capsule) => ({ ...capsule, username: "wempos" })) }),
     },
     { test: (sql) => sql.includes("gc_threads"), all: async () => ({ results: threadCounts }) },
+    {
+      // The T91 ride-along join (seat ⋈ membership ⋈ users): seeded
+      // celebrants filtered by the same month/day binds the paper keys
+      // (bound order [month, day, server_id]) — rows the binds do not name
+      // cannot ride the paper.
+      test: (sql) =>
+        sql.includes("FROM gc_user_anniversaries") &&
+        sql.includes("JOIN users") &&
+        sql.includes("JOIN gc_server_members"),
+      all: async (bound) => ({
+        results: memberRows
+          .filter((row) => row.month === Number(bound[0]) && row.day === Number(bound[1]))
+          .map((row) => ({ id: row.user_id, username: row.username })),
+      }),
+    },
   ];
 
   const db = {
@@ -353,6 +370,40 @@ test("capsule due rows carry id, due day, and sender handle — never a sealed b
   const painted = JSON.stringify(payload.sections.capsules);
   assert.doesNotMatch(painted, /"body"|"preview"|"sealed_body"/,
     "the paper never carries a seal body — the capsule's own route is the only body reader");
+});
+
+test("the paper's anniversaries section paints today's celebrants {userId, handle}, cap-sliced (T91)", async () => {
+  const MONTH = new Date(NOW * 1000).getUTCMonth();
+  const DATE = new Date(NOW * 1000).getUTCDate();
+  const matching = Array.from({ length: GC_PAPER_ANNIVERSARIES_MAX + 1 }, (_, index) => ({
+    user_id: index + 1,
+    month: MONTH,
+    day: DATE,
+    username: "celebrant" + (index + 1),
+  }));
+  const decoys = [
+    { user_id: 998, month: (MONTH + 1) % 12, day: DATE, username: "wrongMonth" },
+    { user_id: 999, month: MONTH, day: DATE === 1 ? 2 : 1, username: "wrongDay" },
+  ];
+  const db = paperDb({
+    config: [[SERVER_ID, { enabled: 1, updated_by: MOD_ID }]],
+    memberRows: [...matching, ...decoys],
+  });
+  const response = await worker.fetch(authed("GET", `/api/servers/${SERVER_ID}/paper`), envOf(db), {});
+  assert.equal(response.status, 200);
+  const payload = await response.json();
+  assert.deepEqual(
+    payload.sections.anniversaries,
+    matching.slice(0, GC_PAPER_ANNIVERSARIES_MAX).map((row) => ({
+      userId: row.user_id,
+      handle: row.username,
+    })),
+    "today's celebrants painted {userId, handle}, the cap slice, off-today decoys excluded",
+  );
+  const joinCall = db.calls.find((entry) => entry.sql.includes("FROM gc_user_anniversaries"));
+  assert.ok(joinCall, "the celebrant join fires on the read");
+  assert.deepEqual(joinCall.bound, [MONTH, DATE, SERVER_ID],
+    "the join keys to the month/day/server_id binds, in the join's own WHERE order");
 });
 
 test("the off-transition mid-cycle deletes the config row and the NEXT read answers the unconfigured shape", async () => {
