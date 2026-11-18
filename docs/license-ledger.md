@@ -73,7 +73,7 @@ in 3102c49 with its own project token; its body remains byte-identical to GC's.
 | 1ddf4ea | wempo-accounts | the punctuation convergence: all 23 notices (a96be09's 22 + the filter copy 3102c49) drop the one-byte trailing period on the gnu.org pointer line, matching the GC-main/forum/rewrite family's shipped template | suite exit 0; 23 files x one replaced line each |
 
 The fleet's per-file notices are now SINGLE-TEMPLATED everywhere byte for byte:
-"Copyright 2026 YourLocalGoober" / "This file is part of <OWN PROJECT TOKEN>." /
+"Copyright 2026 ItsWempo" / "This file is part of <OWN PROJECT TOKEN>." /
 the license phrase contiguous in exactly three places / "version 3 ... any
 later version" / the pointer line ending `see <https://www.gnu.org/licenses/>`
 (no period), 17 lines plus one blank on .mjs, the same words in /* */ form on
