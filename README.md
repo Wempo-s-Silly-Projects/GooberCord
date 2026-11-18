@@ -1,4 +1,5 @@
 # GooberCord — the rewrite line
+[![Codacy Badge](https://app.codacy.com/project/badge/Grade/013bd06df0604ed582e6a0ee2b550b69)](https://app.codacy.com/gh/Wempo-s-Silly-Projects/GooberCord/dashboard?utm_source=gh&utm_medium=referral&utm_content=&utm_campaign=Badge_grade)
 
 This is GooberCord's rewritten backend line, kept on the `rewrite` branch of
 the same repository (<https://github.com/Wempo-s-Silly-Projects/GooberCord>).
