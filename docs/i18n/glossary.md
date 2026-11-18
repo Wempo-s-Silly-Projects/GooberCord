@@ -126,10 +126,18 @@ Row notes:
 - **fr channel = salon** — the settled fr community term for a chat channel;
   "canal" in fr reads as a media/broadcast channel and is reserved for the
   moderation "channel" concept nowhere in gc's copy.
-- **fr/pt/ru plural branches** follow the loader's rule seats (1bcfa9e):
-  fr/pt two-branch (one = 0..1 — the 0 arm is grammatical fr/pt, e.g. "0
-  image"), ru one/few/many with `_other` duplicating the many-form for the
-  non-integer pick. Branch bases must equal their `_other` form.
+- **fr/pt/ru plural branches** follow the loader's rule seats (1bcfa9e, seats
+  current per i18n.js's PLURAL_RULES):
+  fr/pt three-branch since the CLDR-47 wave (one = 0..1 — the 0 arm is
+  grammatical fr/pt, e.g. "0 image"; plus the round-million `many` arm),
+  es the same three-way shape, ru one/few/many with `_other` duplicating
+  the many-form for the non-integer pick. Branch bases must equal their
+  `_other` form.
+- **missing keys are VISIBLE, never silent**: a key missing everywhere on
+  the fallback chain (<lang> → base script → en) renders the humanized
+  key tail (the loader's `humanize()`), not a blank and not the en copy —
+  the en bundle is the only complete one. Translators: a missed key is
+  not absorbed quietly; ship the row when the source row ships.
 - **epoch** stays the technical word in all three (es carried it first).
 
 ## Wave-3 register rows (gc bundle, ja/zh, 2026-11-17)
