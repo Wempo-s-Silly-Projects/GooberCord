@@ -40,6 +40,7 @@ import { publicAccent } from "./accent.mjs";
 import { activeBanRow } from "./accounts.mjs";
 import { grantMessageCoins } from "./coins.mjs";
 import { grantCampfireFuel } from "./campfire.mjs";
+import { recordJobProgress } from "./jobs.mjs";
 import { requireSignedInRead, requireUser } from "./core/auth.mjs";
 import { nowSeconds } from "./core/crypto.mjs";
 import { HttpError, json, rateLimit, readJson, requiredText } from "./core/http.mjs";
@@ -947,6 +948,14 @@ export async function sendMessageToChannel(
         await grantCampfireFuel(env, Number(expressionChannel.server_id), now);
       } catch (fuelError) {
         console.warn("Campfire fuel skipped:", fuelError && fuelError.name ? fuelError.name : "UnknownError");
+      }
+      // The Goober Jobs message rider (T86): a fresh send in a SERVER-bound
+      // channel is the 'message' chore. Best-effort — a jobs miss only
+      // delays the finish, never the send.
+      try {
+        await recordJobProgress(env, Number(expressionChannel.server_id), "message", 1, now);
+      } catch (jobsError) {
+        console.warn("Job progress skipped:", jobsError && jobsError.name ? jobsError.name : "UnknownError");
       }
     }
   }

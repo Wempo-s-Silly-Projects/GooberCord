@@ -42,6 +42,7 @@ import { channelForUser, enforceChannelBits, enforceMemberGatesForChannel } from
 import { SERVER_PERMISSIONS, holdsRolesBitsSql, holdsRolesBitsParams } from "./permissions.mjs";
 import { plusActiveExpr, plusMemberActive, plusPerkActive, publicIsPlus } from "./plus.mjs";
 import { GC_PLUS_REACTIONS, GC_REACTIONS_MAX_UNIQUE_PER_MESSAGE } from "../constants.mjs";
+import { recordJobProgress } from "./jobs.mjs";
 
 // The parity law reads Discord's real caps directly (verified 2026-11-17):
 // docs/parity-limits.md — Friends 1000. Discord's cap is also cheap insurance
@@ -580,6 +581,13 @@ async function handleAddReactionRoute(request, env, messageId) {
   ).run();
 
   if (Number(insert?.meta?.changes) === 1) {
+    // The Goober Jobs reaction rider (T86): a landed reaction in a
+    // SERVER-bound channel is the 'reaction' chore. Best-effort — a jobs
+    // miss only delays the finish, never the user's 201.
+    if (channel.server_id !== null && channel.server_id !== undefined) {
+      await recordJobProgress(env, Number(channel.server_id), "reaction", 1, nowSeconds())
+        .catch(() => { /* a jobs miss only delays the finish */ });
+    }
     return json({ reaction: { messageId: Number(message.id), emoji, userId: selfId, mine: true } }, 201);
   }
 

@@ -44,6 +44,7 @@ import {
   GC_CAMPFIRE_STOKE_MAX,
 } from "../constants.mjs";
 import { PRESENCE_HUB_NAME } from "./presence.mjs";
+import { recordJobProgress } from "./jobs.mjs";
 
 const CAMPFIRE_DAY = 86400;
 
@@ -191,8 +192,10 @@ function publicCampfire(row, now2) {
 // The presence lane's roster crossing: the hub snapshot carries userId per
 // online member; the fire counts the ONLINE MEMBERS OF THIS SERVER by
 // intersecting the snapshot with gc_server_members. No names ride anywhere —
-// the count is a number and stays one.
-async function onlineServerMembers(env, serverId) {
+// the count is a number and stays one. Exported for the Goober Jobs lane's
+// finish step (T86): the member share splits across THESE members, the same
+// privacy-shape intersection.
+export async function onlineServerMembers(env, serverId) {
   if (!env.PRESENCE) return [];
   const stub = env.PRESENCE.get(env.PRESENCE.idFromName(PRESENCE_HUB_NAME));
   const response = await stub.fetch(
@@ -348,5 +351,12 @@ async function handleCampfireStokeRoute(request, env, serverId) {
     throw new HttpError(400, "Not enough Goober Coins for that.");
   }
   const row = await env.GOOBER_DB.prepare(CAMPFIRE_ROW_READ_SQL).bind(serverId).first();
-  return json({ stoked: true, amount, ...publicCampfire(row, now2) });
+  // The Goober Jobs stoke rider (T86): a landed stoke is the 'stoke' chore.
+  // Best-effort, like every hook — a jobs miss only delays the finish, never
+  // the stoke's own batch (which has already committed above).
+  await recordJobProgress(env, serverId, "stoke", 1, now2).catch(() => {
+    /* a jobs miss only delays the finish */
+  });
+  const fresh = await env.GOOBER_DB.prepare(CAMPFIRE_ROW_READ_SQL).bind(serverId).first();
+  return json({ stoked: true, amount, ...publicCampfire(fresh ?? row, now2) });
 }

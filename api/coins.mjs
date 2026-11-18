@@ -100,6 +100,7 @@ import {
 import { plusPerkActive } from "./plus.mjs";
 import { isValidUsername } from "./usernames.mjs";
 import { campfirePoolCreditStatement, grantCampfireFuel } from "./campfire.mjs";
+import { recordJobProgress } from "./jobs.mjs";
 
 // UTC day floor. Every cap — the daily grant, the per-source caps, and the
 // ceiling — rides this one boundary, so "today" is one thing everywhere.
@@ -939,6 +940,11 @@ async function handleVoiceTickRoute(request, env) {
   if (minted && tickServerId !== null) {
     await grantCampfireFuel(env, tickServerId, now).catch(() => {
       /* a fuel miss only delays the fire */
+    });
+    // The Goober Jobs voice rider (T86): a minted server tick is the
+    // 'voice' chore. Best-effort — a jobs miss only delays the finish.
+    await recordJobProgress(env, tickServerId, "voice", 1, now).catch(() => {
+      /* a jobs miss only delays the finish */
     });
   }
   const snapshot = await coinsSnapshot(env, userId, nowSeconds());

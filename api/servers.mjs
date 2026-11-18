@@ -115,6 +115,7 @@ import {
   normalizeUsernameForFilter,
 } from "./filter.mjs";
 import { ensureFilterWords, filterWords } from "./filterstore.mjs";
+import { recordJobProgress } from "./jobs.mjs";
 
 // gc_servers/gc_channels CHECK(length(trim(name)) BETWEEN 1 AND 100); the
 // route-side limit mirrors it so oversized names 400 instead of 500-ing on the
@@ -1210,6 +1211,11 @@ async function handleInviteJoinRoute(request, env, code) {
     return classifyRefusedJoin(env, serverId, userId, "That invite is no longer valid.", true);
   }
 
+  // The Goober Jobs join rider (T86): a landed invite join is the 'join'
+  // chore. Best-effort — a jobs miss only delays the finish.
+  await recordJobProgress(env, serverId, "join", 1, now).catch(() => {
+    /* a jobs miss only delays the finish */
+  });
   return json({ joined, serverId });
 }
 
@@ -1346,6 +1352,11 @@ async function handleDiscoverJoinRoute(request, env, serverId) {
     return classifyRefusedJoin(env, serverId, userId, "That server is not open for discovery.", false);
   }
 
+  // The Goober Jobs join rider (T86): a landed discovery join is the
+  // 'join' chore. Best-effort — a jobs miss only delays the finish.
+  await recordJobProgress(env, serverId, "join", 1, now).catch(() => {
+    /* a jobs miss only delays the finish */
+  });
   return json({ joined: true, serverId });
 }
 

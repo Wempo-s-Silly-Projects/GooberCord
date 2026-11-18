@@ -345,6 +345,31 @@ export const GC_CHAIN_MAX_AMOUNT = 200;
 export const GC_CHAIN_DEPTH_MAX = 7;
 export const GC_CHAIN_HOP_TTL_SECONDS = 172800;
 
+// Goober Jobs (T86, wave 4 — docs/drafts/t86-goober-jobs-spec.md): the
+// weekly quests. SINK LAW front and center: every finish mint routes to the
+// server's Campfire pool FIRST (the pool credit rides api/campfire.mjs's
+// campfirePoolCreditStatement — reuse, never a second cap) and members only
+// second, split across the members ONLINE at finish time; a finish with zero
+// online members burns its whole member share into the pool. Cap arithmetic
+// (the T62 sink analysis): <= GC_JOB_FINISH_BONUS * 3 = 300 coins minted per
+// server-week, of which the pool share (80%) is pre-sunk capacity and the
+// circulating growth is <= 60/week/server.
+export const GC_JOB_FINISH_BONUS = 100;
+export const GC_JOB_POOL_SHARE_PERCENT = 80;
+export const GC_JOB_MEMBER_SHARE_PERCENT = 20;
+export const GC_JOB_WEEK_SECONDS = 604800;
+export const GC_JOB_DEFS_PER_WEEK = 3;
+// The five static defs' goals (kind = the activity counter the def feeds;
+// counters count ACTIVITY, never coins, and never members).
+export const GC_JOB_GOAL_MESSAGES = 250;
+export const GC_JOB_GOAL_VOICE = 60;
+export const GC_JOB_GOAL_REACTIONS = 100;
+export const GC_JOB_GOAL_JOINS = 5;
+export const GC_JOB_GOAL_STOKES = 5;
+// The upsert's growth arm: a counter can never spiral past this, even with
+// the whole server mashing the same lane for a week.
+export const GC_JOB_COUNTER_SANITY_CAP = 1000000;
+
 // Time Capsules (T82, wave 4 — docs/drafts/t82-time-capsules-spec.md §3):
 // the scheduled letter's four caps. One schedule, one reveal, ZERO timers —
 // every number here is a cap or a schedule bound, nothing else.
@@ -352,6 +377,14 @@ export const GC_CAPSULE_BODY_MAX = 2000;
 export const GC_CAPSULE_MIN_AHEAD_SECONDS = 300;
 export const GC_CAPSULE_MAX_AHEAD_SECONDS = 2592000;
 export const GC_CAPSULES_MAX_OPEN_PER_MEMBER = 10;
+
+// Goober of the Day (T83, wave 4 — docs/drafts/t83-goober-of-the-day-spec.md
+// §3): the per-server spotlight's three numbers. Kindness as a game, a gift
+// NOT a ladder — the votes PK is the one-vote law itself, nothing else here
+// is a cap.
+export const GC_GOOBER_DAY_SECONDS = 86400;
+export const GC_GOOBER_DAY_TAGLINE_MAX = 64;
+export const GC_GOOBER_DAY_MIN_VOTES_FOR_CARD = 1;
 
 // Goober+ (owner decisions: ONE bundle, MONTHLY renewal, a grace window,
 // boosts stay free, GIFT Goober+ in). The price buys gc_plus_state term
