@@ -418,6 +418,35 @@ test("DELETE /api/mentions/:id: the caller's own row, never someone else's, idem
   assert.equal(gone.response.status, 200);
 });
 
+test("GET /api/mentions survives a real browser's GET: no Origin header (Firefox sends Origin only on CORS GETs)", async () => {
+  // The prod-shaped failure the suite missed for exactly one request class:
+  // every fixture request carried Origin + CSRF, but the browser's same-origin
+  // GET fetch sends neither — a read gate that demanded them 403'd the inbox
+  // on every load (live-confirmed against prod 2026-11-17). A read route
+  // rides the signed-in read gate, never the CSRF wall.
+  const fixture = await sessionFixtures();
+  const db = fakeDb([fixture.sessionRoute(), { test: MENTION_LIST_TEST, all: async () => ({ results: [] }) }]);
+  const request = new Request(ORIGIN + "/api/mentions", {
+    method: "GET",
+    headers: { Cookie: fixture.headers.Cookie },
+  });
+  const response = await handleMentionRoutes(
+    request, envWithLimiters({ GOOBER_DB: db }), new URL(ORIGIN + "/api/mentions"), "/api/mentions", "GET", undefined,
+  ).catch((error) => error instanceof HttpError
+    ? json(error.payload || { error: error.message }, error.status) : Promise.reject(error));
+  assert.equal(response.status, 200, "a signed-in GET without Origin is a normal read, not a CSRF question");
+  // The mutating DELETE keeps the full wall: same no-Origin shape must refuse.
+  const deleteRequest = new Request(ORIGIN + "/api/mentions/40", {
+    method: "DELETE",
+    headers: { Cookie: fixture.headers.Cookie },
+  });
+  const refused = await handleMentionRoutes(
+    deleteRequest, envWithLimiters({ GOOBER_DB: db }), new URL(ORIGIN + "/api/mentions/40"), "/api/mentions/40", "DELETE", undefined,
+  ).catch((error) => error instanceof HttpError
+    ? json(error.payload || { error: error.message }, error.status) : Promise.reject(error));
+  assert.equal(refused.status, 403, "the DELETE keeps its same-origin + CSRF wall");
+});
+
 test("the worker chain carries the mention routes (the /api/mentions door wires)", async () => {
   const source = (await import("node:fs")).readFileSync(
     new URL("../worker.mjs", import.meta.url).pathname, "utf8",
