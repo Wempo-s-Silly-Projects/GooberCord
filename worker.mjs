@@ -35,7 +35,6 @@ import { handleCoinRoutes } from "./api/coins.mjs";
 import { handleCampfireRoutes } from "./api/campfire.mjs";
 import { handleJobsRoutes } from "./api/jobs.mjs";
 import { handleCapsuleRoutes } from "./api/capsules.mjs";
-import { handleGooberDayRoutes } from "./api/goober-day.mjs";
 import { handleExpressionRoutes } from "./api/emoji.mjs";
 import { handleSoundboardRoutes } from "./api/soundboard.mjs";
 import { handleGifRoutes } from "./api/gifs.mjs";
@@ -207,7 +206,6 @@ const API_HANDLERS = [
   handleCampfireRoutes,
   handleJobsRoutes,
   handleCapsuleRoutes,
-  handleGooberDayRoutes,
   handleExpressionRoutes,
   handleSoundboardRoutes,
   handleGifRoutes,
