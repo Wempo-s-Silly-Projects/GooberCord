@@ -31,7 +31,7 @@
   "gc.chat.gif.unconfigured": "GIF 搜索尚未配置。",
   "gc.chat.history.fetching": "正在加载频道…",
   "gc.chat.history.older": "加载更早的",
-  "gc.chat.pins.capNote": "钉选每个频道上限 250 — 到顶之处由服务器的文字说了算。",
+  "gc.chat.pins.capNote": "置顶每个频道上限 250 — 到顶之处由服务器的文字说了算。",
   "gc.chat.pins.close": "关闭",
   "gc.chat.pins.empty": "这个频道还没有置顶的内容。",
   "gc.chat.pins.note": "最新的在前，留下的正是这个频道保存的那些。",
