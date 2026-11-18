@@ -86,8 +86,15 @@ function groveDb(overrides = {}) {
         this.bound.push({ sql: statement.sql, values: statement.values });
         if (overrides.batch) overrides.batch(statement.sql, statement.values);
       }
-      return statements.map(() =>
-        overrides.changes !== undefined ? { meta: { changes: overrides.changes } } : { meta: { changes: 1 } });
+      // Row-count-aware (the R5 reopen): each statement answers its own
+      // changes verdict — the overrides' changesFor walks the live SQL, the
+      // plain overrides.changes pins EVERY statement flat, and the default
+      // answers the one. The blanket role-allow arm's 0..N verdict is the
+      // caller's own overrides.changesFor to stage.
+      const changesFor = overrides.changesFor
+        ?? (() => (overrides.changes !== undefined ? overrides.changes : 1));
+      return statements.map((statement) =>
+        ({ meta: { changes: changesFor(statement.sql, statement.values) } }));
     },
   };
 }
@@ -229,6 +236,41 @@ test("a runtime zero-changes verdict is the all-or-nothing refusal — no partia
   assert.equal(result.ok, false);
   assert.match(result.refusal, /all-or-nothing|could not apply/i,
     "the refusal says the apply refused wholesale");
+});
+
+test("a private-channel Grove with pre-existing roles applies: the blanket arm's 0..N verdict is exempt", async () => {
+  const { ok, template } = validateTemplate(GROVE);
+  assert.equal(ok, true);
+  for (const blanketChanges of [0, 2, 5]) {
+    const db = groveDb({
+      changesFor: (sql) => (sql.includes("SELECT id, id, ?, 0 FROM gc_roles") ? blanketChanges : 1),
+    });
+    const result = await applyTemplate(db, { serverId: 5, creatorId: 7 }, template);
+    assert.equal(result.ok, true,
+      "a blanket verdict of " + blanketChanges + " is a fully applied grove, never a refusal");
+  }
+});
+
+test("a post-batch verdict refusal compensates: the grove's rows do not survive", async () => {
+  const db = groveDb({
+    changesFor: (sql) => (sql.includes("INSERT INTO gc_roles") ? 0 : 1),
+  });
+  const result = await applyTemplate(db, { serverId: 5, creatorId: 7 }, GROVE);
+  assert.equal(result.ok, false);
+  assert.match(result.refusal, /could not apply/i);
+  // The compensate deleted BY NAME what the committed batch had already
+  // written (overwrites first, then the channels, then the roles — GROVE
+  // carries no categories, so the category delete does not ride).
+  const deletes = db.bound.filter((row) => row.sql.startsWith("DELETE FROM"));
+  assert.equal(deletes.length, 3);
+  assert.equal(deletes[0].sql.includes("gc_channel_overwrites"), true);
+  assert.equal(deletes[1].sql.includes("DELETE FROM gc_channels"), true);
+  assert.equal(deletes[2].sql.includes("DELETE FROM gc_roles"), true);
+  const survivingNames = ["general", "vip", "lounge", "mod", "voice"];
+  for (const name of survivingNames) {
+    const present = deletes.some((row) => row.values.includes(name));
+    assert.equal(present, true, `the compensate deletes ${name} by name`);
+  }
 });
 
 test("the Grove's seeded shape reads exactly like a hand-rolled server: no hidden grants", () => {

@@ -26,7 +26,9 @@
 // authority rider + cap precondition, the cap-guarded channel INSERT, and
 // the private toggle's pair) — the overwrite rows bind their channel/role
 // seats by NAME-reselect, never a rowid (the remote-D1 batch rowid reset,
-// live-verified at api/servers.mjs's compensated create).
+// live-verified at api/servers.mjs's compensated create). A committed
+// batch's lost seat refuses wholesale AND compensates (the same delete the
+// create route carries), so a refusal never wedges a half-grove behind it.
 import {
   GC_CATEGORIES_MAX_PER_SERVER,
   GC_ROLES_MAX_PER_SERVER,
@@ -40,7 +42,7 @@ import {
   SLOWMODE_CHOICES,
 } from "./permissions.mjs";
 import { requireUser } from "./core/auth.mjs";
-import { HttpError, json, readJson } from "./core/http.mjs";
+import { HttpError, json, rateLimit, readJson } from "./core/http.mjs";
 
 export const GROVE_SCHEMA_VERSION = 1;
 
@@ -176,6 +178,7 @@ export function validateTemplate(grove) {
   }
 
   const overwriteRows = [];
+  const statedPairs = new Set();
   for (const row of overwrites) {
     if (row === null || typeof row !== "object" || Array.isArray(row)) {
       return { ok: false, refusal: groveRefusal("an overwrite row must be an object.") };
@@ -187,6 +190,11 @@ export function validateTemplate(grove) {
     if (roleName !== null && (typeof roleName !== "string" || !roleNames.has(roleName))) {
       return { ok: false, refusal: groveRefusal(`overwrite names an unknown role: ${String(roleName)}.`) };
     }
+    const pairSeat = `${channelName}\u0000${roleName === null ? "" : roleName}`;
+    if (statedPairs.has(pairSeat)) {
+      return { ok: false, refusal: groveRefusal(`overwrite for ${channelName}${roleName === null ? " @everyone" : ` / ${roleName}`} is stated twice.`) };
+    }
+    statedPairs.add(pairSeat);
     const denyMask = maskFromNames(deny, OVERWRITE_BIT_NAMES);
     if (typeof denyMask === "string") return { ok: false, refusal: denyMask };
     const allowMask = maskFromNames(allow, OVERWRITE_BIT_NAMES);
@@ -284,6 +292,55 @@ const DOCUMENT_EVERYONE_TARGET_SQL =
   "INSERT INTO gc_channel_overwrites (channel_id, role_id, allow_mask, deny_mask) " +
     "SELECT c.id, NULL, ?, ? FROM gc_channels c WHERE c.server_id = ? AND c.name = ?";
 
+// The all-or-nothing verdict + the compensate. A grove statement carries its
+// own expectation — "one" for every statement whose WHERE names exactly the
+// grove's own seat (roles, channels, the private pair's deny arm, each
+// document row), "some" ONLY for the blanket role-allow arm, whose
+// INSERT…SELECT legitimately answers 0..N (it covers every PRE-EXISTING role
+// the document did not name: a private channel on a server that already
+// carries roles answers 2, 5, 249 — a FULLY APPLIED grove, never a failure).
+// The verdict reads the per-row expectation; a lost "one" row refuses
+// wholesale AND the compensate deletes the grove's rows by name — the
+// batch has already committed at that point (a 0-changes arm is not a
+// transaction abort), so the refusal without the delete would wedge every
+// name-collision retry behind a half-grove (the same live shape the
+// server-create route's compensating delete guards).
+const EXPECT_ALL = "one";
+const EXPECT_SOME = "some";
+
+async function compensateGrove(db, ctx, grove) {
+  const { serverId } = ctx;
+  const channelNames = grove.channels.map((row) => row.name);
+  const categoryNames = grove.channels
+    .filter((row) => row.kind === "category")
+    .map((row) => row.name);
+  const roleNames = grove.roles.map((row) => row.name);
+  const deletes = [];
+  const inList = (names) => names.map(() => "?").join(", ");
+  if (channelNames.length > 0) {
+    deletes.push(db.prepare(
+      "DELETE FROM gc_channel_overwrites WHERE channel_id IN (" +
+        "SELECT id FROM gc_channels WHERE server_id = ? AND name IN (" + inList(channelNames) + "))",
+    ).bind(serverId, ...channelNames));
+    deletes.push(db.prepare(
+      "DELETE FROM gc_channels WHERE server_id = ? AND name IN (" + inList(channelNames) + ")",
+    ).bind(serverId, ...channelNames));
+  }
+  if (categoryNames.length > 0) {
+    deletes.push(db.prepare(
+      "DELETE FROM gc_channel_categories WHERE server_id = ? AND name IN (" + inList(categoryNames) + ")",
+    ).bind(serverId, ...categoryNames));
+  }
+  if (roleNames.length > 0) {
+    deletes.push(db.prepare(
+      "DELETE FROM gc_roles WHERE server_id = ? AND name IN (" + inList(roleNames) + ")",
+    ).bind(serverId, ...roleNames));
+  }
+  if (deletes.length > 0) {
+    await db.batch(deletes);
+  }
+}
+
 export async function applyTemplate(db, ctx, grove) {
   const { serverId, creatorId } = ctx;
   const now = Math.floor(Date.now() / 1000);
@@ -324,18 +381,19 @@ export async function applyTemplate(db, ctx, grove) {
     }
   }
 
-  const statements = [];
+  const planned = [];
 
   // Roles: one INSERT per row, the hand-rolled shape's full bind order.
   for (const row of grove.roles) {
-    statements.push(
-      db.prepare(GROVE_ROLE_INSERT_SQL).bind(
+    planned.push({
+      expectation: EXPECT_ALL,
+      statement: db.prepare(GROVE_ROLE_INSERT_SQL).bind(
         serverId, row.name, row.color, serverId, row.permissions, now,
         serverId, creatorId,
         ...holdsRolesBitsParams(serverId, creatorId, SERVER_PERMISSIONS.MANAGE_ROLES),
         serverId,
       ),
-    );
+    });
   }
 
   // Channels: text/voice ride the channel INSERT; categories ride the
@@ -343,14 +401,15 @@ export async function applyTemplate(db, ctx, grove) {
   // lives in the overwrite pair below.
   for (const row of grove.channels) {
     const sql = row.kind === "category" ? GROVE_CATEGORY_INSERT_SQL : GROVE_CHANNEL_INSERT_SQL;
-    statements.push(
-      db.prepare(sql).bind(
+    planned.push({
+      expectation: EXPECT_ALL,
+      statement: db.prepare(sql).bind(
         serverId, row.name, row.kind, serverId, now,
         serverId, creatorId,
         ...holdsRolesBitsParams(serverId, creatorId, SERVER_PERMISSIONS.MANAGE_CHANNELS),
         serverId,
       ),
-    );
+    });
   }
 
   // The overwrite surface: the private toggle's pair for every private
@@ -358,30 +417,38 @@ export async function applyTemplate(db, ctx, grove) {
   // the author's stated mask standing in for the toggle's — and the blanket
   // role-allow arm covers every role the document itself does not name for
   // the channel), then every document row verbatim.
-  const overwriteStatements = [];
+  let overwriteCount = 0;
   for (const row of grove.channels.filter((channel) => channel.private === true)) {
     const documentEveryone = grove.overwrites.find(
       (layer) => layer.channel === row.name && layer.role === null,
     );
     if (documentEveryone !== undefined) {
-      overwriteStatements.push(
-        db.prepare(PRIVATE_EVERYONE_DENY_SQL)
+      planned.push({
+        expectation: EXPECT_ALL,
+        statement: db.prepare(PRIVATE_EVERYONE_DENY_SQL)
           .bind(documentEveryone.deny, serverId, row.name),
-      );
+      });
     } else {
       // No document layer: the toggle's own deny seat rides untouched.
-      overwriteStatements.push(
-        db.prepare(PRIVATE_EVERYONE_DENY_SQL)
+      planned.push({
+        expectation: EXPECT_ALL,
+        statement: db.prepare(PRIVATE_EVERYONE_DENY_SQL)
           .bind(SERVER_PERMISSIONS.VIEW, serverId, row.name),
-      );
+      });
     }
+    overwriteCount += 1;
     const documentRoles = new Set(grove.overwrites
       .filter((layer) => layer.channel === row.name && layer.role !== null)
       .map((layer) => layer.role));
-    overwriteStatements.push(
-      db.prepare(privateRoleAllowSql([...documentRoles]))
+    // THE blanket arm: EXPECT_SOME — its covered set is the server's
+    // pre-existing roles minus the document's own seats, so 0..N is a fully
+    // applied grove and the verdict never reads it as "one".
+    planned.push({
+      expectation: EXPECT_SOME,
+      statement: db.prepare(privateRoleAllowSql([...documentRoles]))
         .bind(SERVER_PERMISSIONS.VIEW, serverId, ...documentRoles),
-    );
+    });
+    overwriteCount += 1;
   }
   for (const row of grove.overwrites) {
     // A private channel's document @everyone layer already rode the private
@@ -393,24 +460,36 @@ export async function applyTemplate(db, ctx, grove) {
       return target !== undefined && target.private === true;
     })();
     if (consumed) continue;
-    overwriteStatements.push(
-      row.role === null
+    planned.push({
+      expectation: EXPECT_ALL,
+      statement: row.role === null
         ? db.prepare(DOCUMENT_EVERYONE_TARGET_SQL)
             .bind(row.allow, row.deny, serverId, row.channel)
         : db.prepare(DOCUMENT_ROLE_TARGET_SQL)
             .bind(row.allow, row.deny, serverId, row.channel, row.role),
-    );
+    });
+    overwriteCount += 1;
   }
 
-  const results = await db.batch([...statements, ...overwriteStatements]);
+  let results;
+  try {
+    results = await db.batch(planned.map((entry) => entry.statement));
+  } catch (error) {
+    // A thrown batch aborted its transaction — the compensate is defensively
+    // redundant there (it deletes nothing), and never hides the error.
+    await compensateGrove(db, ctx, grove).catch(() => { /* best-effort */ });
+    throw error;
+  }
 
-  // The all-or-nothing verdict: a batch is one transaction, so any statement
-  // whose changes verdict is not the one is a refusal and the transaction
-  // carries no partial rows.
-  for (const result of results) {
-    if (Number(result.meta?.changes) !== 1) {
-      return { ok: false, refusal: "That Grove could not apply to this server." };
-    }
+  // The per-row verdict (see EXPECT_* above): every "one" seat answers
+  // exactly the change. One lost seat → the whole grove refuses AND the
+  // compensate deletes the rows the committed batch left behind, so a wedged
+  // retry starts from the same server the applicant had.
+  const lostSeat = planned.findIndex((entry, index) =>
+    entry.expectation === EXPECT_ALL && Number(results[index]?.meta?.changes) !== 1);
+  if (lostSeat !== -1) {
+    await compensateGrove(db, ctx, grove);
+    return { ok: false, refusal: "That Grove could not apply to this server." };
   }
 
   return {
@@ -418,7 +497,7 @@ export async function applyTemplate(db, ctx, grove) {
     applied: {
       roles: grove.roles.length,
       channels: grove.channels.length,
-      overwrites: overwriteStatements.length,
+      overwrites: overwriteCount,
     },
   };
 }
@@ -435,6 +514,8 @@ export async function applyTemplate(db, ctx, grove) {
 export async function handleApplyGroveRoute(request, env, serverId) {
   const session = await requireUser(request, env);
   const userId = Number(session.user.id);
+  // T30's write bucket (R5 rider): the grove apply is a bulk write.
+  await rateLimit(request, env, "write", "grove:apply:" + serverId + ":" + userId);
 
   const membership = await env.GOOBER_DB.prepare(
     "SELECT role FROM gc_server_members WHERE server_id = ? AND user_id = ? LIMIT 1",
