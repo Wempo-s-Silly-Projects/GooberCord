@@ -74,6 +74,15 @@ function matchRoute(path) {
 function renderRoute(route) {
   currentRoute = route;
   if (mountNode) {
+    // The focus wave's seat (T57): replaceChildren orphans whatever held
+    // focus, so the re-render re-threads it onto the fresh pane heading.
+    // Focus that never lived inside the mount — the first paint, a foreign
+    // dialog — is snapped up by the containment snapshot and left alone.
+    const previous = globalThis.document?.activeElement ?? null;
+    const focusHeld = !!(previous
+      && typeof previous.nodeType === "number"
+      && typeof mountNode.contains === "function"
+      && mountNode.contains(previous));
     mountNode.replaceChildren();
     // The render owns nothing outside its node: the router clears it before
     // each render and hands the node over. A render's own death is caught by
@@ -83,7 +92,23 @@ function renderRoute(route) {
     } catch (caught) {
       renderFailurePane(mountNode, caught);
     }
+    if (focusHeld) restoreRouteFocus(previous);
   }
+}
+
+// restoreRouteFocus(lost) — the re-anchoring half: the new pane's heading
+// takes focus (tabindex -1 keeps it outside the tab order), the failure
+// pane's h2 catches routes that died mid-render, and a render that re-kept
+// the old node declines quietly — focus that survived stays where it sits.
+function restoreRouteFocus(lost) {
+  if (mountNode.contains(lost)) return;
+  const heading = mountNode.querySelector?.(".pane-main h2")
+    ?? mountNode.querySelector?.(".pane-title")
+    ?? mountNode.querySelector?.("h1, h2, h3")
+    ?? null;
+  if (!heading) return;
+  heading.setAttribute?.("tabindex", "-1");
+  heading.focus?.();
 }
 
 // renderFailurePane(mountNode, error) — the render-guard's card: the thrown
