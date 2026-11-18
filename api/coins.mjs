@@ -283,11 +283,47 @@ const CHAIN_KEEP_MINT_SQL =
     "SELECT 1 FROM gc_chain_hops gh JOIN gc_chain_hold gc ON gc.hop_token = gh.hop_token " +
     "WHERE gh.hop_token = ? AND gc.user_id = ?)";
 
+// --- the pass's claim pair (the MEDIUM-2 race fix) ---------------------------
+//
+// A concurrent second pass must move NOTHING: every statement of the pass
+// batch is fingerprinted to the OLD hop's created_at (or the new hop this
+// batch itself minted), so the losing batch answers changes 0 on every line
+// — the old hold survives to serve exactly one pass, no carried amount is
+// ever double-minted, and no pool credit rides without its fee row.
+const CHAIN_PASS_OLD_HOP_FP_SQL =
+  "EXISTS (SELECT 1 FROM gc_chain_hops gh WHERE gh.hop_token = ? AND gh.created_at = ?)";
+
+const CHAIN_PASS_FEE_SPEND_SQL =
+  "INSERT INTO gc_coin_ledger (user_id, delta, source, created_at) " +
+  "SELECT ?, ?, 'chain_fee', ? " +
+  "WHERE (SELECT COALESCE(SUM(le.delta), 0) FROM gc_coin_ledger le " +
+    "WHERE le.user_id = ?) >= ? " +
+  "AND " + CHAIN_PASS_OLD_HOP_FP_SQL + " LIMIT 1";
+
+const CHAIN_PASS_HOP_INSERT_SQL =
+  "INSERT INTO gc_chain_hops (hop_token, depth, amount, pool_server_id, expires_at, created_at) " +
+  "SELECT ?, ?, ?, ?, ?, ? WHERE " + CHAIN_PASS_OLD_HOP_FP_SQL;
+
+// The new hold rides ONLY a hop this batch itself minted (the serial batch's
+// statement 3 is the fingerprint) — the losing batch inserts no hold either.
+const CHAIN_PASS_HOLD_INSERT_SQL =
+  "INSERT INTO gc_chain_hold (hop_token, user_id, created_at) " +
+  "SELECT ?, ?, ? WHERE EXISTS (" +
+    "SELECT 1 FROM gc_chain_hops nh WHERE nh.hop_token = ?)";
+
+// The fee's pool credit, fingerprinted to the fee row THIS batch minted
+// (the term-upsert idiom): no credit can ride a batch whose fee never spent.
+const CHAIN_PASS_CREDIT_FP = (ownerId, fee, createdAt) => ({
+  sql: "EXISTS (SELECT 1 FROM gc_coin_ledger cl WHERE cl.user_id = ? " +
+    "AND cl.source = 'chain_fee' AND cl.delta = ? AND cl.created_at = ?)",
+  binds: [ownerId, -fee, createdAt],
+});
+
 // The chain's one hop read: the caller's own hold joins the hop (the ONLY
 // seat the token resolves through — a foreign token answers the same 404 as
-// a made-up one).
+// a made-up one). created_at rides for the pass's claim fingerprint.
 const CHAIN_HOP_READ_SQL =
-  "SELECT h.hop_token, h.depth, h.amount, h.expires_at " +
+  "SELECT h.hop_token, h.depth, h.amount, h.expires_at, h.created_at " +
   "FROM gc_chain_hops h JOIN gc_chain_hold c ON c.hop_token = h.hop_token " +
   "WHERE h.hop_token = ? AND c.user_id = ? LIMIT 1";
 
@@ -1179,17 +1215,30 @@ async function handleChainPassRoute(request, env, token) {
   }
   const poolServerId = await chainPoolServer(env, userId, targetId);
   const newToken = randomToken(32);
+  const hopCreatedAt = Number(hop.created_at);
 
-  await env.GOOBER_DB.batch([
+  // The pass's claim batch (see CHAIN_PASS_*): the fee spend is the fingerprint
+  // opener — the losing racer fingerprints to a hop the winner already moved,
+  // so every one of its statements answers changes 0 and the old hold
+  // survives to serve exactly one pass.
+  const results = await env.GOOBER_DB.batch([
+    env.GOOBER_DB.prepare(CHAIN_PASS_FEE_SPEND_SQL).bind(
+      userId, -fee, now, userId, fee, token, hopCreatedAt,
+    ),
+    campfirePoolCreditStatement(env.GOOBER_DB, poolServerId, fee, now, CHAIN_PASS_CREDIT_FP(userId, fee, now)),
+    env.GOOBER_DB.prepare(CHAIN_PASS_HOP_INSERT_SQL).bind(
+      newToken, depth + 1, carriedAmount, poolServerId, now + GC_CHAIN_HOP_TTL_SECONDS, now,
+      token, hopCreatedAt,
+    ),
+    env.GOOBER_DB.prepare(CHAIN_PASS_HOLD_INSERT_SQL).bind(newToken, targetId, now, newToken),
     env.GOOBER_DB.prepare(CHAIN_DELETE_HOLD_SQL).bind(token),
     env.GOOBER_DB.prepare(CHAIN_DELETE_HOP_SQL).bind(token),
-    env.GOOBER_DB.prepare(CHAIN_FEE_SPEND_SQL).bind(userId, -fee, now, userId, fee),
-    campfirePoolCreditStatement(env.GOOBER_DB, poolServerId, fee, now),
-    env.GOOBER_DB.prepare(CHAIN_HOP_INSERT_SQL).bind(
-      newToken, depth + 1, carriedAmount, poolServerId, now + GC_CHAIN_HOP_TTL_SECONDS, now,
-    ),
-    env.GOOBER_DB.prepare(CHAIN_HOLD_INSERT_SQL).bind(newToken, targetId, now),
   ]);
+  // The verdict: the fee spend's changes IS the claim. A lost race answers
+  // 409 — the batch moved nothing (every line fingerprint-guards to zero).
+  if (Number(results[0]?.meta?.changes) !== 1) {
+    throw new HttpError(409, "Someone already passed that hop along.");
+  }
   return json({
     passed: true,
     depth: depth + 1,

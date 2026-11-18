@@ -99,24 +99,50 @@ const DRAW_BANNER_SQL =
   "WHERE server_id = ? AND fuel >= " + GC_CAMPFIRE_FUEL_THRESHOLD + " " +
     "AND (last_draw_at IS NULL OR last_draw_at <= ?)";
 
+// The draw's shape (spec §2 line 90 — `pool -= paid in the same motion`).
+// The CLAIM is ONE guarded statement (the compensated-create precedent): the
+// pool debit, the fuel reset, and the draw gap all ride its WHERE, so a
+// racing second draw finds fuel 0 and answers changes 0 BEFORE any payout
+// commits. The payouts follow, each fingerprinted to THE claim's
+// last_draw_at seat — a payout can only mint inside the draw that won — and
+// the verdict walk refunds exactly the seats that could not mint (a member
+// who left mid-draw never burns their coin: the pool takes it back, the
+// ledger never shows a paid coin the pool did not debit).
+const DRAW_CLAIM_SQL =
+  "UPDATE gc_campfires SET " +
+    "pool = pool - ?, fuel = 0, last_draw_at = ?, updated_at = ? " +
+  "WHERE server_id = ? AND pool >= ? AND fuel >= " + GC_CAMPFIRE_FUEL_THRESHOLD + " " +
+    "AND (last_draw_at IS NULL OR last_draw_at <= ?)";
+
 const DRAW_PAYOUT_SQL =
   "INSERT INTO gc_coin_ledger (user_id, delta, source, created_at) " +
     "SELECT ?, ?, 'campfire', ? " +
     "WHERE EXISTS (SELECT 1 FROM gc_server_members om " +
       "WHERE om.server_id = ? AND om.user_id = ?) " +
-    "AND (SELECT cf.pool FROM gc_campfires cf WHERE cf.server_id = ?) >= ?";
+    "AND EXISTS (SELECT 1 FROM gc_campfires cf " +
+      "WHERE cf.server_id = ? AND cf.last_draw_at = ?)";
 
-const DRAW_DECREMENT_SQL =
+const DRAW_SEAT_REFUND_SQL =
   "UPDATE gc_campfires SET " +
-    "fuel = 0, last_draw_at = ?, updated_at = ? " +
-  "WHERE server_id = ?";
+    "pool = pool + ?, updated_at = ? " +
+  "WHERE server_id = ? AND last_draw_at = ?";
+
+// The thrown-payout-batch refund: the debit banked but no coin paid, so the
+// claim reverses — the pool gets its whole debit back AND the fire gets the
+// fuel the draw consumed back (the fire never burned for a crashed payout).
+const DRAW_CLAIM_REVERSAL_SQL =
+  "UPDATE gc_campfires SET " +
+    "pool = pool + ?, fuel = " + GC_CAMPFIRE_FUEL_THRESHOLD + ", " +
+    "last_draw_at = ?, updated_at = ? " +
+  "WHERE server_id = ? AND last_draw_at = ?";
 
 const ROSTER_READ_SQL =
   "SELECT user_id FROM gc_server_members WHERE server_id = ?";
 
 // The pool credit primitive (api/coins.mjs's chain lane calls it for the
 // chain fee — the Campfire's second credit). Same upsert, same cap arm.
-export const CAMPFIRE_POOL_CREDIT_SQL = POOL_CREDIT_UPSERT_SQL;
+
+// --- grants ------------------------------------------------------------------
 
 export async function grantCampfireFuel(env, serverId, now) {
   const dayStart = now - (now % CAMPFIRE_DAY);
@@ -131,9 +157,18 @@ export async function grantCampfireFuel(env, serverId, now) {
 // The pool credit the chain fee rides. Returns the statement — the CALLER
 // binds it INTO its own batch (the fee and its credit move together), so the
 // Campfire module ships the shape, never a free-running write.
-export function campfirePoolCreditStatement(db, serverId, amount, now) {
-  return db.prepare(POOL_CREDIT_UPSERT_SQL).bind(
-    serverId, amount, now, amount, now,
+export function campfirePoolCreditStatement(db, serverId, amount, now, fingerprint = null) {
+  const fpSeat = fingerprint ? " WHERE " + fingerprint.sql : "";
+  const fpBinds = fingerprint ? fingerprint.binds : [];
+  return db.prepare(
+    "INSERT INTO gc_campfires (server_id, fuel, pool, updated_at) " +
+      "SELECT ?, 0, ?, ?" + fpSeat + " " +
+    "ON CONFLICT (server_id) DO UPDATE SET " +
+      "pool = MIN(gc_campfires.pool + ?, " + GC_CAMPFIRE_MAX_POOL + "), " +
+      "updated_at = ?" + (fingerprint ? " WHERE " + fingerprint.sql : ""),
+  ).bind(
+    serverId, amount, now, ...fpBinds,
+    amount, now, ...(fingerprint ? fpBinds : []),
   );
 }
 
@@ -175,9 +210,11 @@ async function onlineServerMembers(env, serverId) {
 }
 
 // The draw's evaluation (spec §2): on the read, when fuel crosses the
-// threshold and the gap arm stands. Pool-funded coin path when the pool
-// covers the cost; banner path when it does not. failures swallow — a draw
-// miss only delays the fire.
+// threshold and the gap arm stands. The CLAIM debits the pool and claims the
+// draw in ONE guarded statement (its changes verdict answers the race — a
+// losing draw never commits a payout); then the fingerprinted payouts mint
+// exactly the debit's coins. failures swallow — a draw miss only delays the
+// fire.
 async function evaluateCampfireDraw(env, serverId, row, now2) {
   if ((Number(row?.fuel) || 0) < GC_CAMPFIRE_FUEL_THRESHOLD) return null;
   const lastDrawAt = row?.last_draw_at === null || row?.last_draw_at === undefined
@@ -190,15 +227,42 @@ async function evaluateCampfireDraw(env, serverId, row, now2) {
   const cost = online.length * GC_CAMPFIRE_DRAW_ONLINE_BONUS;
   const db = env.GOOBER_DB;
   if (online.length > 0 && pool >= cost) {
-    return db.batch([
-      ...online.map((memberId) =>
+    // THE claim: debit + fuel reset + gap in one WHERE. changes 0 = another
+    // draw won (or the row moved since the read) — answer nothing, commit
+    // nothing.
+    const claim = await db.prepare(DRAW_CLAIM_SQL).bind(
+      cost, now2, now2, serverId, cost, now2 - GC_CAMPFIRE_DRAW_GAP_SECONDS,
+    ).run();
+    if (Number(claim.meta?.changes) !== 1) return null;
+    let results;
+    try {
+      // The payouts: each fingerprinted to THIS claim's last_draw_at — mint
+      // exactly the debit's coins, never a second seat's worth.
+      results = await db.batch(online.map((memberId) =>
         db.prepare(DRAW_PAYOUT_SQL).bind(
           memberId, GC_CAMPFIRE_DRAW_ONLINE_BONUS, now2,
           serverId, memberId,
-          serverId, GC_CAMPFIRE_DRAW_ONLINE_BONUS,
-        )),
-      db.prepare(DRAW_DECREMENT_SQL).bind(now2, now2, serverId),
-    ]);
+          serverId, now2,
+        )));
+    } catch (error) {
+      // The payout batch aborted: reverse the claim wholesale (pool AND fuel
+      // back), so a crashed draw neither burns nor double-pays.
+      await db.prepare(DRAW_CLAIM_REVERSAL_SQL).bind(
+        cost, lastDrawAt, now2, serverId, now2,
+      ).catch(() => { /* the reversal is best-effort */ });
+      throw error;
+    }
+    // The verdict walk: a seat whose mint lost its membership (a member who
+    // left mid-draw) refunds ITS bonus to the pool — conservation holds
+    // (minted == paid == debited minus refunded), never a free coin.
+    const mintedSeats = results.filter((seat) => Number(seat?.meta?.changes) === 1).length;
+    const missedSeats = online.length - mintedSeats;
+    if (missedSeats > 0) {
+      await db.prepare(DRAW_SEAT_REFUND_SQL).bind(
+        missedSeats * GC_CAMPFIRE_DRAW_ONLINE_BONUS, now2, serverId, now2,
+      ).catch(() => { /* a missed refund only delays the fire */ });
+    }
+    return null;
   }
   return db.prepare(DRAW_BANNER_SQL).bind(
     now2, now2 + GC_CAMPFIRE_BANNER_HOURS * 3600, now2,

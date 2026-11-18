@@ -164,6 +164,13 @@ CREATE TABLE gc_chain_hold (
 - Sink: every pass re-sinks a fee into a Campfire pool; the send sinks the first fee. Supply
   change per chain: strictly negative in fees, zero otherwise.
 
+**PARKED FOR OWNER — board row R9 (2026-11-18, ship-reviewer flag; NOT a backend decision):**
+the anonymous chain lanes are open to banned members today (requireUser answers any live
+session; the hop lanes never surface the sender, so a ban check rides no identity the module
+sees). Whether a ban should freeze coin movement — receive-lane writes, the chain send, and
+the hop conversion — is an OWNERSHIP ruling (does a ban freeze coins?) and STAYS UNDECIDED
+here until the owner calls it. No backend lane may close or "fix" this unilaterally.
+
 Constants:
 
 | Constant | Value | Meaning |

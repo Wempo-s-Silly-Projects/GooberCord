@@ -105,11 +105,19 @@ function coinDb(options = {}) {
   // routes' member gate reads gc_server_members — the fake answers "member"
   // so the member-gate rows exercise the gate shape, not its absence.
   const MEMBER_TEST = (sql) => sql.includes("gc_server_members");
+  // The WAVE-3 roster seat: the Campfire draw's online crossing reads the
+  // server's roster — the fake seeder carries two members (ids 1 and 22).
+  const ROSTER_TEST = (sql) =>
+    sql.startsWith("SELECT user_id FROM gc_server_members WHERE server_id = ?");
 
   const routes = [
     {
       test: SESSION_TEST,
       first: async () => SESSION_ROW,
+    },
+    {
+      test: ROSTER_TEST,
+      all: async () => ({ results: [{ user_id: 1 }, { user_id: 22 }] }),
     },
     {
       test: CLAIM_TEST,
@@ -168,6 +176,18 @@ function coinDb(options = {}) {
         { ...campfires.get(-1), server_id: bound[0] } || null,
     },
     { test: POOL_TEST, run: (bound) => { campfires.set(bound[0], { bound }); return { meta: { changes: 1 } }; } },
+    {
+      test: (sql) => sql.startsWith("SELECT h.hop_token, h.depth, h.amount, h.expires_at, h.created_at"),
+      // GREEN-side fake extension: the chain lanes resolve a hop by its OWN
+      // hold row — the fake answers a riding hop (depth 6, amount 100).
+      first: async (bound) => ({
+        hop_token: String(bound[0]),
+        depth: 6,
+        amount: 100,
+        created_at: 5,
+        expires_at: NOW + DAY,
+      }),
+    },
     { test: MEMBER_TEST, first: async () => ({ role: "member" }) },
     // GREEN-side fake extension: the chain lanes resolve the recipient by
     // username (the same GIFT_TARGET read the + lane uses) — the fake answers
@@ -200,7 +220,16 @@ function coinDb(options = {}) {
       };
       statement.run = async () => {
         calls.push({ sql, bound: statement.bound, call: "run" });
-        return route && route.run ? route.run(statement.bound) : { meta: { changes: 1 } };
+        let out = route && route.run ? route.run(statement.bound) : { meta: { changes: 1 } };
+        // The WAVE-3 verdict hook: options.verdictFor stages a live
+        // changes-verdict per SQL (a lost race's zero), on top of whatever
+        // the route's own handler answered.
+        if (options.verdictFor) {
+          const verdict = options.verdictFor(sql);
+          if (verdict !== undefined) out = { meta: { changes: verdict } };
+        }
+        calls[calls.length - 1].changes = out.meta?.changes;
+        return out;
       };
       return statement;
     },
@@ -257,14 +286,11 @@ function authed(method, path, body) {
 }
 
 // The catch-all fallback route returns changes:1 with NOTHING stored — helper
-// that answers "did any recorded statement write real ledger deltas". The
-// chain/stoke lanes move in db.batch, so the walk FLATTENS batch statements
-// (GREEN-side fake extension: same assertions, over the real statement list).
+// that answers "did any recorded statement write real ledger deltas". Batch
+// statements record as their own run entries (verdict included), so the walk
+// reads THOSE (the aggregated batch entry stays out — no double counting).
 const flatStatements = (db) =>
-  db.calls.flatMap((call) =>
-    call.call === "batch"
-      ? call.statements
-      : [{ sql: call.sql, bound: call.bound, call: call.call }]);
+  db.calls.filter((call) => call.call === "run");
 
 const ledgerWrites = (db) =>
   flatStatements(db).filter((statement) =>
@@ -427,6 +453,94 @@ test("the campfire stoke sinks coins into the pool under the sufficient-coins ar
   assert.ok(
     spend.sql.includes("gc_campfires"),
     "the same statement credits the pool (SINK LAW: one batch, no free pool coin)",
+  );
+});
+
+// The WAVE-3 presence stub: the draw's roster crossing reads the hub — the
+// fake answers two online members against the roster route's {1, 22}.
+const fakeHub = () => ({
+  idFromName: (name) => ({ name }),
+  get: () => ({
+    fetch: async () => new Response(
+      JSON.stringify({ online: [{ userId: 1 }, { userId: 22 }] }),
+      { headers: { "content-type": "application/json" } },
+    ),
+  }),
+});
+
+test("the campfire draw mints exactly the pool's debit — no free coin rides a draw", async () => {
+  const baseline = 2 * C.GC_CAMPFIRE_DRAW_ONLINE_BONUS;
+  const db = coinDb({
+    campfires: [[SERVER_ID, { fuel: C.GC_CAMPFIRE_FUEL_THRESHOLD, pool: baseline, bonus_until: null, last_draw_at: null }]],
+  });
+  const response = await worker.fetch(
+    authed("GET", `/api/servers/${SERVER_ID}/campfire`),
+    envWithLimiters(db, { PRESENCE: fakeHub() }),
+    {},
+  );
+  assert.equal(response.status, 200);
+  const payoutRows = flatStatements(db).filter((call) =>
+    call.sql?.startsWith("INSERT INTO gc_coin_ledger") && call.sql?.includes("'campfire'"));
+  assert.equal(payoutRows.length, 2, "one payout per online member, never a general mint");
+  const paid = payoutRows.reduce((total, call) => total + call.bound[1], 0);
+  const debit = flatStatements(db).find((call) => call.sql?.includes("pool = pool - ?"));
+  assert.ok(debit, "the draw DEBITS the pool (spec line 90), it never free-mints");
+  assert.equal(debit.bound[0], 2 * C.GC_CAMPFIRE_DRAW_ONLINE_BONUS,
+    "the debit IS the paid sum (the delta pin, not the >= 0 floor)");
+  assert.equal(paid, debit.bound[0], "total minted == amount paid to members");
+});
+
+test("a second concurrent draw cannot double-pay — the claim's verdict gates every payout", async () => {
+  const db = coinDb({
+    campfires: [[SERVER_ID, { fuel: C.GC_CAMPFIRE_FUEL_THRESHOLD, pool: 2 * C.GC_CAMPFIRE_DRAW_ONLINE_BONUS, bonus_until: null, last_draw_at: null }]],
+    verdictFor: (sql) => (sql.includes("pool = pool - ?") ? 0 : undefined),
+  });
+  const response = await worker.fetch(
+    authed("GET", `/api/servers/${SERVER_ID}/campfire`),
+    envWithLimiters(db, { PRESENCE: fakeHub() }),
+    {},
+  );
+  assert.equal(response.status, 200);
+  assert.equal(
+    flatStatements(db).filter((call) =>
+      call.sql?.startsWith("INSERT INTO gc_coin_ledger") && call.sql?.includes("'campfire'")).length,
+    0, "the losing draw mints nothing",
+  );
+  assert.equal(
+    db.calls.some((call) => call.call === "run" && call.sql?.includes("pool = pool + ?")),
+    false, "no pool drift: the loser never refunds what it never debited",
+  );
+});
+
+test("two concurrent pass batches — the old hold survives to serve exactly one pass", async () => {
+  const winnerDb = coinDb({ ledger: [{ user_id: USER_ID, delta: 1000, source: "daily", related_user_id: null, created_at: TTL_NOW() }] });
+  const win = await dispatch(authed("POST", "/api/coins/chain/aaaaaaaaaaaa/pass", { to: "friend" }), envWithLimiters(winnerDb));
+  assert.equal(win.status, 200, "the winner's pass rides whole");
+  const winnerHoldDelete = flatStatements(winnerDb).find((call) => call.sql?.startsWith("DELETE FROM gc_chain_hold"));
+  assert.ok(winnerHoldDelete, "the winner claimed the old hold");
+  assert.equal(winnerHoldDelete.changes, 1, "the old hold is deleted exactly once");
+
+  // The loser stages the race: its fee spend fingerprints to a hop the
+  // winner already moved — every statement answers changes 0, nothing mints,
+  // and the old hold survives.
+  const loserDb = coinDb({
+    ledger: [{ user_id: USER_ID, delta: 1000, source: "daily", related_user_id: null, created_at: TTL_NOW() }],
+    verdictFor: (sql) => (sql.includes("'chain_fee'")
+      || sql.includes("gh.hop_token = ? AND gh.created_at = ?")
+      || sql.includes("SELECT 1 FROM gc_chain_hops nh WHERE nh.hop_token = ?")
+      || sql.startsWith("DELETE FROM gc_chain_hold")
+      || sql.startsWith("DELETE FROM gc_chain_hops"))
+      ? 0 : undefined,
+  });
+  const lose = await dispatch(authed("POST", "/api/coins/chain/aaaaaaaaaaaa/pass", { to: "friend" }), envWithLimiters(loserDb));
+  assert.equal(lose.status, 409, "the loser's claim is the refused one, never a silent re-move");
+  assert.equal(
+    flatStatements(loserDb).filter((call) => call.call === "run").every((call) => call.changes === 0),
+    true, "the losing batch moved NOTHING (no double-mint of the carried amount)",
+  );
+  assert.equal(
+    flatStatements(loserDb).filter((call) => call.sql?.startsWith("DELETE FROM gc_chain_hold"))[0]?.changes,
+    0, "the old hold survives to serve exactly one pass",
   );
 });
 
