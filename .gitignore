@@ -13,3 +13,6 @@ coverage/
 *.kate-swp
 .claude/
 .superpowers/
+
+# the team board (internal ops data — never publish)
+.team/
