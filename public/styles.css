@@ -540,6 +540,22 @@ a:hover {
   background: var(--paper);
 }
 
+/* ========================= the render-failure card ========================= */
+/* T28: the router's render guard and the boot catch paint one card
+   (.router-error in core/router.js's renderFailurePane and main.js's boot
+   .catch) — the gate-panel idiom on the error tokens, so both themes ride
+   the vars and the card stays a card, not a design system. */
+
+.router-error {
+  max-width: 34rem;
+  margin: 15vh auto 0;
+  padding: 1.4rem 1.6rem;
+  border: 2px solid var(--error-chip-border);
+  border-radius: 0.6rem;
+  background: var(--error-soft);
+  color: var(--error-ink);
+}
+
 .gate-title {
   margin: 0 0 0.6rem;
   font-family: Georgia, serif;
