@@ -29,6 +29,7 @@ import assert from "node:assert/strict";
 import { handleServerRoutes } from "../api/servers.mjs";
 import { randomToken, sha256Hex, nowSeconds } from "../api/core/crypto.mjs";
 import { HttpError, json } from "../api/core/http.mjs";
+import { RATE_LIMIT_BINDINGS } from "../constants.mjs";
 
 const ORIGIN = "http://localhost";
 const USER_ID = 7;
@@ -268,12 +269,22 @@ const MEMBER_PROBE_TEST = (sql) =>
 const BAN_PROBE_TEST = (sql) =>
   sql.includes("SELECT 1 AS banned FROM gc_server_bans WHERE server_id = ? AND user_id = ?");
 
+// The join limiter's recording env (T30): every binding answers success, so
+// the write bucket's ride on the join lane never trips the vendor's 503 law.
+function joinLimiterEnv(db) {
+  const env = { GOOBER_DB: db };
+  for (const binding of Object.values(RATE_LIMIT_BINDINGS)) {
+    env[binding] = { limit: async () => ({ success: true }) };
+  }
+  return env;
+}
+
 test("a fresh invite join inserts the member and bumps uses once", async () => {
   const { db, request } = await authed([
     { test: INVITE_LOOKUP_TEST, first: async () => ({ server_id: 3 }) },
     { test: INVITE_MEMBER_INSERT_TEST, run: async () => ({ meta: { changes: 1 } }) },
   ]);
-  const response = await dispatch(request("/api/invites/Goober12/join", {}), { GOOBER_DB: db });
+  const response = await dispatch(request("/api/invites/Goober12/join", {}), joinLimiterEnv(db));
 
   assert.equal(response.status, 200);
   assert.deepEqual(await bodyOf(response), { joined: true, serverId: 3 });
@@ -313,7 +324,7 @@ test("an idempotent re-join answers joined:false without moving uses", async () 
     { test: INVITE_MEMBER_INSERT_TEST, run: async () => ({ meta: { changes: 0 } }) },
     { test: MEMBER_PROBE_TEST, first: async () => ({ member: 1 }) },
   ]);
-  const response = await dispatch(request("/api/invites/Goober12/join", {}), { GOOBER_DB: db });
+  const response = await dispatch(request("/api/invites/Goober12/join", {}), joinLimiterEnv(db));
 
   assert.equal(response.status, 200);
   assert.deepEqual(await bodyOf(response), { joined: false, serverId: 3 });
@@ -333,7 +344,7 @@ test("an unknown invite code 404s with zero writes", async () => {
   const { db, request } = await authed([
     { test: INVITE_LOOKUP_TEST, first: async () => null },
   ]);
-  const response = await dispatch(request("/api/invites/GoneAway/join", {}), { GOOBER_DB: db });
+  const response = await dispatch(request("/api/invites/GoneAway/join", {}), joinLimiterEnv(db));
 
   assert.equal(response.status, 404);
   assert.deepEqual(await bodyOf(response), { error: "That invite is no longer valid." });

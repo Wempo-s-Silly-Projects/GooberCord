@@ -989,6 +989,10 @@ export const INVITE_MAX_USES_MAX = 100;
 // The list is a mod-desk read, not a page: servers mint few invites; the cap
 // is a safety rail, newest first.
 export const INVITE_LIST_LIMIT = 500;
+// The join-honeypot field name (T32): the join render's hidden decoy input
+// carries this name, so the render and the drop read agree by import — never
+// by a re-typed string.
+export const JOIN_HONEYPOT_FIELD = "hp";
 
 // The ONE active predicate (0017) the join lookup, the join INSERT's guard and
 // the uses-bump's WHERE all share — a join racing an expiry or a use cap can
@@ -1153,6 +1157,23 @@ async function handleInviteJoinRoute(request, env, code) {
   const session = await requireUser(request, env);
   const userId = Number(session.user.id);
   const now = nowSeconds();
+
+  // The raid bound (T30): every join attempt rides the write bucket keyed to
+  // the CALLER (not the code — one account can't storm joins across invites),
+  // ahead of the invite lookup, so a dead code burns the tick too. The seat
+  // that issued the session bounded the swarm's login; this bounds its joins.
+  await rateLimit(request, env, "write", "join:" + userId);
+
+  // The join honeypot (T32): a bot that paints forms fills the hidden decoy
+  // field too. A non-empty string under JOIN_HONEYPOT_FIELD is the drop
+  // signal — the SAME flat 404 an invalid code answers, ZERO db calls (the
+  // lookup never runs), zero writes — so the trap is fully invisible and the
+  // hit's only trace rides the limiter binding above. Empty string / number /
+  // absent body are the human's untouched placeholder, not a hit.
+  const body = (await request.json().catch(() => null)) || {};
+  if (typeof body[JOIN_HONEYPOT_FIELD] === "string" && body[JOIN_HONEYPOT_FIELD] !== "") {
+    throw new HttpError(404, "That invite is no longer valid.");
+  }
 
   const invite = await env.GOOBER_DB.prepare(INVITE_JOIN_SELECT_SQL)
     .bind(code, now).first();
