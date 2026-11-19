@@ -28,7 +28,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
 
-import { backfillBlobsToR2, toBytes, bytesEqual } from "../scripts/backfill-blobs-to-r2.mjs";
+import { backfillBlobsToR2, toBytes, bytesEqual, d1JsonToD1Shape } from "../scripts/backfill-blobs-to-r2.mjs";
 
 const PAGE_ROWS = Math.max(1, Math.floor(4 * 1024 * 1024 / 64000));
 
@@ -229,3 +229,33 @@ test("bytesEqual answers the byte-compare law", () => {
   assert.equal(bytesEqual(bytes, null), false);
   assert.equal(bytesEqual(bytes, new Uint8Array([0xaa, 0xbc])), false);
 });
+
+// The seam the first prod run fell through: `wrangler d1 execute --json`
+// answers an ARRAY of entries, and an engine that reads `page.results` on
+// the array itself sees no pages at all — the empty-DB false green.
+test("d1JsonToD1Shape unfolds wrangler's batch-entry array into the engine page", () => {
+  const page = d1JsonToD1Shape([
+    { results: [{ id: 1 }, { id: 2 }], success: true, meta: { changes: 0 } },
+  ]);
+  assert.deepEqual(page.results, [{ id: 1 }, { id: 2 }]);
+  assert.deepEqual(page.meta, { changes: 0 });
+
+  // Multiple entries flatten in order; the last meta wins.
+  const merged = d1JsonToD1Shape([
+    { results: [{ id: 1 }], meta: { changes: 1 } },
+    { results: [{ id: 2 }], meta: { changes: 2 } },
+  ]);
+  assert.deepEqual(merged.results, [{ id: 1 }, { id: 2 }]);
+  assert.deepEqual(merged.meta, { changes: 2 });
+
+  // Entryless shapes degrade to the empty page, never to undefined.results.
+  assert.deepEqual(d1JsonToD1Shape([]), { results: [], meta: { changes: 0 } });
+  assert.deepEqual(d1JsonToD1Shape([{}]), { results: [], meta: { changes: 0 } });
+
+  // An already-flat passthrough still answers the engine page.
+  assert.deepEqual(
+    d1JsonToD1Shape({ results: [{ id: 9 }], meta: { changes: 4 } }).results,
+    [{ id: 9 }],
+  );
+});
+

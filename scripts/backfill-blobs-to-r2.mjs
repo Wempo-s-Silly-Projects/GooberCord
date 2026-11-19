@@ -256,6 +256,20 @@ function sqlLiteral(value) {
   throw new Error("backfill CLI: unsupported bind value " + typeof value);
 }
 
+// `wrangler d1 execute --json` answers an ARRAY of batch entries —
+// [{ results: [...], meta: { changes } }] — while the engine's D1 shape wants
+// a single `{ results }` page and `{ meta: { changes } }` from .all()/.run().
+// Entries merge into one flat page; this is the seam that, when left
+// unfolded, made the first prod run read an empty DB (a false-green zero,
+// not a verified one) — it is pinned by tests/r2-backfill.test.mjs.
+export function d1JsonToD1Shape(parsed) {
+  const entries = (Array.isArray(parsed) ? parsed : [parsed]).filter(Boolean);
+  const results = entries.flatMap((entry) => (Array.isArray(entry.results) ? entry.results : []));
+  const metas = entries.map((entry) => entry && entry.meta).filter(Boolean);
+  const meta = metas.length > 0 ? metas[metas.length - 1] : { changes: 0 };
+  return { results, meta };
+}
+
 // The D1-shaped adapter over `wrangler d1 execute` (params interpolated as
 // typed SQL literals — every value is fleet data already inside the DB, so
 // the escaper's job is shape-only, not trust).
@@ -267,7 +281,7 @@ export function d1WranglerAdapter(database, { remote = false, persistTo = null, 
     const out = execFileSync("pnpx", ["wrangler", "d1", "execute", database,
       ...baseFlags, "--json", ...args],
       cwd ? { cwd, maxBuffer: 1024 * 1024 * 256 } : { maxBuffer: 1024 * 1024 * 256 });
-    return JSON.parse(out.toString("utf8")).filter(Boolean);
+    return d1JsonToD1Shape(JSON.parse(out.toString("utf8")).filter(Boolean));
   }
   return {
     prepare(sql) {
