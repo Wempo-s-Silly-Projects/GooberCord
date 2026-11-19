@@ -259,9 +259,9 @@ async function readTodayAnniversaries(env, serverId, now) {
   const anniversaryRows = (await env.GOOBER_DB.prepare(ANNIVERSARY_TODAY_SQL)
     .bind(today.getUTCMonth(), today.getUTCDate(), serverId).all()).results || [];
   return anniversaryRows.map((row) => ({
-      userId: Number(row.id),
-      handle: String(row.username || ""),
-    }));
+    userId: Number(row.id),
+    handle: String(row.username || ""),
+  }));
 }
 
 // activityRows: the window's total across the sections' own rows.
