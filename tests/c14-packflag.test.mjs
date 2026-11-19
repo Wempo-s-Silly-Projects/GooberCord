@@ -12,8 +12,9 @@
 // GNU Affero General Public License for more details.
 //
 // You should have received a copy of the GNU Affero General Public License
-// along with this program.  If not, see <https://www.gnu.org/licenses/>.
-//
+// GNU Affero General Public License along with this program.  If not,
+// see <https://www.gnu.org/licenses/>
+
 // GO-HAYWIRE cycle-14: the pack's payload `owned` flag must carry the
 // SPEND GUARD's own predicate — the c11 NOT-EXISTS arm refuses when the
 // caller owns ANY of the pack's items, so a half-owned caller is already
