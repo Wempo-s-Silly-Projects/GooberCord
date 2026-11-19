@@ -99,6 +99,16 @@ import { mentionPersistStatements, mentionsEveryoneFlag } from "./mentions.mjs";
 // time, after this module body initializes (the circular import stays
 // inert — the T-R25-SPLIT-SERVERS-1 lesson).
 import { handleMessagesPinsRoutes } from "./messages-pins.mjs";
+
+// T-R26-POLLS: the polls family (the vote/close arms + the payload
+// builder) rides api/messages-polls.mjs (the wave-26 second messages
+// seam). The shared machinery the seam re-rides stays ONE implementation
+// here (the same export-the-helper contract as the pins seam); the calls
+// happen at CALL time, after this module body initializes (the circular
+// import stays inert — the pins seam's idiom). groupPayloadReads hands
+// the seam's builder a chunk — the polls' payload rides the ONE grouped
+// read stack, never a parallel read stack.
+import { handleMessagesPollsRoutes, appendPollPayloads, pollFromBody } from "./messages-polls.mjs";
 // History page bounds: the bare-id cursor is the forum's replies convention
 // (`[1-9][0-9]{0,14}`, inline at the call site), and a page is at most 100
 // rows with 50 as the default.
@@ -161,6 +171,23 @@ const CHANNEL_LAST_MESSAGE_UPDATE_SQL =
 const MESSAGE_INSERT_SQL =
   "INSERT INTO gc_messages (channel_id, author_id, body, client_message_id, created_at) " +
     "VALUES (?, ?, ?, ?, ?) ON CONFLICT(channel_id, author_id, client_message_id) DO NOTHING";
+
+// T-R26-POLLS: the poll row's INSERT head (the send batch's poll arm).
+// The identity tuple re-derives the message THIS batch just inserted —
+// the same discipline the persisted-mentions arm rides (m.channel_id /
+// m.author_id / the client-message-id arm composed at the call site, the
+// ORDER/LIMIT keeps the newest row in a cid-less send — the reselect's
+// exact pair) — and 0060's message_id UNIQUE is the replay guard
+// (ON CONFLICT DO NOTHING: an idempotent replay re-rides the batch with
+// the message INSERT's own DO NOTHING and leaves the poll row standing).
+// Composed at the call site (sendMessageToChannel): the two bind
+// variants, then " ORDER BY m.id DESC LIMIT 1 ON CONFLICT(message_id) DO
+// NOTHING". Exported for tests/messages-polls-seam.test.mjs and
+// tests/guard-binds-seam.test.mjs (the real-SQLite gate).
+export const POLL_INSERT_TUPLE_SQL =
+  "INSERT INTO gc_polls (message_id, channel_id, question, options_json, multiple, closed_at, closed_by, created_at) " +
+    "SELECT m.id, m.channel_id, ?, ?, ?, NULL, NULL, m.created_at FROM gc_messages m " +
+    "WHERE m.channel_id = ? AND m.author_id = ? AND ";
 
 const MESSAGE_EDIT_SQL =
   "UPDATE gc_messages SET body = ?, edited_at = ? WHERE id = ? AND author_id = ?";
@@ -519,7 +546,7 @@ async function loadAttachmentIds(env, messageId, viewerId) {
 
 // Exported for api/messages-pins.mjs (the pins page renders the SAME
 // message objects the history page does — one payload shape).
-export function publicMessage(row, attachmentIds, reactionGroups = null) {
+export function publicMessage(row, attachmentIds, reactionGroups = null, poll = null) {
   const message = {
     id: Number(row.id),
     authorId: Number(row.author_id),
@@ -552,6 +579,13 @@ export function publicMessage(row, attachmentIds, reactionGroups = null) {
   // client-side length, never a server-computed duplicate).
   if (Array.isArray(reactionGroups) && reactionGroups.length > 0) {
     message.reactions = reactionGroups;
+  }
+  // T-R26-POLLS: a poll message's payload rides ADDITIVELY (a caller that
+  // passes none — the pins read, the DO send fan-out — keeps the exact
+  // shape it always had); the history page and the vote/close echoes pass
+  // the grouped read's payload.
+  if (poll !== null) {
+    message.poll = poll;
   }
   return message;
 }
@@ -594,7 +628,7 @@ function groupReactionRows(rows, reactionGroupsByMessage) {
 // merged maps come out in the single read's exact grouping order.
 // Exported for api/messages-pins.mjs (the pins read shares the fan-out —
 // one implementation, never a drifted pair).
-export async function groupedPayloadReads(env, userId, messageIds, attachmentIdsByMessage, reactionGroupsByMessage) {
+export async function groupedPayloadReads(env, userId, messageIds, attachmentIdsByMessage, reactionGroupsByMessage, pollPayloadsByMessage = null) {
   for (let start = 0; start < messageIds.length; start += PINS_READ_BIND_CHUNK) {
     const chunk = messageIds.slice(start, start + PINS_READ_BIND_CHUNK);
     const placeholders = chunk.map(() => "?").join(",");
@@ -615,6 +649,12 @@ export async function groupedPayloadReads(env, userId, messageIds, attachmentIds
         "ORDER BY r.created_at, r.user_id",
     ).bind(...chunk).all()).results || [];
     groupReactionRows(reactions, reactionGroupsByMessage);
+    // T-R26-POLLS: the polls leg rides the SAME chunked loop (the ONE
+    // grouped read stack — never a new parallel stack); the map stays null
+    // for callers that asked for no polls (the additive default).
+    if (pollPayloadsByMessage !== null) {
+      await appendPollPayloads(env, userId, chunk, pollPayloadsByMessage);
+    }
   }
 }
 
@@ -820,6 +860,7 @@ export async function sendMessageToChannel(
   clientMessageId = null,
   preparedAttachment = null,
   referencedAttachmentId = null,
+  poll = null,
 ) {
   const text = await filterMessageBody(
     env,
@@ -964,6 +1005,23 @@ export async function sendMessageToChannel(
       text,
     ),
   );
+  // T-R26-POLLS: the poll row rides the SAME batch (the send's one
+  // execute) — the identity tuple resolves the fresh message id in-statement
+  // and the poll statement stays BEFORE the reselect (the reselect is
+  // ALWAYS the batch's last statement).
+  if (poll) {
+    statements.push(
+      env.GOOBER_DB.prepare(
+        POLL_INSERT_TUPLE_SQL +
+          (clientMessageId === null ? "m.client_message_id IS NULL" : "m.client_message_id = ?") +
+          " ORDER BY m.id DESC LIMIT 1 ON CONFLICT(message_id) DO NOTHING",
+      ).bind(
+        poll.question, JSON.stringify(poll.options), poll.multiple ? 1 : 0,
+        channelId, authorId,
+        ...(clientMessageId === null ? [] : [clientMessageId]),
+      ),
+    );
+  }
   const reselect = env.GOOBER_DB.prepare(
     MESSAGE_SELECT +
       " WHERE m.channel_id = ? AND m.author_id = ? AND " +
@@ -1125,8 +1183,12 @@ async function handleListMessagesRoute(request, env, url, channelId) {
   const messageIds = page.map((row) => Number(row.id));
   const attachmentIdsByMessage = new Map();
   const reactionGroupsByMessage = new Map();
+  // T-R26-POLLS: the history page's poll payloads ride the same grouped
+  // fan-out (the ONE read stack; the map's default null callers — the pins
+  // read — keep their exact shape).
+  const pollPayloadsByMessage = new Map();
   if (messageIds.length) {
-    await groupedPayloadReads(env, userId, messageIds, attachmentIdsByMessage, reactionGroupsByMessage);
+    await groupedPayloadReads(env, userId, messageIds, attachmentIdsByMessage, reactionGroupsByMessage, pollPayloadsByMessage);
   }
 
   // Discord marks-on-read: the tail read IS the ack. The caller's own member
@@ -1152,7 +1214,8 @@ async function handleListMessagesRoute(request, env, url, channelId) {
   return json({
     messages: page.map((row) =>
       publicMessage(row, attachmentIdsByMessage.get(Number(row.id)) || [],
-        reactionGroupsByMessage.get(Number(row.id)) || null),
+        reactionGroupsByMessage.get(Number(row.id)) || null,
+        pollPayloadsByMessage.get(Number(row.id)) ?? null),
     ),
     nextAfter: page.length ? Number(page[page.length - 1].id) : null,
     // The expression side table (0020, ADDITIVE — server channels only, a DM
@@ -1187,6 +1250,12 @@ async function handleSendMessageRoute(request, env, channelId) {
   // the one shared 403.
   await enforceChannelBits(env, channel, userId, ["VIEW", "SEND"]);
 
+  // T-R26-POLLS: the poll kind intake — a kind-less body is a plain send
+  // (the exact contract it has always had); kind "poll" validates the
+  // question/options shape into the send batch's poll arm; any other kind
+  // 400s (never silently degraded).
+  const poll = pollFromBody(body);
+
   const { message, created, careNotice } = await sendMessageToChannel(
     env,
     session.user,
@@ -1195,6 +1264,7 @@ async function handleSendMessageRoute(request, env, channelId) {
     body.clientMessageId === undefined ? null : body.clientMessageId,
     null,
     referenceFromBody(body.attachmentId),
+    poll,
   );
   // The Care class's inline field (0010): present ONLY on a care hit, on top
   // of the standing { message } shape.
@@ -1502,6 +1572,16 @@ export async function handleMessageRoutes(request, env, url, path, method, ctx) 
   const pinsForward = await handleMessagesPinsRoutes(request, env, path, method);
   if (pinsForward !== undefined) {
     return pinsForward;
+  }
+
+  // T-R26-POLLS: the polls family (the vote/close arms) rides
+  // api/messages-polls.mjs. The forward sits AFTER the pins forward (the
+  // polls arms match no pins path and no family's path overlaps a
+  // /poll/vote or /poll/close segment); its `undefined` fall-through keeps
+  // the router's remaining arms running exactly as before.
+  const pollsForward = await handleMessagesPollsRoutes(request, env, url, path, method);
+  if (pollsForward !== undefined) {
+    return pollsForward;
   }
 
   return undefined;

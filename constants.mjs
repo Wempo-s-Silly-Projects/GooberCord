@@ -612,3 +612,14 @@ export const GC_EXPRESSION_TOKENS_MAX = 90;
 // import), and tests/audit-seam.test.mjs holds the two to each other.
 export const AUDIT_READ_LIMIT = 100;
 export const AUDIT_PAYLOAD_MAX_BYTES = 4096;
+
+// Channel polls (wave 26, W26-2, migrations 0060/0061): GC's own poll
+// surface (no Discord parity source — GC-shaped, house-sized). The option
+// count's cap (the intake refuses fewer than 2 and more than this), the
+// question's display cap, and each option's text cap. The migrations'
+// CHECK envelopes (the 200-character question, the 2048-byte option JSON)
+// are their literal mirrors; tests/messages-polls-seam.test.mjs holds the
+// two sides to each other.
+export const POLL_MAX_OPTIONS = 10;
+export const GC_POLL_QUESTION_MAX = 200;
+export const GC_POLL_OPTION_MAX = 100;

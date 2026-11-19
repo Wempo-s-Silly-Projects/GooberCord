@@ -107,16 +107,17 @@ test("the polls read/write family rides api/messages-polls.mjs — one single-pu
 test("messages.mjs delegates the polls — the send side rides the ONE batch", () => {
   // The send-side INSERT keeps ITS home in messages.mjs and is
   // replay-inert.
-  assert.match(MESSAGES_SOURCE, /const POLL_INSERT_SQL/,
+  assert.match(MESSAGES_SOURCE, /const POLL_INSERT_TUPLE_SQL/,
     "the poll INSERT keeps its home in messages.mjs");
   assert.match(MESSAGES_SOURCE, /ON CONFLICT\(message_id\) DO NOTHING/,
     "the poll INSERT is replay-inert");
   const sendBody = handlerSource(MESSAGES_SOURCE, "sendMessageToChannel");
-  assert.match(sendBody, /POLL_INSERT_SQL/,
+  assert.match(sendBody, /POLL_INSERT_TUPLE_SQL/,
     "the poll INSERT rides the send's own batch");
   // The send route's poll kind intake.
   const sendRouteBody = handlerSource(MESSAGES_SOURCE, "handleSendMessageRoute");
-  assert.match(sendRouteBody, /kind === "poll"/, "the poll kind intake");
+  assert.match(sendRouteBody, /pollFromBody\(body\)/,
+    "the poll kind intake (the comparison lives in the seam's own intake)");
   // The forward.
   assert.match(MESSAGES_SOURCE, /await handleMessagesPollsRoutes\(/,
     "the router hands the polls to the seam module");
@@ -137,8 +138,9 @@ test("no other family's path overlaps a poll path", () => {
   }
   // The seam answers its arms; the pins family answers no /poll segment.
   const pinsSource = readFileSync(join(HERE, "../api/messages-pins.mjs"), "utf8");
-  for (const shape of ["poll/vote", "poll/close"]) {
-    assert.ok(seamSource.includes(shape), "the seam answers " + shape);
+  const unescaped = seamSource.replace(/\\\//g, "/");
+  for (const shape of ["/poll/vote", "/poll/close"]) {
+    assert.ok(unescaped.includes(shape), "the seam answers " + shape);
     assert.ok(!pinsSource.includes(shape), "the pins family answers no " + shape);
   }
 });
@@ -213,13 +215,16 @@ function pollSchema() {
   db.exec(MIGRATION_0060);
   db.exec(MIGRATION_0061);
   db.exec(`
-    CREATE TABLE gc_messages (id INTEGER PRIMARY KEY AUTOINCREMENT, channel_id INTEGER, author_id INTEGER, body TEXT, client_message_id TEXT, created_at INTEGER);
-    CREATE TABLE gc_channels (id INTEGER PRIMARY KEY, server_id INTEGER, kind TEXT, last_message_id INTEGER, last_message_at INTEGER);
+    CREATE TABLE gc_messages (id INTEGER PRIMARY KEY AUTOINCREMENT, channel_id INTEGER, author_id INTEGER, body TEXT, client_message_id TEXT, created_at INTEGER, edited_at INTEGER, source TEXT, is_pinned INTEGER);
+    CREATE TABLE gc_channels (id INTEGER PRIMARY KEY, server_id INTEGER, kind TEXT, last_message_id INTEGER, last_message_at INTEGER, category_id INTEGER);
+    CREATE TABLE gc_channel_overwrites (channel_id INTEGER, category_id INTEGER, role_id INTEGER, allow_mask INTEGER, deny_mask INTEGER);
     CREATE TABLE gc_conversation_members (channel_id INTEGER, user_id INTEGER, last_read_message_id INTEGER);
-    CREATE TABLE gc_server_members (server_id INTEGER, user_id INTEGER, role TEXT, joined_at INTEGER, timed_out_until INTEGER, nickname TEXT);
+    CREATE TABLE gc_server_members (server_id INTEGER, user_id INTEGER, role TEXT, joined_at INTEGER, timed_out_until INTEGER, nickname TEXT, rules_accepted_at INTEGER);
+    CREATE TABLE gc_servers (id INTEGER PRIMARY KEY, verification_level INTEGER, rules_text TEXT);
+    CREATE TABLE gc_plus_state (user_id INTEGER PRIMARY KEY, renews_until INTEGER, grace_until INTEGER, tenure_started_at INTEGER, gifted_by INTEGER, updated_at INTEGER, tier TEXT);
     CREATE TABLE gc_member_roles (server_id INTEGER, user_id INTEGER, role_id INTEGER);
-    CREATE TABLE gc_roles (id INTEGER, server_id INTEGER, position INTEGER, permissions INTEGER);
-    CREATE TABLE users (id INTEGER PRIMARY KEY, username TEXT, username_key TEXT);
+    CREATE TABLE gc_roles (id INTEGER, server_id INTEGER, position INTEGER, permissions INTEGER, name TEXT);
+    CREATE TABLE users (id INTEGER PRIMARY KEY, username TEXT, username_key TEXT, accent_color TEXT, is_plus_until INTEGER, created_at INTEGER);
   `);
   for (const id of [42, 43]) {
     db.prepare("INSERT INTO users (id, username, username_key) VALUES (?, ?, ?)").run(id, String(id), String(id));
@@ -252,9 +257,9 @@ test("0060/0061's DDL + every poll statement run end-to-end on node:sqlite", asy
       "the replay stays inert");
 
     // The vote: cast, change (the conflict arm replaces), tally.
-    await seam.castPollVote(env, 42, 700, [0]);
-    await seam.castPollVote(env, 42, 700, [1]);
-    await seam.castPollVote(env, 43, 700, [0]);
+    await seam.castPollVote(env, 42, 10, 700, [0]);
+    await seam.castPollVote(env, 42, 10, 700, [1]);
+    await seam.castPollVote(env, 43, 10, 700, [0]);
     const payloads = new Map();
     await seam.appendPollPayloads(env, 42, [700], payloads);
     const payload = payloads.get(700);
@@ -263,17 +268,17 @@ test("0060/0061's DDL + every poll statement run end-to-end on node:sqlite", asy
     assert.deepEqual(payload.myChoices, [1], "the viewer's own claim");
     assert.equal(payload.closed, false);
 
-    // Close: the creator's arm closes; a non-creator's arm refutes
-    // in-statement (changes 0 → the shared 403); a closed poll refuses
-    // further casts.
-    await seam.closePoll(env, 42, 700);
-    const payloadsAfter = new Map();
-    await seam.appendPollPayloads(env, 42, [700], payloadsAfter);
-    assert.equal(payloadsAfter.get(700).closed, true, "the close state reads back");
+    // Close: a non-creator's arm refutes in-statement (changes 0 on the
+    // still-open poll → the shared 403); the creator's arm closes; the
+    // closed poll refuses further casts.
     await assert.rejects(
       closePollFor(seam, env, 43, 700),
       "the non-creator's close refutes",
     );
+    await seam.closePoll(env, 42, 10, 700);
+    const payloadsAfter = new Map();
+    await seam.appendPollPayloads(env, 42, [700], payloadsAfter);
+    assert.equal(payloadsAfter.get(700).closed, true, "the close state reads back");
     await assert.rejects(
       castPollFor(seam, env, 42, 700, [0]),
       "the closed poll's vote arm refuses",
@@ -282,9 +287,9 @@ test("0060/0061's DDL + every poll statement run end-to-end on node:sqlite", asy
 });
 
 async function closePollFor(seam, env, userId, messageId) {
-  await seam.closePoll(env, userId, messageId);
+  await seam.closePoll(env, userId, 10, messageId);
 }
 
 async function castPollFor(seam, env, userId, messageId, choices) {
-  await seam.castPollVote(env, userId, messageId, choices);
+  await seam.castPollVote(env, userId, 10, messageId, choices);
 }

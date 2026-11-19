@@ -164,3 +164,72 @@ test("the pins seam grant read prepares and binds on real SQLite", () => {
     gate(db, PIN_MANAGER_READ_SQL, [1, 2, 1, 2]);
   } finally { db.close(); }
 });
+
+// --- the polls seam's bind gate (T-R26-POLLS, additive hunk) ------------------
+// The wave-26 polls' OWN hunk, per the hunk-split law: new imports, a local
+// schema floor, and local compose/gate helpers with poll-prefixed names —
+// the file's existing SCHEMA/gate/composeIn stay byte-untouched (the lead's
+// hunks). Same referee law as above: node:sqlite checks the placeholder/
+// bind count exactly like D1, every statement composed the way its callers
+// compose it (the dynamic IN tails included).
+
+import {
+  POLL_VOTE_UPSERT_SQL,
+  POLL_CLOSE_SQL,
+  POLL_TALLY_SQL,
+  POLL_VIEWER_ROWS_SQL,
+  POLL_CHUNK_READ_SQL,
+} from "../api/messages-polls.mjs";
+import { POLL_INSERT_TUPLE_SQL } from "../api/messages.mjs";
+
+// The polls' schema floor: the three tables the poll statements name. The
+// UNIQUEs are the floor (the upsert's ON CONFLICT arm needs the pair), the
+// gc_messages seat carries the close statement's author probe.
+const POLL_GATE_SCHEMA = `
+  CREATE TABLE gc_polls (id INTEGER PRIMARY KEY AUTOINCREMENT, message_id INTEGER UNIQUE, channel_id INTEGER, question TEXT, options_json TEXT, multiple INTEGER, closed_at INTEGER, closed_by INTEGER, created_at INTEGER);
+  CREATE TABLE gc_poll_votes (id INTEGER PRIMARY KEY AUTOINCREMENT, poll_id INTEGER, user_id INTEGER, choices_json TEXT, created_at INTEGER, updated_at INTEGER, UNIQUE(poll_id, user_id));
+  CREATE TABLE gc_messages (id INTEGER PRIMARY KEY, channel_id INTEGER, author_id INTEGER, client_message_id TEXT, created_at INTEGER);
+`;
+
+function pollGateProbe() {
+  const db = new DatabaseSync(":memory:");
+  db.exec(POLL_GATE_SCHEMA);
+  db.prepare("INSERT INTO gc_messages (id, channel_id, author_id) VALUES (700, 10, 42)").run();
+  db.prepare(
+    "INSERT INTO gc_polls (id, message_id, channel_id, question, options_json, multiple, created_at) " +
+      "VALUES (5, 700, 10, 'Lunch?', '[\"Pizza\",\"Sushi\"]', 0, 1)",
+  ).run();
+  return db;
+}
+
+function pollComposeIn(head, items, closer) {
+  return head + items.map(() => "?").join(",") + closer;
+}
+
+test("the polls seam statements prepare and bind on real SQLite", () => {
+  const db = pollGateProbe();
+  try {
+    const now = 7;
+    // POLL_INSERT_TUPLE_SQL composes both caller arms (the NULL-cid replay
+    // arm and the cid arm): the poll's question/options/multiple triple +
+    // the (channel, author) pair; the cid arm adds the cid bind.
+    gate(db, POLL_INSERT_TUPLE_SQL +
+      "m.client_message_id IS NULL ORDER BY m.id DESC LIMIT 1 ON CONFLICT(message_id) DO NOTHING",
+      ["Lunch?", '["Pizza","Sushi"]', 0, 10, 42]);
+    gate(db, POLL_INSERT_TUPLE_SQL +
+      "m.client_message_id = ? ORDER BY m.id DESC LIMIT 1 ON CONFLICT(message_id) DO NOTHING",
+      ["Lunch?", '["Pizza","Sushi"]', 0, 10, 42, "cid-1"]);
+    // POLL_VOTE_UPSERT_SQL: the claim quintet, replaced by the conflict arm.
+    gate(db, POLL_VOTE_UPSERT_SQL, [5, 42, "[0]", now, now]);
+    // POLL_CLOSE_SQL: the (closed_at, closed_by) pair + the poll id + the
+    // author probe's bind.
+    gate(db, POLL_CLOSE_SQL, [now, 42, 5, 42]);
+    // The chunk reads compose their IN tails at the call sites, exactly as
+    // appendPollPayloads composes them: the tally's GROUP BY closer, the
+    // viewer's user bind first, the rows' bare tail.
+    gate(db, pollComposeIn(POLL_TALLY_SQL, [5, 6],
+      ") GROUP BY je.value ORDER BY je.value"), [5, 6]);
+    gate(db, pollComposeIn(POLL_VIEWER_ROWS_SQL, [5, 6], ")"), [42, 5, 6]);
+    gate(db, pollComposeIn(POLL_CHUNK_READ_SQL, [700], ")"), [700]);
+  } finally { db.close(); }
+});

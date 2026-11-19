@@ -57,6 +57,11 @@
 // per-connection fan-out state survives eviction as attachments + the
 // ctx.getWebSockets() enumeration — no in-memory Map to lose on hibernate.
 import { sendMessageToChannel as sendMessageToChannelPrimitive, RulesGateError, enforceChannelBits } from "./messages.mjs";
+// T-R26-POLLS: the poll mutations the DO's poll_vote/poll_close frames
+// fan out (the SAME shared mutations the REST arms walk — all gates live
+// in the helpers); the fan-out is the existing {type:"msg", message}
+// message-update frame.
+import { castPollVote, closePoll } from "./messages-polls.mjs";
 import { CARE_WS_FRAME_TYPE } from "./filterrules.mjs";
 import { HttpError, json } from "./core/http.mjs";
 import {
@@ -846,6 +851,56 @@ export class ChatRoom extends (workerd?.DurableObject ?? DurableObjectBase) {
           frame.serverId = error.serverId;
         }
         this.sendFrame(socket, frame);
+      }
+      return;
+    }
+
+    if (type === "poll_vote" || type === "poll_close") {
+      // T-R26-POLLS: the polls' live fan-in. The M3 door re-check the "msg"
+      // arm rides (fanInChannelRow + fanInMembershipOk — a kicked or
+      // revoked socket fans out nothing), then the SAME shared mutation
+      // the REST arms walk (all gates live inside castPollVote/closePoll —
+      // the vote's own poll/channel checks included), and the fan-out is
+      // the EXISTING message-update frame ({type:"msg", message} — the
+      // client needs no new handler, NO new DO state rides the frames, and
+      // the voter's own adopt is their REST echo: the fan-out excludes
+      // their sockets by attached identity, exactly as the send does).
+      // The send floor's PEEK/ARM pair answers the wire-rate repeater law
+      // here too (reused, never a second floor).
+      if (this.msgFloorRepeat(meta)) {
+        this.sendFrame(socket, {
+          type: "error",
+          code: "send_failed",
+          message: "Too many requests. Please wait a little and try again.",
+        });
+        return;
+      }
+      try {
+        const messageId = typeof frame.messageId === "number"
+          ? Math.trunc(frame.messageId)
+          : null;
+        if (messageId === null || !Number.isSafeInteger(messageId) || messageId < 1) {
+          throw new HttpError(400, "That poll is invalid.");
+        }
+        const channelRow = await fanInChannelRow(this.env, meta.channelId);
+        if (!channelRow || !(await fanInMembershipOk(this.env, channelRow, meta.userId))) {
+          throw new HttpError(403, "You do not have permission to do that.");
+        }
+        const result = type === "poll_vote"
+          ? await castPollVote(this.env, meta.userId, meta.channelId, messageId,
+              Array.isArray(frame.choices) ? frame.choices : [])
+          : await closePoll(this.env, meta.userId, meta.channelId, messageId);
+        this.msgFloorArm(meta);
+        this.broadcastJson(socket, { type: "msg", message: result.message });
+      } catch (error) {
+        // The mutate_failed shape carries the shared 403 copy — the send
+        // arm's error frame idiom; HttpError copies (validation, the
+        // gates) are safe to echo.
+        this.sendFrame(socket, {
+          type: "error",
+          code: "send_failed",
+          message: error instanceof HttpError ? error.message : "That poll is unavailable right now.",
+        });
       }
       return;
     }
