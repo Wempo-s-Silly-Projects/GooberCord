@@ -563,17 +563,21 @@ async function handleAttachmentServingRoute(request, env, attachmentId) {
     }
   }
 
-  // The small lanes' proven set (every row the single-buffer intakes bore,
-  // up to 20 MiB) answers R2-first (the durable intake put) and assembles
-  // from the D1 chunk set as the fallback; a LARGE lane
-  // row streams paged above (D1-only — every large row was born there).
+  // The R2 store of record is consulted FIRST, for every row size: the
+  // plus-tier multipart intakes put bytes ONLY in R2 (zero chunk rows), so
+  // routing a >MAX size row to the D1 chunk paging before the consult
+  // answered the empty set with an eternal 404. A hit serves with the row's
+  // own cache verdict; a miss falls through to the lanes below — the LARGE
+  // lane's paged stream (its legacy/D1 chunk rows) and the small lanes'
+  // assembled chunk fallback — exactly where they served before (the
+  // no-binding dev lane keeps byte-identical serving).
+  const mirrored = await serveAttachmentObject(env, row);
+  if (mirrored) return mirrored;
   if (Number(row.size_bytes) > MAX_ATTACHMENT_BYTES) {
     const streamed = await streamChunkedAttachment(env, row);
     if (!streamed) throw new HttpError(404, "Attachment not found.");
     return streamed;
   }
-  const mirrored = await serveAttachmentObject(env, row);
-  if (mirrored) return mirrored;
   const bytes = await assembledChunkBytes(env, row.id);
   if (bytes !== null) {
     const cache = row.status === "approved" ? "public, max-age=31536000, immutable" : "private, max-age=300";
