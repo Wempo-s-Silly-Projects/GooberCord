@@ -203,14 +203,14 @@ async function handlePaperReadRoute(request, env, serverId, previous) {
 
   const channelRows = (await env.GOOBER_DB.prepare(CHANNEL_ACTIVITY_SQL)
     .bind(serverId, startSeconds, endSeconds).all()).results || [];
-  const channels = channelRows.slice(0, GC_PAPER_CHANNELS_MAX).map((row) => ({
+  const channels = channelRows.map((row) => ({
     channelId: Number(row.channel_id),
     count: Number(row.row_count),
   }));
 
   const reactionRows = (await env.GOOBER_DB.prepare(REACTIONS_ACTIVITY_SQL)
     .bind(serverId, startSeconds, endSeconds).all()).results || [];
-  const reactions = reactionRows.slice(0, GC_PAPER_REACTIONS_MAX).map((row) => ({
+  const reactions = reactionRows.map((row) => ({
     emoji: String(row.emoji || ""),
     count: Number(row.row_count),
   }));
@@ -221,9 +221,7 @@ async function handlePaperReadRoute(request, env, serverId, previous) {
   const today = new Date(now * 1000);
   const anniversaryRows = (await env.GOOBER_DB.prepare(ANNIVERSARY_TODAY_SQL)
     .bind(today.getUTCMonth(), today.getUTCDate(), serverId).all()).results || [];
-  const anniversaries = anniversaryRows
-    .slice(0, GC_PAPER_ANNIVERSARIES_MAX)
-    .map((row) => ({
+  const anniversaries = anniversaryRows.map((row) => ({
       userId: Number(row.id),
       handle: String(row.username || ""),
     }));

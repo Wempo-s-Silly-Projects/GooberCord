@@ -141,6 +141,13 @@ function paperDb(memberRows, options = {}) {
     const row = memberOf(serverId, userId);
     return row && (row.role === "owner" || row.role === "moderator") && row;
   };
+  // The read-time LIMIT: the sections' aggregates cut at the LIMIT arm baked
+  // into the pinned SQL — the fake honors it so a statement that loses the
+  // arm fails the cap tests.
+  const sqlLimit = (sql) => {
+    const match = /\bLIMIT (\d+)\s*$/.exec(sql);
+    return match ? Number(match[1]) : Infinity;
+  };
 
   const routes = [
     {
@@ -183,7 +190,7 @@ function paperDb(memberRows, options = {}) {
       // Channels section: per-channel counts over the server's public TEXT
       // channels, windowed, ordered by count then id.
       test: (sql) => sql.includes("GROUP BY m.channel_id"),
-      all: async (bound) => {
+      all: async (bound, stmtSql) => {
         const [serverId, startSeconds, endSeconds] = bound;
         const counts = new Map();
         for (const message of messages) {
@@ -195,14 +202,14 @@ function paperDb(memberRows, options = {}) {
         const rows = [...counts.entries()]
           .map(([channelId, count]) => ({ channel_id: channelId, row_count: count }))
           .sort((left, right) => right.row_count - left.row_count || left.channel_id - right.channel_id);
-        return { results: rows };
+        return { results: rows.slice(0, sqlLimit(stmtSql)) };
       },
     },
     {
       // Reactions section: the window's most-given tokens on the server's
       // text-channel messages, grouped by emoji only (no member column).
       test: (sql) => sql.includes("GROUP BY r.emoji"),
-      all: async (bound) => {
+      all: async (bound, stmtSql) => {
         const [serverId, startSeconds, endSeconds] = bound;
         const textIds = textChannelIds(serverId);
         const counts = new Map();
@@ -215,13 +222,13 @@ function paperDb(memberRows, options = {}) {
         const rows = [...counts.entries()]
           .map(([emoji, count]) => ({ emoji, row_count: count }))
           .sort((left, right) => right.row_count - left.row_count || left.emoji.localeCompare(right.emoji));
-        return { results: rows };
+        return { results: rows.slice(0, sqlLimit(stmtSql)) };
       },
     },
     {
       // The celebrants ride-along: read-only, month+day equality, members only.
       test: (sql) => sql.includes("FROM gc_user_anniversaries a"),
-      all: async (bound) => {
+      all: async (bound, stmtSql) => {
         const [month, day, serverId] = bound;
         return {
           results: [...anniversaries.values()]
@@ -229,7 +236,8 @@ function paperDb(memberRows, options = {}) {
             .map((row) => ({
               id: row.user_id,
               username: (users.get(row.user_id) || { username: "" }).username,
-            })),
+            }))
+            .slice(0, sqlLimit(stmtSql)),
         };
       },
     },
@@ -335,15 +343,10 @@ test("an untouched server answers every paper route with the unconfigured 404 an
   const previous = await dispatch(request("GET", "/api/servers/" + SERVER_ID + "/paper/previous"), env);
   assert.equal(previous.status, 404);
 
-  const toggle = await dispatch(
-    request("POST", "/api/servers/" + SERVER_ID + "/paper", { enabled: true }),
-    envWithLimiters(paperDb(modMembers())),
-  );
-  assert.equal(toggle.status, 200); // a mod CAN turn it on (see the seat tests)
-
-  const writeCalls = db.calls.filter((call) =>
+  const writes = db.calls.filter((call) =>
     call.sql.startsWith("INSERT") || call.sql.startsWith("UPDATE") || call.sql.startsWith("DELETE"));
-  assert.deepEqual(db.configs, new Map(), "an off server conjures no config row");
+  assert.deepEqual(writes, [], "an off server conjures no config row");
+  assert.deepEqual(db.configs, new Map(), "the seat stays empty");
 });
 
 test("the mod's explicit ON act writes ONE config row, and the mod gate rides INSIDE the statement", async () => {

@@ -36,7 +36,6 @@ import { RATE_LIMIT_BINDINGS } from "../constants.mjs";
 
 const ORIGIN = "http://localhost";
 const USER_ID = 7;
-const SERVER_ID = 500;
 
 const ROUTE = "/api/users/me/anniversary";
 
