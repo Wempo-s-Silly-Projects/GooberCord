@@ -80,8 +80,13 @@ const PAPER_ENABLE_SQL =
     "WHERE pm.server_id = ? AND pm.user_id = ? AND pm.role IN ('owner','moderator'))";
 
 // The off-transition is the WHOLE off-state: a hard row delete, no tombstone
-// column, no history row. Idempotent — an absent row answers its state.
-const PAPER_DISABLE_SQL = "DELETE FROM gc_paper_configs WHERE server_id = ?";
+// column, no history row — and it is GATED like the ON upsert: the
+// statement's own EXISTS carries the mod verdict, so a demod between the
+// route's read and this run makes zero changes (never a delete).
+const PAPER_DISABLE_SQL =
+  "DELETE FROM gc_paper_configs WHERE server_id = ? " +
+  "AND EXISTS (SELECT 1 FROM gc_server_members pm " +
+    "WHERE pm.server_id = ? AND pm.user_id = ? AND pm.role IN ('owner','moderator'))";
 
 // The channels section: the day's per-channel COUNT over the server's public
 // text channels only, cut at its own read-time LIMIT (never a whole-day load
@@ -174,7 +179,19 @@ async function handlePaperToggleRoute(request, env, serverId) {
     return json({ enabled: true });
   }
 
-  await env.GOOBER_DB.prepare(PAPER_DISABLE_SQL).bind(serverId).run();
+  const result = await env.GOOBER_DB.prepare(PAPER_DISABLE_SQL).bind(
+    serverId, serverId, userId,
+  ).run();
+  if (Number(result.meta?.changes) !== 1) {
+    // Verdict-gated: changes=0 with the row still seated means the
+    // statement's own gate refused the caller (the demod landed between the
+    // route's read and the delete) — the shared refusal. changes=0 with the
+    // seat already absent is the idempotent off-state: it answers 200.
+    const stillSeated = await env.GOOBER_DB.prepare(PAPER_CONFIG_READ_SQL).bind(serverId).first();
+    if (stillSeated) {
+      throw new HttpError(404, "This server does not exist or you cannot view it.");
+    }
+  }
   return json({ enabled: false });
 }
 
