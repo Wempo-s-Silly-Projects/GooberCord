@@ -32,7 +32,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import { HttpError } from "../api/core/http.mjs";
-import { handleMediaRoutes, createAttachment, deleteAttachmentObjectRide } from "../api/media.mjs";
+import { handleMediaRoutes, createAttachment, scheduleAttachmentObjectDelete } from "../api/media.mjs";
 import { handleAvatarRoutes } from "../api/avatars.mjs";
 import { randomToken, sha256Hex, nowSeconds } from "../api/core/crypto.mjs";
 import {
@@ -89,7 +89,7 @@ function fakeR2() {
   const calls = [];
   const objectFor = (key) => {
     const copy = new Uint8Array(store.get(key));
-    return { key, body: copy.buffer, arrayBuffer: async () => copy.buffer.slice(0) };
+    return { key, body: copy.buffer, size: copy.byteLength, arrayBuffer: async () => copy.buffer.slice(0) };
   };
   return {
     store,
@@ -448,6 +448,27 @@ test("serving answers a LARGE lane row's R2 object before the chunk-size lane", 
   assert.ok(!db.calls.some((call) => call.call === "all" && PAGED_CHUNK_TEST(call.sql)));
 });
 
+test("serving a LARGE lane R2 hit STREAMS — the whole-buffer egress never runs", async () => {
+  const image = pngImage();
+  const r2 = fakeR2();
+  await r2.put(GC_ATTACHMENT_OBJECT_PREFIX + "41", image);
+  const db = fakeDb([
+    { test: ATTACHMENT_ROW_TEST, first: async () => approvedRow({ size_bytes: MAX_ATTACHMENT_BYTES + 1 }) },
+  ]);
+  const env = envWithLimiters({ GOOBER_DB: db, GC_MEDIA: r2 });
+
+  const response = await serveAttachment(env);
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get("Content-Type"), "image/png");
+  assert.equal(response.headers.get("Content-Length"), String(image.byteLength));
+  assert.equal(response.headers.get("Cache-Control"), "public, max-age=31536000, immutable");
+  assert.deepEqual(new Uint8Array(await response.arrayBuffer()), image);
+  // The paged chunk lane never ran, and the buffered egress (arrayBuffer
+  // reader) was never walked — the streaming lane answered straight from
+  // the bucket body.
+  assert.ok(!db.calls.some((call) => call.call === "all" && PAGED_CHUNK_TEST(call.sql)));
+});
+
 test("serving a LARGE lane row absent from R2 falls back to the paged chunk stream", async () => {
   const image = pngImage();
   const r2 = fakeR2();
@@ -560,12 +581,12 @@ test("a successful reject without the GC_MEDIA binding schedules nothing", async
 
 // --- the exported object-delete ride (out-of-scope callers' one-liner) ------------
 
-test("deleteAttachmentObjectRide schedules one delete through ctx, no-op without the binding", async () => {
+test("scheduleAttachmentObjectDelete schedules one delete through ctx, no-op without the binding", async () => {
   const r2 = fakeR2();
   const env = envWithLimiters({ GC_MEDIA: r2 });
   const ctx = fakeCtx();
 
-  deleteAttachmentObjectRide(env, ctx, 41);
+  scheduleAttachmentObjectDelete(env, ctx, 41);
   assert.equal(ctx.tasks.length, 1);
   await settled(ctx);
   assert.deepEqual(
@@ -576,7 +597,7 @@ test("deleteAttachmentObjectRide schedules one delete through ctx, no-op without
   // The no-binding dev lane answers the same one-line ride with nothing.
   const bindingless = envWithLimiters({});
   const silent = fakeCtx();
-  deleteAttachmentObjectRide(bindingless, silent, 41);
+  scheduleAttachmentObjectDelete(bindingless, silent, 41);
   assert.equal(silent.tasks.length, 0);
   assert.equal(r2.calls.filter((call) => call.op === "delete").length, 1);
 });

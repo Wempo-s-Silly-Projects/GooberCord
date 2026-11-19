@@ -48,6 +48,7 @@ import {
   sanitizeImage,
   sniffImageMime,
 } from "./core/images.mjs";
+import { securityHeaders } from "./core/http.mjs";
 import { audioResponse } from "./core/audio.mjs";
 
 // Intake refusals, shared by the standalone upload and the send-with-image
@@ -107,14 +108,6 @@ export async function putAttachmentObject(env, attachmentId, bytes) {
 export function scheduleAttachmentObjectDelete(env, ctx, attachmentId) {
   if (!env.GC_MEDIA) return;
   scheduleBackgroundTask(ctx, env.GC_MEDIA.delete(attachmentObjectKey(attachmentId)));
-}
-
-// The same ride under its own export, for the byte-life callers outside
-// media.mjs (the message-attachment delete lane and the soundboard/emoji
-// follow-ups): each death path's D1 verdict stays the gate, the bucket
-// follow stays a one-line best-effort ride.
-export function deleteAttachmentObjectRide(env, ctx, attachmentId) {
-  scheduleAttachmentObjectDelete(env, ctx, attachmentId);
 }
 
 // --- multipart parsing -----------------------------------------------------------
@@ -320,7 +313,7 @@ export async function insertStandaloneAttachment(env, uploaderId, prepared, now,
       } catch {
         // the 503 below is the contract; the row removal rides best-effort
       }
-      deleteAttachmentObjectRide(env, undefined, id);
+      scheduleAttachmentObjectDelete(env, undefined, id);
       throw new HttpError(503, STORE_FAILED_ERROR);
     }
     return id;
@@ -552,7 +545,29 @@ async function serveAttachmentObject(env, row) {
   } catch {
     return null;
   }
-  if (!object || typeof object.arrayBuffer !== "function") return null;
+  // The >LANE streaming law: a >MAX row's bytes never whole-buffer on the
+  // serving path — buffering a 125 MiB lane-max object would push the
+  // isolate at its 128 MB floor (the reviewer's MEDIUM against the
+  // whole-buffer consult). The intake side already sniff-verified the
+  // EXACT bytes these objects hold (the same-sanitized-bytes law pins
+  // every put to the prepared buffer), so the streaming lane trusts the
+  // row's stored mime and sizes itself from the object. >MAX rows are
+  // image rows (multipart file intake admits images; sound/sound-pack
+  // caps sit far under MAX), so the streaming headers mirror
+  // imageResponse's shape.
+  if (!object) return null;
+  if (Number(row.size_bytes) > MAX_ATTACHMENT_BYTES) {
+    if (!object.body) return null;
+    const cache = row.status === "approved" ? "public, max-age=31536000, immutable" : "private, max-age=300";
+    const headers = securityHeaders();
+    headers.set("Content-Type", row.mime);
+    headers.set("Cache-Control", cache);
+    headers.set("X-Content-Type-Options", "nosniff");
+    headers.set("Content-Disposition", 'inline; filename="image"');
+    if (object.size) headers.set("Content-Length", String(object.size));
+    return new Response(object.body, { status: 200, headers });
+  }
+  if (typeof object.arrayBuffer !== "function") return null;
   const bytes = new Uint8Array(await object.arrayBuffer());
   if (bytes.length === 0) return null;
   const cache = row.status === "approved" ? "public, max-age=31536000, immutable" : "private, max-age=300";
