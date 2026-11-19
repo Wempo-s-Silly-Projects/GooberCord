@@ -100,6 +100,9 @@ test("the leave refusal renders the server's body VERBATIM in the error lane", (
 test("a successful leave drops the server from the rail and walks home", () => {
   assert.match(MEMBERS, /await refreshServers\(\);/,
     "the store's servers lane re-reads through the refreshServers idiom");
+  assert.match(MEMBERS,
+    /store\.set\(\{ \[rosterKey\(serverId\)\]: null \}\);\s*\n\s*await refreshServers\(\);/,
+    "the roster cache dies with the membership (mod.js kick's idiom) — a leave→rejoin never serves the stale envelope");
   assert.match(MEMBERS, /router\.navigate\("\/"\);/,
     "the leaving member walks home (the gc.shell navigation idiom)");
 });

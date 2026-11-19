@@ -167,6 +167,10 @@ function leavePanel(serverId) {
           { class: "button button-danger", text: t("gc.members.leave.action"), onPress: async () => {
             try {
               await api(`/api/servers/${serverId}/leave`, { method: "POST" });
+              // The roster cache dies with the membership (mod.js kick's
+              // idiom) — a leave→rejoin in this session never serves the
+              // stale cached envelope.
+              store.set({ [rosterKey(serverId)]: null });
               await refreshServers();
               router.navigate("/");
             } catch (error) {
