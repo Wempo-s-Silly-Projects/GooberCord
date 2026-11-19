@@ -36,6 +36,7 @@ import { handlePaperRoutes } from "./api/paper.mjs";
 import { handleCampfireRoutes } from "./api/campfire.mjs";
 import { handleExpressionRoutes } from "./api/emoji.mjs";
 import { handleSoundboardRoutes } from "./api/soundboard.mjs";
+import { handleSoundPackRoutes } from "./api/soundpacks.mjs";
 import { handleGifRoutes } from "./api/gifs.mjs";
 import { handleAvatarRoutes } from "./api/avatars.mjs";
 import { handleUploadRoutes } from "./api/uploads.mjs";
@@ -206,6 +207,7 @@ const API_HANDLERS = [
   handleCampfireRoutes,
   handleExpressionRoutes,
   handleSoundboardRoutes,
+  handleSoundPackRoutes,
   handleGifRoutes,
   handleAvatarRoutes,
   handleUploadRoutes,
