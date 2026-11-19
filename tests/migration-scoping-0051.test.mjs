@@ -20,7 +20,8 @@
 // row and the month-day anniversaries) on the SHARED wempo-forum-data D1.
 // Same contract as the 0004-0028 pins: every statement targets a gc_-prefixed
 // object; the shared `users` rows are never created, altered, or written
-// (users appears only as a read-only FK reference). Two CREATE TABLEs, one
+// (users appears only as a read-only FK reference). Two CREATE TABLEs (IF NOT
+// EXISTS shape per the 2026-11-19 wave law), one index.
 // index — nothing else, additive only, no rebuild of any existing seat.
 //
 // PRIVACY: gc_user_anniversaries carries MONTH+DAY and nothing else — there
@@ -68,7 +69,7 @@ test("migration 0051 has no DROP, PRAGMA, UPDATE, DELETE, INSERT, or ALTER state
 });
 
 test("gc_paper_configs is the paper's whole seat: config only, no issue cache", () => {
-  const paper = /CREATE\s+TABLE\s+gc_paper_configs\s*\(([\s\S]*?)\n\);/i.exec(sql)?.[1] || "";
+  const paper = /CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?gc_paper_configs\s*\(([\s\S]*?)\n\);/i.exec(sql)?.[1] || "";
   for (const column of ["server_id", "enabled", "updated_by", "updated_at"]) {
     assert.match(paper, new RegExp("\\b" + column + "\\b"), column + " rides 0051");
   }
@@ -85,7 +86,7 @@ test("gc_paper_configs is the paper's whole seat: config only, no issue cache", 
 });
 
 test("gc_user_anniversaries is month+day and NOTHING else — no year, no timestamp", () => {
-  const anniv = /CREATE\s+TABLE\s+gc_user_anniversaries\s*\(([\s\S]*?)\n\);/i.exec(sql)?.[1] || "";
+  const anniv = /CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?gc_user_anniversaries\s*\(([\s\S]*?)\n\);/i.exec(sql)?.[1] || "";
   assert.match(anniv, /user_id INTEGER NOT NULL REFERENCES users\(id\) ON DELETE CASCADE/i);
   assert.match(anniv, /month\s+INTEGER NOT NULL CHECK/);
   assert.match(anniv, /day\s+INTEGER NOT NULL CHECK/);
@@ -108,7 +109,7 @@ test("gc_user_anniversaries is month+day and NOTHING else — no year, no timest
 });
 
 test("the celebrant read's access path exists as an index on (month, day)", () => {
-  assert.match(sql, /CREATE INDEX idx_gc_user_anniversaries_month_day\s*\n?\s*ON gc_user_anniversaries\s*\(\s*month\s*,\s*day\s*\)/);
+  assert.match(sql, /CREATE INDEX IF NOT EXISTS idx_gc_user_anniversaries_month_day\s*\n?\s*ON gc_user_anniversaries\s*\(\s*month\s*,\s*day\s*\)/);
 });
 
 test("migration 0051 mentions no forum-only table beyond the read-only users reference", () => {
