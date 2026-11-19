@@ -69,6 +69,9 @@ export const UI_VOICE_MAX_PARTICIPANTS = 6; // GC_VOICE_MAX_PARTICIPANTS (the jo
 const messagesKey = (channelId) => `messages:${channelId}`;
 const expressionsKey = (serverId) => `chat-inventories:${serverId}`;
 const voiceKey = (channelId) => `voice:${channelId}`;
+// The WS presence frame's lane (an ARRAY). NEVER `roster:` — that namespace
+// is members.js's /roster ENVELOPE alone, and channel ids and server ids
+// come from independent counters, so the ids collide on the same number.
 
 export function messagesOf(channelId) {
   return store.get(messagesKey(channelId)) || null;
@@ -438,8 +441,8 @@ function wireChannelSocket(channelId, column, header) {
         refreshColumn(column, channelId);
         scrollBottom(column);
         markRead(channelId, frame.message.id); // conversations only ACK (forward-only guard inside)
-      } else if (frame.type === "roster") {
-        store.set({ [`roster:${channelId}`]: frame.members });
+      } else if (frame.type === "roster" && Array.isArray(frame.members)) {
+        store.set({ [`presence:${channelId}`]: frame.members });
       } else if (frame.type === "voice_roster") {
         store.set({ [voiceKey(channelId)]: frame.participants });
         refreshVoiceSeat(column, channelId);
@@ -461,11 +464,11 @@ function wireChannelSocket(channelId, column, header) {
   // shell paint restores the server's REST roster. Chat reaches the rail
   // only through its own column's shell ancestor — never past the DOM law.
   if (rosterUnsub) rosterUnsub();
-  rosterUnsub = store.subscribe(`roster:${channelId}`, () => {
+  rosterUnsub = store.subscribe(`presence:${channelId}`, () => {
     const rail = column.closest(".shell")?.querySelector(".rail-members");
     if (!rail) return;
     rail.querySelector(".rail-live")?.remove();
-    const members = store.get(`roster:${channelId}`) || [];
+    const members = store.get(`presence:${channelId}`) || [];
     rail.append(h("div", { class: "rail-live" },
       h("p", { class: "empty-state", text: t("gc.chat.rail.inHere", { count: members.length }) }),
       ...members.map((member) => h("a", {
@@ -544,7 +547,7 @@ function laneRefresh(column, channelId) {
   if (!lane) return;
   const me = store.get("user");
   const inventory = store.get(expressionsKey(channelIdOf()));
-  const membersRoster = store.get(`roster:${channelId}`) || [];
+  const membersRoster = store.get(`presence:${channelId}`) || [];
   column.replaceChildren(); // nodes rebuild from h()
   const list = [...lane.list].sort((a, b) => (a.id ?? 1e15) - (b.id ?? 1e15));
   let previous = null;
@@ -1264,7 +1267,7 @@ export function renderChannelPins(route, mount) {
       return;
     }
     const inventory = store.get(expressionsKey(serverId));
-    const membersRoster = store.get(`roster:${channelId}`) || [];
+    const membersRoster = store.get(`presence:${channelId}`) || [];
     for (const message of payload.messages) {
       body.append(messageRow(message, null,
         { me, inventory, roster: membersRoster, channelId }));
@@ -1364,7 +1367,7 @@ function wireConversationSocket(conversationId, column) {
         scrollBottom(column);
         markRead(conversationId, frame.message.id);
       } else if (frame.type === "roster") {
-        store.set({ [`roster:${conversationId}`]: frame.members });
+        store.set({ [`presence:${conversationId}`]: frame.members });
       } else if (frame.type === "care_notice") {
         showCareNotice(column, frame.body);
       } else if (frame.type === "error") {
