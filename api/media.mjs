@@ -91,11 +91,13 @@ function scheduleBackgroundTask(ctx, task) {
   void safe;
 }
 
-// The store-of-record put, awaited by the intake before its success return:
+// The store-of-record put, awaited by each intake before its success return:
 // the object lands at gc-attachments/<id> keyed by the row the batch just
 // committed. R2 errors propagate — the caller owns the fail-closed rollback
 // (the put is the only byte leg, so swallowing would strand byte-less rows).
-async function putAttachmentObject(env, attachmentId, bytes) {
+// Re-exported for the send batch's twin (api/messages.mjs), whose own commit
+// ordering decides where the put rides.
+export async function putAttachmentObject(env, attachmentId, bytes) {
   if (!env.GC_MEDIA) return;
   await env.GC_MEDIA.put(attachmentObjectKey(attachmentId), bytes);
 }
@@ -271,25 +273,27 @@ const STORE_FAILED_ERROR =
 const STANDALONE_ROW_DELETE_SQL =
   "DELETE FROM gc_attachments WHERE id = ? AND status = 'pending'";
 
-export async function createAttachment(env, uploaderId, fileBytes) {
-  const prepared = prepareAttachmentBytes(fileBytes);
-  const now = nowSeconds();
+// The shared standalone intake, after each caller's prepare (the image lane
+// and the soundboard's audio lane — the sound IS a gc_attachments row on the
+// same machinery): one batch — with GC_MEDIA the ledger row ALONE (no chunk
+// write-through; the object key needs the row id, so the put follows the
+// commit but precedes the success return), without it the legacy D1 chunk
+// intake byte-identically — then the id resolution and, under the binding,
+// the AWAITED store-of-record put. A failed put rolls the just-inserted
+// byte-less row back and rejects 503: bytes are durable in R2 or no row
+// survives (a crash between the two leaves a pending row the empty chunk set
+// 404s, and a reviewer's reject removes). No R2 delete fires for the
+// rolled-back row: a put that threw almost certainly left nothing behind.
+// Returns the inserted row's id; each caller keeps its own wire shape.
+export async function insertStandaloneAttachment(env, uploaderId, prepared, now, saveFailedCopy) {
   if (env.GC_MEDIA) {
-    // The R2 store of record (backfill receipt: 0/0 rows): the batch carries
-    // the ledger row ALONE — no chunk write-through. The object key needs the
-    // row's id, so the put follows the commit but precedes the success
-    // return; a put that fails rolls the byte-less row back and rejects the
-    // upload 503 — bytes are durable in R2 or no row survives (a crash
-    // between the two leaves a pending row the empty chunk set 404s, and a
-    // reviewer's reject removes). No R2 delete fires for the rolledback row:
-    // a put that threw almost certainly left nothing behind.
     const results = await env.GOOBER_DB.batch([
       env.GOOBER_DB.prepare(ATTACHMENT_INSERT_SQL)
         .bind(uploaderId, prepared.mime, prepared.bytes.length, now),
     ]);
     const id = Number(results[0]?.meta?.last_row_id);
     if (!Number.isInteger(id) || id < 1) {
-      throw new HttpError(500, "That image could not be stored. Please try again.");
+      throw new HttpError(500, saveFailedCopy);
     }
     try {
       await putAttachmentObject(env, id, prepared.bytes);
@@ -304,7 +308,7 @@ export async function createAttachment(env, uploaderId, fileBytes) {
       }
       throw new HttpError(503, STORE_FAILED_ERROR);
     }
-    return attachmentResult(id, prepared);
+    return id;
   }
   // Without the binding (local dev): byte-identical intake of the D1 chunk
   // era — the chunk write-through rides as the legacy byte store.
@@ -313,8 +317,20 @@ export async function createAttachment(env, uploaderId, fileBytes) {
   );
   const id = Number(results[0]?.meta?.last_row_id);
   if (!Number.isInteger(id) || id < 1) {
-    throw new HttpError(500, "That image could not be stored. Please try again.");
+    throw new HttpError(500, saveFailedCopy);
   }
+  return id;
+}
+
+export async function createAttachment(env, uploaderId, fileBytes) {
+  const prepared = prepareAttachmentBytes(fileBytes);
+  const id = await insertStandaloneAttachment(
+    env,
+    uploaderId,
+    prepared,
+    nowSeconds(),
+    "That image could not be stored. Please try again.",
+  );
   return attachmentResult(id, prepared);
 }
 
@@ -349,6 +365,19 @@ const ATTACHED_CHUNK_INSERT_SQL =
 export function messageAttachmentStatements(env, uploaderId, channelId, clientMessageId, prepared, now) {
   const size = prepared.bytes.length;
   const triple = [channelId, uploaderId, clientMessageId];
+  if (env.GC_MEDIA) {
+    // The R2 store of record (backfill receipt: 0/0 rows): the send batch
+    // carries the attachment row ALONE — no chunk write-through. The put
+    // itself rides the caller (the send batch's commit ordering is the
+    // message's, and the rollback differs from the standalone intake's: the
+    // committed message STAYS, the byte-less attachment row is what the
+    // sweep statement below removes — the send then rejects, never a
+    // delivered send with an R2-failed attachment).
+    return [
+      env.GOOBER_DB.prepare(ATTACHED_ATTACHMENT_INSERT_SQL)
+        .bind(...triple, uploaderId, prepared.mime, size, now, ...triple),
+    ];
+  }
   const statements = [
     env.GOOBER_DB.prepare(ATTACHED_ATTACHMENT_INSERT_SQL)
       .bind(...triple, uploaderId, prepared.mime, size, now, ...triple),
@@ -364,6 +393,24 @@ export function messageAttachmentStatements(env, uploaderId, channelId, clientMe
   }
   return statements;
 }
+
+// The send twin's own fail-closed law (api/messages.mjs): the send batch is
+// one D1 execute, so the message row is already committed when the put
+// settles — the compensating path is the ATTACHMENT's, and this is its sweep
+// (every still-pending attachment row the send batch just wrote for the
+// committed message; the byte-less rows the R2 put was meant to fill).
+export function messageAttachmentSweepStatement(env, messageId) {
+  return env.GOOBER_DB.prepare(
+    "DELETE FROM gc_attachments WHERE message_id = ? AND status = 'pending'",
+  ).bind(messageId);
+}
+
+// The send twin's 503 copy (the standalone intake's STORE_FAILED_ERROR,
+// re-worded for a message send): the send did NOT deliver — a retry re-rides
+// the whole batch, re-inserts the attachment row (the batch's NOT EXISTS
+// guard answers the swept row honestly) and re-puts.
+export const SEND_ATTACHMENT_STORE_FAILED_ERROR =
+  "The attachment could not be stored right now. Please send the message again.";
 
 // --- serving ---------------------------------------------------------------------
 

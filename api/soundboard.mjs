@@ -54,8 +54,8 @@ import {
 import { SERVER_PERMISSIONS, holdsRolesBitsSql, holdsRolesBitsParams, parseMergedMask, roleMaskColumnSql } from "./permissions.mjs";
 import { serverBoostTier } from "./boost-level.mjs";
 import {
+  insertStandaloneAttachment,
   readMultipartWithImage,
-  standaloneAttachmentStatements,
 } from "./media.mjs";
 import { expressionPayloadRow } from "./emoji.mjs";
 
@@ -168,16 +168,21 @@ export function prepareSoundAttachment(fileBytes) {
   return { mime, bytes: fileBytes };
 }
 
+// The intake rides media.mjs's shared standalone flow (the image lane's
+// exact batch shape, the prepare upstreamed): with GC_MEDIA the batch
+// carries the ledger row ALONE and the AWAITED R2 put is the only byte leg
+// (a failed put sweeps the byte-less pending row and rejects 503 —
+// gc-attachments/<id>, the sound IS an attachment row); without it the
+// legacy D1 chunk intake stays byte-identical.
 async function createSoundAttachment(env, uploaderId, fileBytes) {
   const prepared = prepareSoundAttachment(fileBytes);
-  const now = nowSeconds();
-  const results = await env.GOOBER_DB.batch(
-    standaloneAttachmentStatements(env, uploaderId, prepared, now),
+  const id = await insertStandaloneAttachment(
+    env,
+    uploaderId,
+    prepared,
+    nowSeconds(),
+    "That sound could not be stored. Please try again.",
   );
-  const id = Number(results[0]?.meta?.last_row_id);
-  if (!Number.isInteger(id) || id < 1) {
-    throw new HttpError(500, "That sound could not be stored. Please try again.");
-  }
   return { id, status: "pending", mime: prepared.mime, sizeBytes: prepared.bytes.length };
 }
 
