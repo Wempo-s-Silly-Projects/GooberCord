@@ -32,6 +32,9 @@ import { join, dirname } from "node:path";
 const HERE = dirname(new URL(import.meta.url).pathname);
 const ECONOMY = readFileSync(join(HERE, "../public/js/ui/economy.js"), "utf8");
 const COINS = readFileSync(join(HERE, "../api/coins.mjs"), "utf8");
+// T-R25-SPLIT-COINS-1: the cosmetics route arms ride api/coins-cosmetics.mjs
+// verbatim; the arm pins read the SEAM source (the same bytes, moved).
+const SEAM = readFileSync(join(HERE, "../api/coins-cosmetics.mjs"), "utf8");
 const STAGED = ["de", "es", "fr", "pt", "ru", "ja", "zh", "ar"];
 
 const enData = JSON.parse(readFileSync(join(HERE, "../public/locales/en.json"), "utf8"));
@@ -123,9 +126,9 @@ test("the server side is Phase 1's own shape — the lane adds no route and no s
     "publicCosmeticItems answers the consumable's qty and the own item's equip state");
   assert.match(COINS, /inventory: inventoryRows\.map\(publicInventoryRow\),/,
     "the shop payload carries its inventory arm (the equip toggle's read)");
-  assert.match(COINS, /path === "\/api\/coins\/cosmetics\/equip"/,
+  assert.match(SEAM, /path === "\/api\/coins\/cosmetics\/equip"/,
     "the equip route is the Phase-1 lane's own — this lane never re-wires it");
-  assert.match(COINS, /path === "\/api\/coins\/cosmetics\/consume"/,
+  assert.match(SEAM, /path === "\/api\/coins\/cosmetics\/consume"/,
     "the consume route is the Phase-1 lane's — this lane never re-wires it");
 });
 

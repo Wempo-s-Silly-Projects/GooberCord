@@ -32,6 +32,9 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(HERE, "..");
 
 const shopSource = readFileSync(join(ROOT, "api/coins.mjs"), "utf8");
+// T-R25-SPLIT-COINS-1: the cosmetic sink SQL rides api/coins-cosmetics.mjs
+// verbatim; the sink-guard pin reads the SEAM source (the same bytes, moved).
+const seamSource = readFileSync(join(ROOT, "api/coins-cosmetics.mjs"), "utf8");
 
 test("the pack's payload owned flag carries the spend guard's ANY-owned predicate", () => {
   // The payload row (the c14 fix): banner and flair ride OR — any half
@@ -55,8 +58,8 @@ test("the spend guard's ANY-owned refusal is unchanged — the guard the flag no
   // The c11 arm (machine truth): NOT EXISTS ow.item IN (banner, flair).
   // The guard's arm shape, read against the source's string-concat form:
   // concatenate the SQL literals the source builds, then match the arm.
-  const headSql = shopSource
-    .slice(shopSource.indexOf("const COSMETIC_LEGACY_SPEND_HEAD_SQL"))
+  const headSql = seamSource
+    .slice(seamSource.indexOf("const COSMETIC_LEGACY_SPEND_HEAD_SQL"))
     .split(";")[0]
     .replace(/(?:[\n ]*\+[\n ]*|")/g, " ")
     .replace(/\s+/g, " ");

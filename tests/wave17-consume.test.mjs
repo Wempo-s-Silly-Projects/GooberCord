@@ -49,6 +49,10 @@ const ECONOMY = () => {
 
 // The byte-frozen backend shapes the client rides (read, NEVER edited).
 const COINS = read("api/coins.mjs");
+// T-R25-SPLIT-COINS-1: the cosmetics family rides api/coins-cosmetics.mjs
+// verbatim; the family's handler pins read the SEAM source (the same
+// bytes, moved).
+const SEAM = read("api/coins-cosmetics.mjs");
 
 const STAGED = ["de", "es", "fr", "pt", "ru", "ja", "zh", "ar"];
 const enData = JSON.parse(read("public/locales/en.json"));
@@ -59,24 +63,24 @@ const NEW_KEYS = ["gc.economy.items.use"];
 // --- the frozen backend is the single source (read, never edited) ---------------
 
 test("the frozen consume route keeps its shape (api/coins.mjs:991-1022)", () => {
-  assert.match(COINS, /async function handleCosmeticConsumeRoute\(request, env\) \{/,
+  assert.match(SEAM, /async function handleCosmeticConsumeRoute\(request, env\) \{/,
     "the consume arm's own handler");
-  assert.match(COINS, /method === "POST" \n?\s*&& path === "\/api\/coins\/cosmetics\/consume"|path === "\/api\/coins\/cosmetics\/consume"/,
+  assert.match(SEAM, /method === "POST" \n?\s*&& path === "\/api\/coins\/cosmetics\/consume"|path === "\/api\/coins\/cosmetics\/consume"/,
     "the route's path");
-  assert.match(COINS, /if \(sku\.kind !== "consumable"\) \{/,
+  assert.match(SEAM, /if \(sku\.kind !== "consumable"\) \{/,
     "the kind gate — only consumable rows ride the use arm");
-  assert.match(COINS, /INVENTORY_CONSUME_SQL\)/,
+  assert.match(SEAM, /INVENTORY_CONSUME_SQL\)/,
     "the ONE guarded UPDATE (the qty > 0 arm IS the claim)");
 });
 
 test("the consume refusals' copies are the verbatim contract (grep of the REAL lines)", () => {
-  assert.match(COINS, /throw new HttpError\(400, "That cosmetic is not in the shop\."\);/,
+  assert.match(SEAM, /throw new HttpError\(400, "That cosmetic is not in the shop\."\);/,
     "the unknown-SKU 400's exact copy");
-  assert.match(COINS, /throw new HttpError\(400, "That cosmetic is not a consumable pack\."\);/,
+  assert.match(SEAM, /throw new HttpError\(400, "That cosmetic is not a consumable pack\."\);/,
     "the kind 400's exact copy");
-  assert.match(COINS, /throw new HttpError\(403, "Buy that cosmetic in the coin shop first\."\);/,
+  assert.match(SEAM, /throw new HttpError\(403, "Buy that cosmetic in the coin shop first\."\);/,
     "the buy-first 403's exact copy");
-  assert.match(COINS, /throw new HttpError\(409, "That pack is empty\."\);/,
+  assert.match(SEAM, /throw new HttpError\(409, "That pack is empty\."\);/,
     "the empty-pack 409's exact copy");
 });
 
@@ -84,19 +88,19 @@ test("the disambiguating catch arm: changes = 0 reclassifies through the OWNED p
   // The real block, grepped from the worktree — the zero-change classification
   // is DISAMBIGUATED by the owned-probe lines riding inside the same arm
   // (coins.mjs carries several `changes !== 1` arms; this one is the consume's).
-  assert.match(COINS,
+  assert.match(SEAM,
     /if \(Number\(result\.meta\?\.changes\) !== 1\) \{\s*\n\s*const owned = await env\.GOOBER_DB\.prepare\(INVENTORY_OWNED_PROBE_SQL\)\s*\n\s*\.bind\(userId, sku\.itemKey\)\.first\(\);\s*\n\s*if \(!owned\) throw new HttpError\(403, "Buy that cosmetic in the coin shop first\."\);\s*\n\s*throw new HttpError\(409, "That pack is empty\."\);\s*\n\s*\}/,
     "the classified post-hoc probe arm, byte-shaped");
 });
 
 test("the route wire seat rides handleCoinRoutes (the :1236 seat)", () => {
-  assert.match(COINS,
+  assert.match(SEAM,
     /if \(path === "\/api\/coins\/cosmetics\/consume" && method === "POST"\) \{\s*\n\s*return handleCosmeticConsumeRoute\(request, env\);\s*\n\s*\}/,
     "the wired seat — the route answered in the dispatcher");
 });
 
 test("the frozen backend carries the equip exception (the burst pack IS the equip surface)", () => {
-  assert.match(COINS, /sku\.itemKey !== GC_COSMETIC_FX_BURST_ITEM/,
+  assert.match(SEAM, /sku\.itemKey !== GC_COSMETIC_FX_BURST_ITEM/,
     "the kind guard's admitted Phase-3 exception");
   assert.match(COINS, /publicInventoryRow\(row\) \{[\s\S]*?equipped: row\.equipped === 1/,
     "the echoed rows carry equipped for every kind (the paint's payload truth)");
