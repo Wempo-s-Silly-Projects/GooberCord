@@ -116,25 +116,41 @@ export async function unequipCosmetic(itemKey) {
   return result;
 }
 
+// POST /api/coins/cosmetics/consume — the consumable's spend door (the
+// backend's own ONE guarded UPDATE: the qty > 0 arm IS the claim). The
+// refusals are the route's own verdicts (400 not-in-shop / 400 not-a-pack /
+// 403 buy-first / 409 empty), rendered verbatim on the row — no client
+// oracle. The echoed inventory welds into the store (the equip family's one
+// weld), so the re-render reads the fresh qty off the payload.
+export async function consumeCosmetic(itemKey) {
+  const result = await api("/api/coins/cosmetics/consume", {
+    method: "POST", body: { itemKey },
+  });
+  weldShopEcho(result);
+  return result;
+}
+
 // The echo weld: the route's echoed inventory is the only data it rides —
-// the store's items take the echoed rows' equipped state (the payload's own
-// shape, never re-derived); consumable rows carry no equipped state to weld.
+// the store's items take the echoed rows' own state (the payload's own
+// shape, never re-derived): the equipped flag for every echoed row (the own
+// rows AND the admitted burst pack — the Phase-3 exception), and for a
+// consumable row also the fresh qty the spend just moved.
 function weldShopEcho(result) {
   const shop = store.get("shop");
   const inventory = result?.inventory;
   if (!Array.isArray(inventory) || !shop) return;
-  const equippedOf = new Map(
-    inventory
-      .filter((row) => row.kind !== "consumable")
-      .map((row) => [row.itemKey, row.equipped]),
-  );
+  const echoOf = new Map(inventory.map((row) => [row.itemKey, row]));
   store.set({
     shop: {
       ...shop,
       inventory,
-      items: (shop.items || []).map((item) => equippedOf.has(item.item)
-        ? { ...item, equipped: equippedOf.get(item.item) }
-        : item),
+      items: (shop.items || []).map((item) => {
+        const echo = echoOf.get(item.item);
+        if (!echo) return item;
+        return echo.kind === "consumable"
+          ? { ...item, qty: echo.qty, equipped: echo.equipped }
+          : { ...item, equipped: echo.equipped };
+      }),
     },
   });
 }
@@ -424,8 +440,8 @@ function buyDialog(offer, tier) {
 // (`owned`); a buy is a commit; the apply panel rides ownership. The 0056
 // inventory SKUs ride the same POST /api/coins/cosmetics path but their rows
 // speak KIND (kind/qty/equipped arrive route-side, Phase 1's own shape): a
-// consumable answers its remaining uses off the payload's qty (the packs
-// re-stack on re-buy; the consume runtime is Phase 3, parked), an own item
+// consumable answers its remaining uses off the payload's qty and spends one
+// use through the explicit use arm (the wave-17 consume door), an own item
 // toggles its equipped state, and the plus discount shows both prices where
 // the payload provides them.
 function itemsPanel(payload) {
@@ -475,9 +491,14 @@ function skuNameKey(itemKey) {
 
 // The v1 inventory row: the kind speaks. For an own item the equip state
 // REPLACES the price display once bought (the purchase question is answered
-// at buy time); a consumable keeps its price ride-along (re-buys stack) and
-// answers its remaining uses; the plus line shows both prices only where the
-// payload provides a plus price that differs (never a fabricated number).
+// at buy time); a consumable keeps its price ride-along (re-buys stack),
+// answers its remaining uses, and gains the ONE explicit use act (the
+// consume runtime, the wave-17 slate); the owned row's toggle is
+// kind-generic — the same equip/unequip buttons ride every owned row, the
+// backend's own kind guard answers the rest (the burst pack equips the
+// effects slot, a non-burst pack paints its 400 verbatim); the plus line
+// shows both prices only where the payload provides a plus price that
+// differs (never a fabricated number).
 function inventoryRow(item, errorLine) {
   const nodes = [
     h("span", { class: "item-name", text: t(skuNameKey(item.item)) }),
@@ -486,12 +507,19 @@ function inventoryRow(item, errorLine) {
   if (item.kind === "consumable" && item.owned) {
     nodes.push(h("span", { class: "muted item-uses",
       text: t("gc.economy.items.uses", { count: item.qty }) }));
+    nodes.push(useButton(item, errorLine));
   }
-  if (item.kind === "own" && item.owned) {
-    nodes.push(item.equipped
-      ? [h("span", { class: "muted item-equipped", text: t("gc.economy.items.equipped") }),
-        unequipButton(item, errorLine)]
-      : equipButton(item, errorLine));
+  if (item.owned) {
+    if (item.equipped) {
+      nodes.push(h("span", { class: "muted item-equipped", text: t("gc.economy.items.equipped") }));
+      // The unequip arm is OWN-KIND ONLY in the frozen backend (the burst
+      // pack keeps its equip arm for the effects slot — the designed shape):
+      // a never-served act never paints. The equipped pack's un-equip path
+      // is re-equipping, not this control.
+      if (item.kind === "own") nodes.push(unequipButton(item, errorLine));
+    } else {
+      nodes.push(equipButton(item, errorLine));
+    }
   } else {
     nodes.push(shopBuyButton(item, errorLine));
   }
@@ -542,6 +570,27 @@ function unequipButton(item, errorLine) {
         router.renderCurrent();
       } catch (error) {
         errorLine.textContent = error.message; // 404 lost/unequipped / 400 kind verbatim
+      }
+    },
+  });
+}
+
+// The use act: the pack's ONE explicit spend — POST /api/coins/cosmetics/
+// consume with the row's itemKey (the backend's own kind gate + the qty > 0
+// claim). The refusal renders verbatim inline (403 buy-first / 409 empty
+// pack / 400 kind), the success rides the route's echoed inventory through
+// the weld (the echo-refresh shape — never optimistic client math).
+function useButton(item, errorLine) {
+  return h("button", {
+    class: "button button-quiet shop-use row-quiet-inline", type: "button",
+    text: t("gc.economy.items.use"),
+    onClick: async () => {
+      try {
+        await consumeCosmetic(item.item);
+        errorLine.textContent = "";
+        router.renderCurrent();
+      } catch (error) {
+        errorLine.textContent = error.message; // 403 buy-first / 409 empty / 400 kind verbatim
       }
     },
   });

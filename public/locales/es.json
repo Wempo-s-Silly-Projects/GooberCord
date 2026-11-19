@@ -452,6 +452,7 @@
   "gc.economy.items.equipped": "equipado",
   "gc.economy.items.equip": "Equipar",
   "gc.economy.items.unequip": "Quitar",
+  "gc.economy.items.use": "Usar",
   "gc.economy.items.fxBurstConfetti": "Paquete de ráfaga de confeti (5 usos)",
   "gc.economy.items.frameGold": "Marco dorado",
   "gc.economy.items.frameNeon": "Marco de neón",

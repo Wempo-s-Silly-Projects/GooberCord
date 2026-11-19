@@ -451,6 +451,7 @@
   "gc.economy.items.equipped": "装着中",
   "gc.economy.items.equip": "装着",
   "gc.economy.items.unequip": "外す",
+  "gc.economy.items.use": "使う",
   "gc.economy.items.fxBurstConfetti": "紙吹雪のバーストパック（5回分）",
   "gc.economy.items.frameGold": "ゴールドのフレーム",
   "gc.economy.items.frameNeon": "ネオンのフレーム",

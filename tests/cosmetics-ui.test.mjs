@@ -19,8 +19,9 @@
 // The cosmetics shop UI (the 2026-11-19 v1 slate's phase 2) — the items
 // panel rides the Phase-1 payload as data (kind/qty/equipped arrive from
 // api/coins.mjs's shape, never re-derived client-side), the equip toggle
-// rides Phase-1's POST /api/coins/cosmetics/equip, the consume runtime
-// stays Phase-3 parked, and every t() key the panel names is seated in
+// rides Phase-1's POST /api/coins/cosmetics/equip, the consume runtime rides
+// the wave-17 door (2026-11-19; it superseded this file's Phase-3 park), and
+// every t() key the panel names is seated in
 // en.json AND translated in all eight staged bundles (the law: no en
 // placeholder, no byte-equal carve, no machine keys in a fleet bundle).
 import test from "node:test";
@@ -69,10 +70,10 @@ test("the consumable row answers its remaining uses from the payload's qty", () 
 });
 
 test("the equipped own row carries the unequip control beside the equipped span; one equip control otherwise", () => {
-  assert.match(ECONOMY, /item\.equipped\s*\?\s*\[h\("span",/,
-    "the equipped row keeps the equipped span AND gains the unequip control");
-  assert.match(ECONOMY, /unequipButton\(item, errorLine\)\]/,
-    "the unequip control rides the equipped branch as the span's row-mate");
+  assert.match(ECONOMY, /h\("span", \{ class: "muted item-equipped", text: t\("gc\.economy\.items\.equipped"\) \}\)/,
+    "the equipped row keeps the equipped span (every kind — the pack rides the equipped span alone)");
+  assert.match(ECONOMY, /if \(item\.kind === "own"\) nodes\.push\(unequipButton\(item, errorLine\)\);/,
+    "the unequip control rides ONLY the row the backend's unequip arm serves (own kind — the wave-17 kind split)");
   assert.match(ECONOMY, /function unequipButton\(/,
     "the control is the equipped row's own quiet button");
   assert.match(ECONOMY, /text: t\("gc\.economy\.items\.unequip"\)/,
@@ -100,9 +101,14 @@ test("a purchase keeps the existing POST /api/coins/cosmetics path — no second
     "the v1 rows ride the same buy surface the banner/flair rows always have");
 });
 
-test("no consume runtime rides this wave (Phase 3 parks it)", () => {
-  assert.doesNotMatch(ECONOMY, /cosmetics\/consume/);
-  assert.doesNotMatch(ECONOMY, /consumeCosmetic/);
+test("the consume runtime rides the wave-17 door (the 2026-11-19 wave-17 slate supersedes the Phase-3 park)", () => {
+  const consumeCall = ECONOMY.match(/api\("\/api\/coins\/cosmetics\/consume"/g) || [];
+  assert.equal(consumeCall.length, 1,
+    "exactly the ONE consume call site rides (the helper's POST; no second wire)");
+  assert.match(ECONOMY, /export async function consumeCosmetic\(itemKey\)/,
+    "the helper, named beside the equip family");
+  const consumeCalls = ECONOMY.match(/consumeCosmetic\(item\.item\)/g) || [];
+  assert.equal(consumeCalls.length, 1, "the use button is the ONE caller");
 });
 
 test("the both-prices line renders where the payload provides a differing plus price", () => {
