@@ -28,7 +28,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
 
-import { backfillBlobsToR2, toBytes, bytesEqual, d1JsonToD1Shape } from "../scripts/backfill-blobs-to-r2.mjs";
+import { backfillBlobsToR2, toBytes, bytesEqual, d1JsonToD1Shape, r2ObjectArgs } from "../scripts/backfill-blobs-to-r2.mjs";
 
 const PAGE_ROWS = Math.max(1, Math.floor(4 * 1024 * 1024 / 64000));
 
@@ -259,3 +259,16 @@ test("d1JsonToD1Shape unfolds wrangler's batch-entry array into the engine page"
   );
 });
 
+
+// The second prod-run seam: wrangler's `r2 object get|put` demands the
+// flags-first ordering is rejected ("Unknown arguments: ... <bucket>/<key>").
+test("r2ObjectArgs answers wrangler's verb-first objectPath parser shape", () => {
+  assert.deepEqual(
+    r2ObjectArgs("put", "wempos-forum-r2", "avatars/1", "/tmp/x", ["--remote"]),
+    ["put", "wempos-forum-r2/avatars/1", "--file", "/tmp/x", "--remote"],
+  );
+  assert.deepEqual(
+    r2ObjectArgs("get", "wempos-forum-r2", "gc-attachments/5", "/tmp/y", ["--local"]),
+    ["get", "wempos-forum-r2/gc-attachments/5", "--file", "/tmp/y", "--local"],
+  );
+});

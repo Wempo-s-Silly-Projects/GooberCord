@@ -299,6 +299,14 @@ export function d1WranglerAdapter(database, { remote = false, persistTo = null, 
   };
 }
 
+// The verb-first arg shape wrangler's `r2 object get|put <bucket>/<key>`
+// parser demands: the objectPath is a REQUIRED positional that must precede
+// any flags (the flags-first ordering failed all 26 avatar puts on the first
+// remote run as "Unknown arguments"). Pinned in tests/r2-backfill.test.mjs.
+export function r2ObjectArgs(verb, bucket, key, tmp, baseFlags) {
+  return [verb, bucket + "/" + key, "--file", tmp, ...baseFlags];
+}
+
 // The R2-shaped adapter over `wrangler r2 object` (put via a temp file, get
 // back via one).
 export function r2WranglerAdapter(bucket, { remote = false, persistTo = null, cwd = null } = {}) {
@@ -306,7 +314,7 @@ export function r2WranglerAdapter(bucket, { remote = false, persistTo = null, cw
   if (persistTo) baseFlags.push("--persist-to", persistTo);
   async function r2(args) {
     const { execFileSync } = await import("node:child_process");
-    return execFileSync("pnpx", ["wrangler", "r2", "object", ...baseFlags, ...args],
+    return execFileSync("pnpx", ["wrangler", "r2", "object", ...args],
       cwd ? { cwd, maxBuffer: 1024 * 1024 * 64 } : { maxBuffer: 1024 * 1024 * 64 });
   }
   let tmpCounter = 0;
@@ -315,7 +323,7 @@ export function r2WranglerAdapter(bucket, { remote = false, persistTo = null, cw
       const tmp = path.join(os.tmpdir(), "gc-r2-backfill-" + process.pid + "-" + (tmpCounter += 1));
       try {
         writeFileSync(tmp, bytes);
-        await r2(["put", bucket + "/" + key, "--file", tmp]);
+        await r2(r2ObjectArgs("put", bucket, key, tmp, baseFlags));
       } finally {
         try { unlinkSync(tmp); } catch { /* already gone */ }
       }
@@ -323,10 +331,10 @@ export function r2WranglerAdapter(bucket, { remote = false, persistTo = null, cw
     async get(key) {
       const tmp = path.join(os.tmpdir(), "gc-r2-backfill-" + process.pid + "-" + (tmpCounter += 1));
       try {
-        await r2(["get", bucket + "/" + key, "--file", tmp]);
+        await r2(r2ObjectArgs("get", bucket, key, tmp, baseFlags));
         return { body: new Response(readFileSync(tmp)).body };
       } catch (error) {
-        if (/not found|no object/i.test(String(error))) return null;
+        if (/not found|does not exist|no object/i.test(String(error))) return null;
         throw error;
       } finally {
         try { unlinkSync(tmp); } catch { /* nothing written */ }
