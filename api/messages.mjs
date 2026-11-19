@@ -929,7 +929,15 @@ export async function sendMessageToChannel(
       }
     }
     if (!stored) {
-      await messageAttachmentSweepStatement(env, Number(row.id)).run();
+      // Best-effort sweep — the standalone twin of this rollback already
+      // carries the same rule (media.mjs): a D1 failure inside the DELETE
+      // must never mask the 503; the worst case leaves the byte-less
+      // pending row for a retry to sweep (the NOT EXISTS gate reanswers).
+      try {
+        await messageAttachmentSweepStatement(env, Number(row.id)).run();
+      } catch {
+        // the 503 below is the contract; the sweep rides best-effort
+      }
       throw new HttpError(503, SEND_ATTACHMENT_STORE_FAILED_ERROR);
     }
   }
