@@ -1,27 +1,40 @@
-// Project Designer — experience/db
-// The guarded-SQL vocabulary, extracted from wempos-forum's api/core/
-// (cursors.mjs, blocks.mjs — GC carries gc_-prefixed twins). The house
-// idiom these capture:
+// Copyright 2026 YourLocalGoober
 //
-//   - CURSORS are wire formats the browser holds: parse and encode are
-//     pure, ANCHORED, and pinned by unit tests; a malformed cursor parses
-//     to null so the route raises its own 400 (a leaked parse error is a
-//     route bug, never a client-facing shape).
-//   - THE BLOCK PAIR is the both-direction content wall: one row from
-//     EITHER direction hides content between the pair everywhere. Detail
-//     reads consult blockPairExists; LIST surfaces filter in the SELECT
-//     via the fragment helpers (feeds filter rows, not per-row checks).
-//     Staff never lose desk visibility — every read-path check bypasses
-//     for staff viewers, so moderation can never be blocked.
-//   - the D1 shape behind the surface is the app's env binding itself
-//     (prepare().bind().first()/all()); Designer adds no wrapper layer —
-//     tests fake it with the same three-method shape (see tests/), which
-//     is exactly how every existing app test already fakes D1.
+// This file is part of GooberCord.
 //
-// No imports anywhere: pure SQL and pure string/number codecs, like the
-// originals.
+// GooberCord is free software: you can redistribute it and/or modify it
+// under the terms of the GNU Affero General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful, but
+// WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU Affero General Public License for more details.
+//
+// You should have received a copy of the
+// GNU Affero General Public License along with this program.  If not,
+// see <https://www.gnu.org/licenses/>
 
-// --- cursors (verbatim from forum api/core/cursors.mjs) ---------------------
+// api/vendor/db.mjs — fleet-owned database-adjacent codecs and SQL helpers.
+// The guarded-SQL vocabulary the app's api/core carries:
+//
+//   - CURSORS are wire formats the browser holds: parse and encode are pure,
+//     anchored, and pinned by unit tests; a malformed cursor parses to null
+//     so the route raises its own 400 (a leaked parse error is a route bug,
+//     never a client-facing shape).
+//   - THE BLOCK PAIR is the both-direction content wall: one row from EITHER
+//     direction hides content between the pair everywhere. Detail reads
+//     consult blockPairExists; LIST surfaces filter in the SELECT via the
+//     fragment helpers. Staff never lose desk visibility — every read-path
+//     check bypasses for staff viewers, so moderation can never be blocked.
+//   - the D1 shape behind the surface is the app's env binding itself
+//     (prepare().bind().first()/all()); no wrapper layer, and tests fake it
+//     with the same three-method shape (see tests/).
+//
+// No imports anywhere: pure SQL and pure string/number codecs.
+
+// --- cursor codecs -----------------------------------------------------------
 
 export function parseActivityCursor(raw) {
   if (typeof raw !== "string") return null;
@@ -60,17 +73,16 @@ export function encodeScoreCursor(row) {
   return (Number(row.like_count) - Number(row.dislike_count)) + "_" + Number(row.id);
 }
 
-// --- the block gate ---------------------------------------------------------
+// --- the block gate -----------------------------------------------------------
 
 // makeBlockGate: the blocks vocabulary, parameterized by the app's table
-// (forum: "blocks"; GC: "gc_blocks") and its staff-read roles. Every helper
-// keeps the original's behavior; only the table/role literals ride config.
+// ("blocks" on the shared forum DB, "gc_blocks" for app-owned surfaces) and
+// its staff-read roles.
 //
 //   staffRoles — the PUBLIC role values whose reads bypass the wall entirely
 //                (forum/GC pair: ["owner", "admin"]). Stored-vocabulary
-//                roles (the forum's frozen DB literals) must be mapped
-//                public-side BEFORE reaching here, exactly as publicRole
-//                already guarantees at every read path.
+//                roles must be mapped public-side BEFORE reaching here, as
+//                publicRole already guarantees at every read path.
 export function makeBlockGate({
   table = "blocks",
   blockerColumn = "blocker_id",
