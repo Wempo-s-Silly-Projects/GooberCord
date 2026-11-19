@@ -39,7 +39,8 @@ import { requireSignedInRead, requireUser } from "./core/auth.mjs";
 import { nowSeconds } from "./core/crypto.mjs";
 import { HttpError, json, rateLimit, readJson } from "./core/http.mjs";
 import { channelForUser, enforceChannelBits, enforceMemberGatesForChannel } from "./messages.mjs";
-import { SERVER_PERMISSIONS, holdsRolesBitsSql, holdsRolesBitsParams } from "./permissions.mjs";
+import { SERVER_PERMISSIONS } from "./permissions.mjs";
+import { moderationGuardSql } from "./social-helpers.mjs";
 import { plusActiveExpr, plusMemberActive, plusPerkActive, publicIsPlus } from "./plus.mjs";
 import { GC_COSMETIC_FX_BURST_ITEM, GC_PLUS_REACTIONS, GC_REACTIONS_MAX_UNIQUE_PER_MESSAGE } from "../constants.mjs";
 
@@ -168,37 +169,6 @@ const BURST_CONSUME_SQL =
   "WHERE user_id = ? AND item_key = ? AND kind = 'consumable' AND equipped = 1 AND qty > 0 AND EXISTS (" +
     "SELECT 1 FROM gc_message_reactions r WHERE r.message_id = ? AND r.user_id = ? " +
     "AND r.emoji = ? AND r.fx_burst = 1)";
-
-// --- the moderation guard (replicated from api/servers.mjs) ----------------------
-//
-// Same three fragments servers.mjs builds its guard from — the string-tier
-// owner row, the per-bit role EXISTS (exact OR — SUM carried duplicate bits
-// into phantom higher bits), and the two hierarchy positions. Kept verbatim
-// (including the bind order) because the mod desk's routes and this
-// route must refuse the same actor/target pairs.
-
-const TOP_POSITION_SELECT =
-  "(SELECT COALESCE(MAX(hr.position), -1) FROM gc_member_roles hmr " +
-    "JOIN gc_roles hr ON hr.id = hmr.role_id " +
-    "WHERE hmr.server_id = ? AND hmr.user_id = ?)";
-
-const OWNER_EXISTS_SQL =
-  "EXISTS (SELECT 1 FROM gc_server_members om " +
-    "WHERE om.server_id = ? AND om.user_id = ? AND om.role = 'owner')";
-
-// moderationGuardSql(serverId, actorId, targetId, bits): the mod-desk family
-// guard — actor is the string-tier owner, OR holds EVERY bit (one per-bit
-// EXISTS arm per bit, exact OR semantics) AND outranks the target (strictly
-// greater top position).
-function moderationGuardSql(serverId, actorId, targetId, bits) {
-  const list = Array.isArray(bits) ? bits : [bits];
-  return {
-    sql: "(" + OWNER_EXISTS_SQL + " OR (" +
-        holdsRolesBitsSql(list) + " AND " +
-        TOP_POSITION_SELECT + " > " + TOP_POSITION_SELECT + "))",
-    params: [serverId, actorId, ...holdsRolesBitsParams(serverId, actorId, list), serverId, actorId, serverId, targetId],
-  };
-}
 
 // --- friends ---------------------------------------------------------------------
 
