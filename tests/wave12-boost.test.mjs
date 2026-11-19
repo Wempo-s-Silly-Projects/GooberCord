@@ -364,7 +364,7 @@ test("the panel's refusals paint the server's string verbatim (G-2) and no coin 
 // placeholder after the commit (the wave-10/11 retarget seat).
 test("diff scope: the lane touches NO frozen api module and wires worker.mjs at two lines", () => {
   const LANE_BASE = "bdd723d";
-  const LANE_TIP = "LANE_TIP_PLACEHOLDER_W12";
+  const LANE_TIP = "400c3b5"; // the wave's OWN feat commit (the retarget seat)
   let apiTouched;
   let workerStat;
   try {
