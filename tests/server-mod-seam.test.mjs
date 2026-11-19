@@ -105,13 +105,14 @@ test("servers.mjs delegates the desk — one dispatch, no copied mod handlers", 
   assert.doesNotMatch(SERVERS_SOURCE, /const FILTER_RULE_CREATE_SQL/);
   assert.doesNotMatch(SERVERS_SOURCE, /const FILTER_RULE_SELECT_SQL/);
   // The router's dispatch block is the forward, and the search arm (the
-  // interloper between the alerts and kick arms) stays home.
+  // interloper between the alerts and kick arms) rides its own seam module
+  // since T-R25-SPLIT-SERVERS-7 (the retarget the move forces).
   assert.match(SERVERS_SOURCE, /await handleServerModRoutes\(/,
     "the router hands the desk to the seam module");
-  assert.match(SERVERS_SOURCE, /const searchMatch = method === "GET"/,
-    "the search arm keeps its place in servers.mjs");
-  assert.match(SERVERS_SOURCE, /handleSearchServerRoute\(/,
-    "the search handler stays in servers.mjs");
+  assert.doesNotMatch(SERVERS_SOURCE, /const searchMatch = method === "GET"/,
+    "the search arm rode its own seam (T-R25-SPLIT-SERVERS-7)");
+  assert.match(SERVERS_SOURCE, /await handleServerSearchRoutes\(/,
+    "the router hands the search to the seam module");
   // The shared helpers stay ONE implementation in servers.mjs (the earlier
   // lanes' export contract), whatever the mod seam imports.
   for (const shared of [

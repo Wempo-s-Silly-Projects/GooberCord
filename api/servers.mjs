@@ -82,6 +82,12 @@ import {
 // boolean, never the throwing route gate — a denied hit is DROPPED, not a
 // page-kill).
 import { viewerCanViewChannel } from "./messages.mjs";
+
+// T-R25-SPLIT-SERVERS-7: the server's message search rides
+// api/server-search.mjs (the wave-25 sixth seam). The search family's SQL
+// consts move with it; the VIEW gate stays ONE implementation in
+// messages.mjs — the seam imports it, never copies it.
+import { handleServerSearchRoutes } from "./server-search.mjs";
 import { plusActiveExpr, publicIsPlus } from "./plus.mjs";
 // The rules gate's owner edit (0012) rides the word filter too: a rules
 // document the filter would mask is REFUSED (GC's reject semantics — masking
@@ -358,106 +364,6 @@ export function rolePayload(row) {
   };
 }
 
-// The server's message search (W-B2): a LIKE over the text channels' bodies,
-// member-gated and VIEW-gated. The escape discipline rides the SQL's own
-// ESCAPE arm — the user's % and _ are LITERALIZED (a query containing them
-// matches the characters, never the wildcards) — while the dispatch's
-// "word-bounded" reading stays a later lane (SQLite's LIKE cannot express a
-// word seam without a padded corpus; GC matches the whole-contains term,
-// case-insensitive for ASCII via LIKE's own collation). A server carrying no
-// channel overwrites admits every member to every text channel (the
-// graceful default, documented at messages.mjs's layer comments) — the
-// per-hit VIEW evaluation only runs when overwrites exist at all, so the
-// common server spends one read on the question. The route is read-limited
-// on the 'read' bucket, never the slowmode.
-const SERVER_SEARCH_MEMBERSHIP_SQL =
-  "SELECT 1 FROM gc_server_members WHERE server_id = ? AND user_id = ? LIMIT 1";
-const SERVER_SEARCH_OVERWRITES_SQL =
-  "SELECT EXISTS(SELECT 1 FROM gc_channel_overwrites o JOIN gc_channels c " +
-    "ON c.id = o.channel_id WHERE c.server_id = ?) AS any_overwrites";
-const SERVER_SEARCH_SQL =
-  "SELECT m.id AS id, m.channel_id AS channel_id, c.name AS channel_name, " +
-    "c.server_id AS server_id, m.author_id AS author_id, " +
-    "gu.username AS author_username, m.body AS body, m.created_at AS created_at " +
-  "FROM gc_messages m JOIN gc_channels c ON c.id = m.channel_id " +
-    "JOIN users gu ON gu.id = m.author_id " +
-  "WHERE c.kind = 'text' AND c.server_id = ? AND m.body LIKE ? ESCAPE '\\' " +
-    "AND EXISTS (SELECT 1 FROM gc_server_members fsm WHERE fsm.server_id = c.server_id " +
-      "AND fsm.user_id = ?) ";
-
-async function handleSearchServerRoute(request, env, serverId, url) {
-  const session = await requireUser(request, env);
-  const userId = Number(session.user.id);
-  await rateLimit(request, env, "read", "user:" + userId);
-
-  const member = await env.GOOBER_DB.prepare(SERVER_SEARCH_MEMBERSHIP_SQL)
-    .bind(serverId, userId).first();
-  if (!member) throw new HttpError(403, "You do not have permission to do that.");
-
-  const qRaw = url.searchParams.get("q");
-  if (qRaw === null) throw new HttpError(400, "That search term is invalid.");
-  const term = qRaw.trim();
-  if (term.length < 1 || term.length > GC_SEARCH_TERM_MAX) {
-    throw new HttpError(400, "That search term is invalid.");
-  }
-  // The channel param: an optional single-channel narrowing; malformed ids
-  // 400, never silently broadened server-wide.
-  const channelRaw = url.searchParams.get("channel");
-  let channelId = null;
-  if (channelRaw !== null && channelRaw !== "") {
-    if (!/^[1-9][0-9]{0,14}$/.test(channelRaw)) {
-      throw new HttpError(400, "That channel filter is invalid.");
-    }
-    channelId = Number(channelRaw);
-  }
-
-  const escaped = term.replace(/[\\%_]/g, (ch) => "\\" + ch);
-  const sql =
-    SERVER_SEARCH_SQL +
-    (channelId === null ? "" : "AND c.id = ? ") +
-    "ORDER BY m.id DESC LIMIT " + GC_SEARCH_PAGE_MAX;
-
-  const rows = (await env.GOOBER_DB.prepare(sql)
-    .bind(
-      serverId,
-      "%" + escaped + "%",
-      userId,
-      // The 4th placeholder ONLY exists when the channel arm rode the SQL —
-      // a bind must never ride out of step with the placeholder count.
-      ...(channelId === null ? [] : [channelId]),
-    ).all()).results || [];
-
-  // The VIEW gate: the graceful default's question first (one read), then
-  // the per-hit evaluation only when the server carries overwrites at all.
-  let hits = rows;
-  if (rows.length > 0) {
-    const overwrites = await env.GOOBER_DB.prepare(SERVER_SEARCH_OVERWRITES_SQL)
-      .bind(serverId).first();
-    if (Number(overwrites?.any_overwrites) === 1) {
-      const allowed = [];
-      for (const row of rows) {
-        if (await viewerCanViewChannel(env, { id: row.channel_id, server_id: row.server_id }, userId)) {
-          allowed.push(row);
-        }
-      }
-      hits = allowed;
-    }
-  }
-
-  return json({
-    results: hits.map((row) => ({
-      id: Number(row.id),
-      channelId: Number(row.channel_id),
-      channelName: row.channel_name,
-      authorId: Number(row.author_id),
-      authorUsername: row.author_username,
-      body: row.body,
-      createdAt: Number(row.created_at),
-    })),
-  }, 200);
-}
-
-
 // errorName(error): the failure's compact label for the best-effort ride
 // logs below — D1/R2 errors carry a name/message pair worth one line of
 // context, never a swallowed void (the messages.mjs pattern, same idiom).
@@ -528,11 +434,15 @@ export async function handleServerRoutes(request, env, url, path, method, ctx) {
     return modForward;
   }
 
-  const searchMatch = method === "GET"
-    ? path.match(/^\/api\/servers\/(0|[1-9][0-9]*)\/search$/)
-    : null;
-  if (searchMatch) {
-    return handleSearchServerRoute(request, env, Number(searchMatch[1]), url);
+  // T-R25-SPLIT-SERVERS-7: the server's message search rides
+  // api/server-search.mjs. The forward sits at the search arm's ORIGINAL
+  // position — its interloper seat between the mod desk's forward and the
+  // invites dispatch, preserved EXACTLY — and its `undefined` fall-through
+  // keeps the router's remaining arms running exactly as before (no other
+  // family's path overlaps the /search path).
+  const searchForward = await handleServerSearchRoutes(request, env, url, path, method);
+  if (searchForward !== undefined) {
+    return searchForward;
   }
 
   // The {everyone|role_id} tail: "everyone" pins role_id to NULL — the
