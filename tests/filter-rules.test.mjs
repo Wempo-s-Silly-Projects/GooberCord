@@ -365,7 +365,7 @@ test("the W-B1.5 widenings ride their cited rows, and the exempt caps guard the 
   // The caps ride the edit path's guarded write: both the create and the
   // update call validExemptIds with the parity cap BEFORE the membership
   // read, so an oversized list never spends a query.
-  const SERVERS = readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "api", "servers.mjs"), "utf8");
+  const SERVERS = readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "api", "server-mod.mjs"), "utf8");
   const capNeedle = (call) => SERVERS.split(call).length - 1;
   assert.equal(capNeedle("FILTER_RULE_EXEMPT_ROLES_MAX);"), 2,
     "both rule-edit sites (create + update) pass the role cap (the import line names it bare)");

@@ -64,8 +64,8 @@ test("the mirrored constants equal the backend's exports (G-4)", () => {
   assert.equal(mod.UI_FILTER_ALERTS_PAGE_MAX, filterrules.FILTER_ALERTS_PAGE_MAX);
   assert.deepEqual([...mod.UI_FILTER_RULE_ACTIONS], [...filterrules.FILTER_RULE_ACTIONS]);
   // BAN_REASON_MAX never got an export — the mirror pins the source's number.
-  const servers = readFileSync(join(HERE, "../api/servers.mjs"), "utf8");
-  assert.equal(mod.UI_BAN_REASON_MAX, Number(/BAN_REASON_MAX = (\d+)/.exec(servers)[1]));
+  const SERVER_MOD = readFileSync(join(HERE, "../api/server-mod.mjs"), "utf8");
+  assert.equal(mod.UI_BAN_REASON_MAX, Number(/BAN_REASON_MAX = (\d+)/.exec(SERVER_MOD)[1]));
   assert.equal(mod.UI_BAN_REASON_MAX, 280);
 });
 
