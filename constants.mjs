@@ -301,6 +301,18 @@ export const GC_COIN_VOICE_GRANT = 5;
 export const GC_COIN_VOICE_TICK_SECONDS = 600;
 export const GC_COIN_VOICE_DAILY_CAP = 150;
 
+// Daily quests (recode lane, 2026-11-18). The claim IS the re-rule's claim
+// — 25 flat, minted into the DAILY slot shared with the shop claim, so the
+// quest surface mints nothing the plain claim could not have minted
+// (api/quests.mjs). Goals derive from the ledger's earn rows: message earn
+// rows are one row per posted message (the 2-3 per-message re-rule rate),
+// voice rows one per presence tick, and the earn goal counts the day's
+// positive deltas. No quest table exists: progress is derived at read.
+export const GC_QUEST_CLAIM = GC_COIN_DAILY_GRANT;
+export const GC_QUEST_GOAL_MESSAGES = 20;
+export const GC_QUEST_GOAL_VOICE = 2;
+export const GC_QUEST_GOAL_EARNED = 150;
+
 // Goober+ (owner decisions: ONE bundle, MONTHLY renewal, a grace window,
 // boosts stay free, GIFT Goober+ in). The price buys gc_plus_state term
 // extensions; the coin spend itself is gc_coin_ledger's negative row.
@@ -407,6 +419,15 @@ export const GC_PLUS_REACTIONS = Object.freeze([
 // docs/parity-limits.md: Unique emoji per message (reactions) 20, error 30010
 // (verified 2026-11-17).
 export const GC_REACTIONS_MAX_UNIQUE_PER_MESSAGE = 20;
+
+// Reaction tags (recode lane, 2026-11-18): the cosmetic emoji→tag map's
+// caps. Storage rides the PROD-APPLIED 0041/0043 ledger tables
+// (gc_server_reaction_tags + gc_reaction_tag_opts) — no migration file
+// here. The map cap bounds a mod's pinned emoji→tag pairs per server; the
+// text cap bounds a server-native tag string (a locale-key reference like
+// gc.tags.campfire is exempt from the code-point cap — api/reaction-tags.mjs).
+export const GC_REACTION_TAGS_MAX = 20;
+export const GC_REACTION_TAG_TEXT_MAX = 32;
 
 // Mentions (parity law): the persisted per-mention rows a send may carry.
 // Today's developer docs cap AllowedMentions' id arrays at 100 per message
