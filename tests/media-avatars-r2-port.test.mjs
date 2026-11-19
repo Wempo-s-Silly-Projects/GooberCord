@@ -496,6 +496,56 @@ test("serving a LARGE lane row absent everywhere 404s exactly as before", async 
   assert.ok(r2.calls.some((call) => call.op === "get" && call.key === GC_ATTACHMENT_OBJECT_PREFIX + "41"));
 });
 
+// --- the served-mime law on the >MAX streaming lanes ------------------------------
+
+test("a LARGE R2 hit whose head fails the image sniff refuses with 502 — never serves", async () => {
+  const r2 = fakeR2();
+  await r2.put(GC_ATTACHMENT_OBJECT_PREFIX + "41", NOT_PNG);
+  const db = fakeDb([
+    { test: ATTACHMENT_ROW_TEST, first: async () => approvedRow({ size_bytes: MAX_ATTACHMENT_BYTES + 1 }) },
+  ]);
+  const env = envWithLimiters({ GOOBER_DB: db, GC_MEDIA: r2 });
+  const surfaced = [];
+  const originalError = console.error;
+  console.error = (message) => surfaced.push(String(message));
+  try {
+    await assert.rejects(serveAttachment(env), (error) => error.status === 502);
+  } finally {
+    console.error = originalError;
+  }
+  // Fail loud, once: the mismatch surfaced one server-side error, and the
+  // mismatched bytes never streamed.
+  assert.equal(surfaced.length, 1);
+  // The paged chunk lane never ran — the stream died at the verification.
+  assert.ok(!db.calls.some((call) => call.call === "all" && PAGED_CHUNK_TEST(call.sql)));
+});
+
+test("a LARGE R2 hit whose head passes the sniff streams exactly as before", async () => {
+  const image = pngImage(64);
+  const r2 = fakeR2();
+  await r2.put(GC_ATTACHMENT_OBJECT_PREFIX + "41", image);
+  const db = fakeDb([
+    { test: ATTACHMENT_ROW_TEST, first: async () => approvedRow({ size_bytes: MAX_ATTACHMENT_BYTES + 1 }) },
+  ]);
+  const env = envWithLimiters({ GOOBER_DB: db, GC_MEDIA: r2 });
+
+  const response = await serveAttachment(env);
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get("Content-Type"), "image/png");
+  assert.equal(response.headers.get("Content-Length"), String(image.byteLength));
+  assert.deepEqual(new Uint8Array(await response.arrayBuffer()), image);
+});
+
+test("a LARGE D1 paged stream whose head fails the sniff 404s — never a 200 stream", async () => {
+  const db = fakeDb([
+    { test: ATTACHMENT_ROW_TEST, first: async () => approvedRow({ size_bytes: MAX_ATTACHMENT_BYTES + 1 }) },
+    { test: PAGED_CHUNK_TEST, all: async () => ({ results: [{ data: NOT_PNG, seq: 0 }] }) },
+  ]);
+  const env = envWithLimiters({ GOOBER_DB: db });
+
+  await assert.rejects(serveAttachment(env), (error) => error.status === 404);
+});
+
 // --- media moderation: the R2 delete rides the changes==1 verdict ----------------
 
 const chunkDeleteRoute = (changes) => ({
