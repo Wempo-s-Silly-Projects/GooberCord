@@ -1628,3 +1628,12 @@ textarea {
   font-style: italic;
   margin: 0.4rem 0 0.1rem;
 }
+
+/* --- wave-18: the avatar seat (the payload's own URL, fail soft) --- */
+.member-avatar {
+  width: 1.4rem;
+  height: 1.4rem;
+  flex-shrink: 0;
+  border-radius: 50%;
+  object-fit: cover;
+}

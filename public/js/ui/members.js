@@ -51,6 +51,19 @@ export function rosterOf(serverId) {
   return store.get(rosterKey(serverId)) || null;
 }
 
+// avatarPaint(url, name) — the wave-18 avatar seat. The src is the
+// payload's OWN URL, verbatim (the ?v= cache key rides inside it); a null
+// or non-string arm paints NOTHING (no placeholder, no invented initials
+// block — presence-of-avatar-only). A load failure removes the img itself,
+// leaving the row's shape intact (the attachment-404 idiom, chat.js family).
+function avatarPaint(url, name) {
+  if (!url || typeof url !== "string") return null;
+  return h("img", {
+    class: "member-avatar", src: url, alt: name || "", loading: "lazy",
+    onError: (event) => event.currentTarget.remove(),
+  });
+}
+
 export const staffViewing = (payload) => !!(payload?.viewer?.owner
   || payload?.viewer?.permissions?.includes("KICK_MEMBERS"));
 
@@ -92,6 +105,7 @@ export function renderRosterBody(pane, serverId) {
       title: member.nickname ? `${member.nickname} (${member.username})` : member.username,
       "aria-label": member.nickname || member.username,
     },
+    avatarPaint(member.avatarUrl, member.nickname || member.username),
     h("span", {
       class: "member-dot",
       style: member.color ? `--member-color:${member.color}` : undefined,
@@ -215,10 +229,19 @@ export function renderMemberCard(route, mount) {
   const staff = staffViewing(payload);
   const roles = payload.roles.filter((role) => member.roleIds.includes(role.id));
 
+  // The card's avatar seat: the roster row's own field first; the signed-in
+  // member's OWN card falls to the store's user payload (publicUser's
+  // avatarUrl — main.js's session write seats it at store.get("user"))
+  // when the row carries none. Both arms are payload-carried URLs, verbatim.
+  const cardAvatarUrl = member.avatarUrl || (me && me.id === uid
+    && typeof me.avatarUrl === "string" ? me.avatarUrl : null);
+  const cardName = member.nickname || member.username;
+
   card.append(
+    avatarPaint(cardAvatarUrl, cardName),
     h("header", { class: "task-header" },
       h("a", { class: "back-link", href: `/s/${serverId}`, text: t("gc.controls.back") }),
-      h("h2", { class: "page-heading", text: member.nickname || member.username })),
+      h("h2", { class: "page-heading", text: cardName })),
     h("p", { class: "muted", text: member.nickname && member.nickname !== member.username
       ? member.username : t("gc.members.card.noNickname") }),
     h("div", { class: "chip-row" },
