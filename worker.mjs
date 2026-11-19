@@ -37,6 +37,13 @@ import { handleSoundboardRoutes } from "./api/soundboard.mjs";
 import { handleGifRoutes } from "./api/gifs.mjs";
 import { handleAvatarRoutes } from "./api/avatars.mjs";
 import { handleUploadRoutes } from "./api/uploads.mjs";
+// The message-lifecycle lane (recode wave): the scheduled letter, the
+// private reading queue, and the server's welcome card — three separate
+// route owners, wired beside the message routes they borrow vocabulary from
+// (capsules reads the channel gates through messages.mjs).
+import { handleCapsuleRoutes } from "./api/capsules.mjs";
+import { handleBookmarkRoutes } from "./api/bookmarks.mjs";
+import { handleWelcomeCardRoutes } from "./api/welcome-card.mjs";
 import { ensureFilterWords } from "./api/filterstore.mjs";
 import { HttpError, json, rateLimit, secureResponse, unconditional } from "./api/core/http.mjs";
 // Phase-2 Kitskey migration: the ONE error classifier and the dispatch chain
@@ -205,6 +212,9 @@ const API_HANDLERS = [
   handleGifRoutes,
   handleAvatarRoutes,
   handleUploadRoutes,
+  handleCapsuleRoutes,
+  handleBookmarkRoutes,
+  handleWelcomeCardRoutes,
 ];
 // The chain is built once, from the vendor's dispatch() instead of an inlined
 // handlers-for-loop.
