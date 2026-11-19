@@ -580,7 +580,7 @@ test("the conversation roster and the social friends rows carry the badge throug
   const conversations = readFileSync(new URL("../api/conversations.mjs", import.meta.url), "utf8");
   assert.match(conversations, /plusActiveExpr\("u\.id"\)/, "the roster uses the SHARED fragment");
   assert.match(conversations, /isPlus: publicIsPlus\(row\)/);
-  assert.match(conversations, /bind\(nowSeconds\(\), \.\.\.channelIds\)/, "the roster's `now` bind precedes the IN list");
+  assert.match(conversations, /bind\(nowSeconds\(\), \.\.\.chunk\)/, "the roster's `now` bind precedes the IN list");
 
   const social = readFileSync(new URL("../api/social.mjs", import.meta.url), "utf8");
   assert.match(social, /plusActiveExpr\("u\.id"\)/, "the friend rows use the SHARED fragment");

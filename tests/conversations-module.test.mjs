@@ -27,11 +27,15 @@
 // so that is what the tests assert).
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 
 import { handleConversationRoutes } from "../api/conversations.mjs";
 import { randomToken, sha256Hex, nowSeconds } from "../api/core/crypto.mjs";
 import { HttpError, json } from "../api/core/http.mjs";
+import { GC_CONVERSATIONS_LIST_MAX, PINS_READ_BIND_CHUNK } from "../constants.mjs";
+
+const ROUTE_SOURCE = readFileSync(new URL("../api/conversations.mjs", import.meta.url), "utf8");
 
 const ORIGIN = "http://localhost";
 const SELF_ID = 7;
@@ -55,14 +59,18 @@ function jsonRequest(method, path, headers = {}) {
 }
 
 // Test dispatcher: mirrors worker.mjs's apiError mapping so HttpErrors surface
-// as the same JSON responses the worker would return.
+// as the same JSON responses the worker would return. A passing write limiter
+// is injected by default (spread order lets a test's own env override it) so
+// the write walls the routes carry are never the thing a fixture 503s on.
+const PASS_WRITE_LIMITER = { limit: async () => ({ success: true }) };
+
 async function dispatch(request, env) {
   const url = new URL(request.url);
   let response;
   try {
     response = await handleConversationRoutes(
       request,
-      env,
+      env ? { GC_WRITE_RATE_LIMITER: PASS_WRITE_LIMITER, ...env } : undefined,
       url,
       url.pathname,
       request.method.toUpperCase(),
@@ -551,8 +559,9 @@ test("GET unread rides the SQL off last_read_message_id; an outsider's list bind
 
   const listRead = callsOf(db).find((call) => CONVERSATIONS_LIST_SQL_TEST(call.sql));
   assert.ok(listRead, "the conversation list query ran");
-  // Outsider safety: the WHERE binds the SESSION user, never request data.
-  assert.deepEqual(listRead.bound, [SELF_ID]);
+  // Outsider safety: the WHERE binds the SESSION user, never request data —
+  // then the bounded page's LIMIT/OFFSET (the C5 attacker-weight cap).
+  assert.deepEqual(listRead.bound, [SELF_ID, GC_CONVERSATIONS_LIST_MAX, 0]);
   // The unread count is a parameterless subselect over the member row's cursor.
   assert.ok(listRead.sql.includes("(SELECT COUNT(*) FROM gc_messages gm"));
   assert.ok(listRead.sql.includes("gm.id > m.last_read_message_id"));
@@ -640,6 +649,7 @@ test("unknown conversation routes fall through to the dispatcher's 404", async (
 // D1-shaped adapter conventions as messages-module.test.mjs), FKs on.
 function sqliteEnv(db) {
   return {
+    GC_WRITE_RATE_LIMITER: PASS_WRITE_LIMITER,
     GOOBER_DB: {
       prepare(sql) {
         let bound = [];
@@ -827,4 +837,115 @@ test("real-SQLite: leave deletes only the caller's row; an outsider deletes NOTH
   assert.equal(finalLeave.status, 200);
   assert.deepEqual(memberRows(db), []);
   assert.equal(db.prepare("SELECT COUNT(*) AS n FROM gc_channels").get().n, 0);
+});
+
+// --- C5 fix: write walls + the bounded list page -------------------------------------
+
+// The five conversation mutants (create, add member, leave, remove member,
+// the group PATCH) ride the write limiter — a rejected bucket answers 429
+// BEFORE any statement ran, so the wall is where the abuse stops, not after.
+test("the five conversation mutants ride the write wall: a rejected bucket 429s before any write", async () => {
+  const session = await sessionFixtures();
+  const mutants = [
+    () => postJson("/api/conversations", { userIds: [OTHER_ID] }, session.headers),
+    () => postJson("/api/conversations/40/members", { userId: OTHER_ID }, session.headers),
+    () => jsonRequest("DELETE", "/api/conversations/40", session.headers),
+    () => jsonRequest("DELETE", "/api/conversations/40/members/" + OTHER_ID, session.headers),
+    () => jsonRequest("PATCH", "/api/conversations/40", session.headers),
+  ];
+  for (const make of mutants) {
+    const db = fakeDb(baseRoutes({ session }));
+    const limiter = { calls: [], limit: async ({ key }) => { limiter.calls.push(key); return { success: false }; } };
+    const response = await dispatch(make(), { GOOBER_DB: db, GC_WRITE_RATE_LIMITER: limiter });
+    assert.equal(response.status, 429, make());
+    assert.equal(limiter.calls.length, 1, "the wall fired exactly once");
+    assert.equal(
+      callsOf(db).some((call) => call.call === "run" || call.call === "batch"),
+      false,
+      "no statement ran past a rejected bucket",
+    );
+  }
+});
+
+// The attacker-weighted list: hundreds of stored conversations must never put
+// an unbounded page on the wire — the read is LIMIT-bound to the named cap
+// and serves the offset cursor for the rest, and the roster/preview fan-out
+// chunks the IN-list at the shared D1 bind ceiling.
+test("an attacker-weighted conversation list stays bounded: capped page, offset cursor, bind-safe fan-out", async () => {
+  const session = await sessionFixtures();
+  const storedIds = Array.from({ length: GC_CONVERSATIONS_LIST_MAX * 4 }, (_, index) => 100 + index);
+  // The fake emulates the SQL's LIMIT/OFFSET over the "table".
+  const listRoute = {
+    test: CONVERSATIONS_LIST_SQL_TEST,
+    all: async (bound) => {
+      const [, limit, offset] = bound;
+      return {
+        results: storedIds.slice(offset, offset + limit).map((id) => ({
+          id, kind: "group", stored_name: null, icon_media_id: null,
+          last_message_id: null, last_message_at: null, last_read_message_id: 0, unread: 0,
+        })),
+      };
+    },
+  };
+  const rosterRoute = {
+    test: CONVERSATION_MEMBERS_TEST,
+    all: async (bound) => ({
+      results: bound.slice(1).map((channelId) => ({
+        channel_id: channelId, member_id: SELF_ID, username: "wempos",
+      })),
+    }),
+  };
+  const previewRoute = { test: LAST_MESSAGE_TEST, all: async () => ({ results: [] }) };
+
+  const firstDb = fakeDb([listRoute, rosterRoute, previewRoute, ...baseRoutes({ session })]);
+  const first = await dispatch(get("/api/conversations", session.headers), { GOOBER_DB: firstDb });
+  assert.equal(first.status, 200);
+  const firstPayload = await bodyOf(first);
+  assert.equal(firstPayload.conversations.length, GC_CONVERSATIONS_LIST_MAX);
+  assert.equal(firstPayload.nextOffset, GC_CONVERSATIONS_LIST_MAX);
+
+  const firstRead = callsOf(firstDb).find((call) => CONVERSATIONS_LIST_SQL_TEST(call.sql));
+  assert.deepEqual(firstRead.bound, [SELF_ID, GC_CONVERSATIONS_LIST_MAX, 0]);
+
+  // The next page rides the cursor the route just handed back.
+  const secondDb = fakeDb([listRoute, rosterRoute, previewRoute, ...baseRoutes({ session })]);
+  const second = await dispatch(get("/api/conversations?offset=50", session.headers), { GOOBER_DB: secondDb });
+  assert.equal(second.status, 200);
+  const secondPayload = await bodyOf(second);
+  assert.equal(secondPayload.conversations.length, GC_CONVERSATIONS_LIST_MAX);
+  const secondRead = callsOf(secondDb).find((call) => CONVERSATIONS_LIST_SQL_TEST(call.sql));
+  assert.deepEqual(secondRead.bound, [SELF_ID, GC_CONVERSATIONS_LIST_MAX, 50]);
+
+  // The fan-out's bind lists never cross the shared D1 ceiling, however the
+  // page is sized.
+  for (const db of [firstDb, secondDb]) {
+    const rosterReads = callsOf(db).filter((call) => CONVERSATION_MEMBERS_TEST(call.sql));
+    assert.ok(rosterReads.length >= 1, "the roster fan-out ran");
+    for (const read of rosterReads) {
+      assert.ok(read.bound.length <= 1 + PINS_READ_BIND_CHUNK, read.bound.length);
+    }
+  }
+});
+
+// Pagination shape guards: a non-integer or negative offset and an out-of-cap
+// limit are refused, never silently clamped.
+test("the list's limit/offset query params are validated against the named cap", async () => {
+  const session = await sessionFixtures();
+  for (const query of ["?offset=-1", "?offset=abc", "?limit=0", "?limit=-5", "?limit=" + (GC_CONVERSATIONS_LIST_MAX + 1), "?limit=abc"]) {
+    const db = fakeDb(baseRoutes({ session }));
+    const response = await dispatch(get("/api/conversations" + query, session.headers), { GOOBER_DB: db });
+    assert.equal(response.status, 400, query);
+    assert.equal(db.calls.some((call) => CONVERSATIONS_LIST_SQL_TEST(call.sql)), false, query);
+  }
+  void ROUTE_SOURCE;
+});
+
+// Structural pin: the fan-out loops the shared D1 bind-ceiling constant (the
+// grouped-payload idiom), never a per-channel query.
+test("the list fan-out chunks its IN-lists at the shared D1 bind ceiling", () => {
+  assert.match(
+    ROUTE_SOURCE,
+    /for \(let start = 0; start < channelIds\.length; start \+= PINS_READ_BIND_CHUNK\)/,
+  );
+  assert.match(ROUTE_SOURCE, /ORDER BY c\.last_message_id DESC, c\.id DESC LIMIT \? OFFSET \?/);
 });

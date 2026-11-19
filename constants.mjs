@@ -518,6 +518,13 @@ export const GC_CAPSULES_MAX_OPEN_PER_MEMBER = 10;
 // read's own cap idiom, GC_PINS_MAX_PER_CHANNEL above).
 export const GC_BOOKMARKS_LIST_MAX = 100;
 
+// Conversations (C5 fix): the GET /api/conversations page cap — the one read
+// that lists the caller's DM/group channels answers at most this many rows
+// per limit+offset page (GC-shaped, same seat idiom as the bookmarks cap
+// above). The route's roster/preview fan-out chunks its IN-lists at
+// PINS_READ_BIND_CHUNK below.
+export const GC_CONVERSATIONS_LIST_MAX = 50;
+
 // Welcome cards (lane2-lifecycle recode): the mod-set greeting blurb's
 // HOUSE cap. Migration 0042's gc_welcome_cards table predates this lane in
 // the prod ledger, so the column takes whatever the route's arm admits —
