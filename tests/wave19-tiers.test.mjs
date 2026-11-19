@@ -455,7 +455,13 @@ test("GET /api/me seats the tier of an active term (the composer's laneTier read
   const body = JSON.parse(await response.text());
   assert.equal(body.user.plusTier, "mini", "the active term's tier paints");
   assert.equal(body.user.isPlus, true, "the strict-active badge keeps its answer");
-  assert.match(body.user.tagline ?? "", /^|^$/, "the unrouted accent read answers null-shaped");
+  // The unrouted accent read answers null — the fold's shape is
+  // { accentColor: null, tagline: null } (userAccentColorTagline(null)),
+  // keys present with null values, never absent keys (deslop-w19: the
+  // tautology `/^|^$/` proves nothing, so the pin asserts the real shape).
+  assert.deepEqual({ accentColor: body.user.accentColor, tagline: body.user.tagline },
+    { accentColor: null, tagline: null },
+    "an unrouted accent read answers the null-shaped fold");
 });
 
 test("GET /api/me seats plusTier :now strictly — a lapsed term adds no key", async () => {
