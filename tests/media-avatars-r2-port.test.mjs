@@ -19,21 +19,25 @@
 // The R2 recode port (gc-attachments + avatars onto wempos-forum-r2): pins
 // for the OLD modules' new R2 rides, driven against a Map-backed fake R2
 // bucket alongside the same fake-DB conventions as tests/media-module.test.mjs.
-// Four orders are pinned: the intake put is AWAITED — after the D1 commit and
-// before createAttachment resolves, its failure swallowed so an upload keeps
-// its D1 chunk set; serving reads R2 first and falls back to the
-// D1 chunk set (including the fail-safe: an R2 object whose bytes fail the
-// egress verifier never serves); the moderator's reject rides the existing
-// changes==1 verdict with one R2 delete per doomed id; and a missing GC_MEDIA
-// binding (local dev) behaves byte-identically to the D1-only old code.
+// Four orders are pinned: the intake is FAIL-CLOSED — the batch carries the
+// ledger row alone (the chunk write-through is retired), the put is AWAITED
+// after the commit and before createAttachment resolves, and a failed put
+// rolls the byte-less row back and rejects the upload 503; serving reads R2
+// first and falls back to the D1 chunk set (including the fail-safe: an R2
+// object whose bytes fail the egress verifier never serves); the moderator's
+// reject rides the existing changes==1 verdict with one R2 delete per doomed
+// id; and a missing GC_MEDIA binding (local dev) keeps the D1 chunk intake
+// and serving byte-identically to the D1-only old code.
 import test from "node:test";
 import assert from "node:assert/strict";
 
+import { HttpError } from "../api/core/http.mjs";
 import { handleMediaRoutes, createAttachment } from "../api/media.mjs";
 import { handleAvatarRoutes } from "../api/avatars.mjs";
 import { randomToken, sha256Hex, nowSeconds } from "../api/core/crypto.mjs";
 import {
   RATE_LIMIT_BINDINGS,
+  ATTACHMENT_CHUNK_BYTES,
   GC_ATTACHMENT_OBJECT_PREFIX,
   GC_AVATAR_OBJECT_PREFIX,
 } from "../constants.mjs";
@@ -237,7 +241,7 @@ async function staffFixtures() {
   };
 }
 
-// --- media intake: the R2 put is the awaited durable leg -------------------------
+// --- media intake: fail-closed, R2 store of record --------------------------------
 
 test("intake commits D1 first, then awaits the R2 put before its success return", async () => {
   const image = pngImage();
@@ -272,14 +276,15 @@ test("intake commits D1 first, then awaits the R2 put before its success return"
     Uint8Array.from(r2.store.get(GC_ATTACHMENT_OBJECT_PREFIX + "41")),
     image,
   );
-  // The batch rides the gate as one commit (row + chunk set, the
-  // transition write-through the flip retains).
+  // The batch rides the gate as one commit (the ledger row ALONE — the
+  // chunk write-through is retired under the binding).
   const batch = db.calls.find((call) => call.call === "batch");
   assert.ok(batch);
-  assert.ok(batch.statements.every((statement) => statement.sql.startsWith("INSERT INTO gc_attachment")));
+  assert.equal(batch.statements.length, 1);
+  assert.ok(batch.statements[0].sql.startsWith("INSERT INTO gc_attachments"));
 });
 
-test("an R2 put failure keeps the D1 chunk set as the surviving leg — the upload still succeeds", async () => {
+test("a failed R2 put rolls the byte-less row back — the upload rejects 503", async () => {
   const image = pngImage();
   const r2 = fakeR2();
   r2.put = async (key) => {
@@ -289,25 +294,31 @@ test("an R2 put failure keeps the D1 chunk set as the surviving leg — the uplo
   const db = fakeDb([standaloneRoute()]);
   const env = envWithLimiters({ GOOBER_DB: db, GC_MEDIA: r2 });
 
-  // The failed put never 5xxes the upload: the intake resolves with the row
-  // the surviving D1 chunk set backs.
-  const attachment = await createAttachment(env, USER_ID, image);
-  assert.equal(attachment.id, 41);
-  assert.equal(attachment.status, "pending");
-  assert.equal(attachment.sizeBytes, image.length);
-  // The failed attempt stays visible as exactly one put; the batch still
-  // carried the row and its chunk insert set.
+  // Fail closed: the put is the only byte leg, so its failure rejects the
+  // intake with the store's 503 — never a committed byte-less row.
+  await assert.rejects(
+    createAttachment(env, USER_ID, image),
+    (error) => error instanceof HttpError && error.status === 503,
+  );
+  // Exactly one put was attempted, then the compensating delete swept the
+  // just-inserted pending row; the batch never carried a chunk statement.
   assert.deepEqual(r2.calls.map((call) => call.op), ["put"]);
   const batch = db.calls.find((call) => call.call === "batch");
   assert.ok(batch);
-  assert.ok(batch.statements.some((statement) => statement.sql.startsWith("INSERT INTO gc_attachments")));
-  assert.ok(batch.statements.some((statement) => statement.sql.startsWith("INSERT INTO gc_attachment_chunks")));
+  assert.equal(batch.statements.length, 1);
+  assert.ok(batch.statements[0].sql.startsWith("INSERT INTO gc_attachments"));
+  const rollback = db.calls.find(
+    (call) => call.call === "run" && (call.sql.startsWith("DELETE FROM gc_attachments WHERE id = ?") && call.sql.includes("AND status = 'pending'")),
+  );
+  assert.ok(rollback);
+  assert.deepEqual(rollback.bound, [41]);
 });
 
-test("intake without the GC_MEDIA binding keeps the old shape", async () => {
+test("intake without the GC_MEDIA binding keeps the legacy D1 chunk intake", async () => {
   const image = pngImage();
   const db = fakeDb([standaloneRoute()]);
   const env = envWithLimiters({ GOOBER_DB: db });
+  assert.ok(!("GC_MEDIA" in env));
 
   const attachment = await createAttachment(env, USER_ID, image);
   assert.equal(attachment.id, 41);
@@ -316,6 +327,17 @@ test("intake without the GC_MEDIA binding keeps the old shape", async () => {
   assert.equal(attachment.width, null);
   assert.equal(attachment.height, null);
   assert.equal(attachment.sizeBytes, image.length);
+  // The write-through is the no-binding lane's byte store: the batch still
+  // carries the chunk INSERT set (row first, one INSERT per 64k page).
+  const batch = db.calls.find((call) => call.call === "batch");
+  assert.ok(batch);
+  const [rowInsert, ...chunkInserts] = batch.statements;
+  assert.ok(rowInsert.sql.startsWith("INSERT INTO gc_attachments"));
+  assert.ok(chunkInserts.length >= 1);
+  for (const chunk of chunkInserts) {
+    assert.ok(chunk.sql.startsWith("INSERT INTO gc_attachment_chunks"));
+    assert.ok(chunk.bound[5].length <= ATTACHMENT_CHUNK_BYTES);
+  }
 });
 
 // --- media serving: R2 first, D1 chunks fallback ---------------------------------

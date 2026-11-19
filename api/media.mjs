@@ -24,8 +24,9 @@
 // media tables (gc_attachments + gc_attachment_chunks).
 //
 // D1 caps one BLOB/row far under an image's size, and the schema CHECKs
-// gc_attachment_chunks.data at 64,000 bytes, so every upload is split at
-// ATTACHMENT_CHUNK_BYTES and stored as one INSERT per chunk. Moderation
+// gc_attachment_chunks.data at 64,000 bytes, so the no-binding intake (local
+// dev) is split at ATTACHMENT_CHUNK_BYTES and stored as one INSERT per chunk;
+// with the R2 binding the bucket holds each upload whole. Moderation
 // precedes visibility everywhere: rows sit at status='pending' until a
 // reviewer flips them, and rejection removes the bytes in the same batch as
 // the status change. The authorization always rides INSIDE the SQL — the
@@ -65,13 +66,16 @@ const UNREADABLE_ERROR =
 
 // --- R2 rides (the shared wempos-forum-r2 bucket, binding GC_MEDIA) --------------
 //
-// The D1 tables stay the serving fallback and the row ledger; the intake put
-// (the durable byte leg, awaited before the route's success return) and the
-// moderation delete (still a best-effort ride through ctx.waitUntil) are the
-// two bucket writes. Every helper is a no-op without the binding (local dev
-// runs byte-identically to the D1-only old code), and the intake put swallows
-// its own R2 errors: a failed put keeps the D1 chunk set as the surviving
-// leg, which serving's fallback already covers — never a 5xx'd upload.
+// With the binding present the bucket is the byte store of record: the
+// intake's D1 batch carries the ledger row alone, and the awaited put is the
+// ONLY byte leg (the chunk write-through is retired — the backfill receipt
+// found gc_attachments and gc_attachment_chunks both at 0 rows, so nothing
+// legacy needs serving from D1). The moderation delete is still a
+// best-effort ride through ctx.waitUntil. The intake put surfaces its own R2
+// errors: a failed put rolls the just-inserted byte-less row back and the
+// upload rejects — bytes are durable in R2 or the row never survives. Every
+// helper stays a no-op without the binding (local dev keeps the D1-only
+// chunk intake and serving byte-identically).
 
 const attachmentObjectKey = (attachmentId) => GC_ATTACHMENT_OBJECT_PREFIX + attachmentId;
 
@@ -87,18 +91,13 @@ function scheduleBackgroundTask(ctx, task) {
   void safe;
 }
 
-// The durable intake leg, AWAITED by the intake before its success return:
-// the object lands at gc-attachments/<id> only once the row and its chunk set
-// exist, so serving can always fall back to D1 for any attachment whose put
-// did not land. The put swallows its own R2 errors — the D1 chunk write-through
-// stays the surviving leg until the backfill receipt retires it.
-export async function putAttachmentObject(env, attachmentId, bytes) {
+// The store-of-record put, awaited by the intake before its success return:
+// the object lands at gc-attachments/<id> keyed by the row the batch just
+// committed. R2 errors propagate — the caller owns the fail-closed rollback
+// (the put is the only byte leg, so swallowing would strand byte-less rows).
+async function putAttachmentObject(env, attachmentId, bytes) {
   if (!env.GC_MEDIA) return;
-  try {
-    await env.GC_MEDIA.put(attachmentObjectKey(attachmentId), bytes);
-  } catch {
-    // The bucket write is not worth a failed upload: the chunk set serves.
-  }
+  await env.GC_MEDIA.put(attachmentObjectKey(attachmentId), bytes);
 }
 
 // One R2 delete per doomed id, riding the caller's changes==1 verdict — the
@@ -251,9 +250,64 @@ export function standaloneAttachmentStatements(env, uploaderId, prepared, now) {
 // The standalone upload: one batch, { attachment } result. No idempotency key
 // exists here — a double-POST makes two pending rows, each reviewed on its
 // own (the queue shows the uploader/size/creation second either way).
+const attachmentResult = (id, prepared) => ({
+  id,
+  status: "pending",
+  mime: prepared.mime,
+  sizeBytes: prepared.bytes.length,
+  width: null,
+  height: null,
+});
+
+// The 503 copy for the store-of-record put's failure — the upload is
+// rejected, the intake asks for a retry, and the copy names the server, not
+// the image.
+const STORE_FAILED_ERROR =
+  "The upload could not be stored right now. Please try again.";
+
+// The fail-closed rollback: only the row the R2-flow batch just wrote (still
+// pending, standalone) is swept, so the compensating delete never reaches a
+// concurrent reviewer's approval.
+const STANDALONE_ROW_DELETE_SQL =
+  "DELETE FROM gc_attachments WHERE id = ? AND status = 'pending'";
+
 export async function createAttachment(env, uploaderId, fileBytes) {
   const prepared = prepareAttachmentBytes(fileBytes);
   const now = nowSeconds();
+  if (env.GC_MEDIA) {
+    // The R2 store of record (backfill receipt: 0/0 rows): the batch carries
+    // the ledger row ALONE — no chunk write-through. The object key needs the
+    // row's id, so the put follows the commit but precedes the success
+    // return; a put that fails rolls the byte-less row back and rejects the
+    // upload 503 — bytes are durable in R2 or no row survives (a crash
+    // between the two leaves a pending row the empty chunk set 404s, and a
+    // reviewer's reject removes). No R2 delete fires for the rolledback row:
+    // a put that threw almost certainly left nothing behind.
+    const results = await env.GOOBER_DB.batch([
+      env.GOOBER_DB.prepare(ATTACHMENT_INSERT_SQL)
+        .bind(uploaderId, prepared.mime, prepared.bytes.length, now),
+    ]);
+    const id = Number(results[0]?.meta?.last_row_id);
+    if (!Number.isInteger(id) || id < 1) {
+      throw new HttpError(500, "That image could not be stored. Please try again.");
+    }
+    try {
+      await putAttachmentObject(env, id, prepared.bytes);
+    } catch {
+      // Best-effort sweep: a D1 failure in the delete itself must never mask
+      // the 503 (worst case is the pending byte-less row the serving path
+      // already 404s and the reviewer queue can remove).
+      try {
+        await env.GOOBER_DB.prepare(STANDALONE_ROW_DELETE_SQL).bind(id).run();
+      } catch {
+        // the 503 below is the contract; the row removal rides best-effort
+      }
+      throw new HttpError(503, STORE_FAILED_ERROR);
+    }
+    return attachmentResult(id, prepared);
+  }
+  // Without the binding (local dev): byte-identical intake of the D1 chunk
+  // era — the chunk write-through rides as the legacy byte store.
   const results = await env.GOOBER_DB.batch(
     standaloneAttachmentStatements(env, uploaderId, prepared, now),
   );
@@ -261,19 +315,7 @@ export async function createAttachment(env, uploaderId, fileBytes) {
   if (!Number.isInteger(id) || id < 1) {
     throw new HttpError(500, "That image could not be stored. Please try again.");
   }
-  // The durable leg rides AFTER the commit but BEFORE the success return:
-  // awaited, not waitUntil best-effort. A put that fails (or never had a
-  // binding) still returns the row — the surviving D1 chunk set is the
-  // serving fallback until the backfill receipt removes the write-through.
-  await putAttachmentObject(env, id, prepared.bytes);
-  return {
-    id,
-    status: "pending",
-    mime: prepared.mime,
-    sizeBytes: prepared.bytes.length,
-    width: null,
-    height: null,
-  };
+  return attachmentResult(id, prepared);
 }
 
 // --- send-with-image SQL ---------------------------------------------------------
