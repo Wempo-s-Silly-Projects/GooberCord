@@ -23,6 +23,15 @@ database_name = "wempo-forum-data"
 database_id = "e648d306-2c2b-4ddc-aaf1-cef2e023a88c"
 migrations_dir = "migrations"
 
+# Shared production R2 (the R2 revival): one bucket for both apps. The forum
+# already writes avatars/<id> here (byte-verified 2026-11-18); GC's lane reads
+# the same avatars and writes its own gc-attachments/<attachment id> objects
+# (api/media.mjs). The D1 tables stay — they are the serving fallback when an
+# object has not landed yet.
+[[r2_buckets]]
+binding = "GC_MEDIA"
+bucket_name = "wempos-forum-r2"
+
 # Rate limiters are GooberCord's own (binding names GC_*; ids in a fresh
 # range), so the two apps never contend for each other's throttle.
 [[ratelimits]]

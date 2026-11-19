@@ -400,3 +400,12 @@ export const GC_MENTIONS_PAGE_MAX = 100;
 // 2026-11-17).
 export const GC_SEARCH_PAGE_MAX = 25;
 export const GC_SEARCH_TERM_MAX = 100;
+
+// R2 object keys (the shared wempos-forum-r2 bucket, binding GC_MEDIA): the
+// GC attachment images live under gc-attachments/<attachment id> and the
+// shared users table's approved avatars under avatars/<user id> — the key
+// shapes the forum's own avatar lane already wrote (avatars/<id> byte-verified
+// for all 26 rows 2026-11-18). Prefix-only here (this file carries no
+// functions); the callers splice the ids onto them.
+export const GC_ATTACHMENT_OBJECT_PREFIX = "gc-attachments/";
+export const GC_AVATAR_OBJECT_PREFIX = "avatars/";
