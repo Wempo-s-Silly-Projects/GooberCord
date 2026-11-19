@@ -29,8 +29,9 @@ import { h } from "../core/dom.js";
 import { api } from "../core/api.js";
 import store from "../core/store.js";
 import { createForm, createInput } from "../vendor/designer/kit.mjs";
+import { openDialog } from "../vendor/frontload/dom.mjs";
 import * as router from "../core/router.js";
-import { renderShell } from "./shell.js";
+import { renderShell, refreshServers } from "./shell.js";
 import { startConversation } from "./social.js";
 import { memberModControls } from "./mod.js";
 import { t } from "../i18n.js";
@@ -147,6 +148,38 @@ function nicknameForm(serverId, uid, current, onDone) {
   return h("div", { class: "panel" }, h("h3", { text: t("gc.members.card.nicknameHeading") }), form, errorLine);
 }
 
+// leavePanel — the own card's exit: one destructive confirm, then the plain
+// POST of the frozen leave route. The owner's refusal (the server's 409 body
+// naming the transfer route) and every other failure land VERBATIM in the
+// error lane (G-2 — the client never re-words); success re-reads the servers
+// lane through refreshServers and walks home.
+function leavePanel(serverId) {
+  const errorLine = h("p", { class: "form-error", role: "alert", "aria-live": "polite" });
+  return h("div", { class: "panel panel-danger" },
+    h("h3", { text: t("gc.members.leave.heading") }),
+    h("button", {
+      class: "button button-danger", type: "button", text: t("gc.members.leave.button"),
+      onclick: () => openDialog(document, {
+        heading: t("gc.members.leave.confirmTitle"),
+        body: h("p", { class: "gate-copy", text: t("gc.members.leave.confirmBody") }),
+        modalOnly: true,
+        actions: [
+          { class: "button button-danger", text: t("gc.members.leave.action"), onPress: async () => {
+            try {
+              await api(`/api/servers/${serverId}/leave`, { method: "POST" });
+              await refreshServers();
+              router.navigate("/");
+            } catch (error) {
+              errorLine.textContent = error.message; // verbatim (G-2)
+            }
+          } },
+          { class: "button button-quiet", text: t("gc.controls.keep") },
+        ],
+      }),
+    }),
+    errorLine);
+}
+
 // renderMemberCard(route, mount) — the "/s/:serverId/member/:uid" task page
 // (G-6: a route, never a dialog stack). Fields, then the affordances the
 // viewer actually has.
@@ -217,6 +250,10 @@ export function renderMemberCard(route, mount) {
 
   if (me && me.id === uid) {
     card.append(nicknameForm(serverId, null, member.nickname, routerRerender));
+    // The own card's exit door (wave 9): the leave control lives on the
+    // signed-in member's self surface and nowhere else (no stranger's card,
+    // no staff surface).
+    card.append(leavePanel(serverId));
   } else if (canManage(payload) && member.topPosition < payload.viewer.topPosition) {
     card.append(nicknameForm(serverId, uid, member.nickname, routerRerender));
   }

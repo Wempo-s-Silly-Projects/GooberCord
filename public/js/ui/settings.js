@@ -137,7 +137,7 @@ export function renderServerSettings(route, mount) {
   const serverId = Number(route.params.serverId);
   manageGate(mount, serverId, t("gc.settings.heading"), (server) => {
     const nodes = [settingsForm(serverId, server), rulesPanel(serverId)];
-    if (server.role === "owner") nodes.push(deletePanel(serverId));
+    if (server.role === "owner") nodes.push(deletePanel(serverId), transferPanel(serverId));
     return nodes;
   });
 }
@@ -256,6 +256,72 @@ function deletePanel(serverId) {
           }
         }),
     }));
+}
+
+// transferPanel — the owner's handoff: an active-member picker riding the
+// roster payload (the cached read or the one load, roleEditor's idiom), one
+// destructive confirm, then the frozen transfer route's plain POST with the
+// contract's { userId }. The { transferred: false } echo renders the honest
+// no-op line (never silence, never a lie); success re-reads the roster AND
+// the settings payloads — the owner badge may move right off me, and
+// serverAdminRights re-derives on the fresh list.
+function transferPanel(serverId) {
+  const errorLine = inlineError();
+  const resultLine = h("p", { class: "muted", "aria-live": "polite" });
+  const picker = createSelect(document, {
+    id: "transfer-target", label: t("gc.settings.transfer.pickerLabel"),
+    description: t("gc.settings.transfer.pickerHelp"), options: [],
+  });
+  (rosterOf(serverId) ? Promise.resolve(rosterOf(serverId)) : loadRoster(serverId)).then((rosterPayload) => {
+    const candidates = rosterPayload.members
+      .filter((member) => member.membershipRole !== "owner")
+      .map((member) => ({ value: String(member.id), label: member.nickname || member.username }));
+    if (candidates.length === 0) {
+      // The solo owner is told the truth, never handed a dead picker (G-7).
+      resultLine.textContent = t("gc.settings.transfer.none");
+      return;
+    }
+    picker.querySelector("select").replaceChildren(
+      ...candidates.map((choice) => h("option", { value: choice.value, text: choice.label })));
+  }).catch((error) => {
+    errorLine.textContent = error.message; // verbatim (G-2)
+  });
+  const picker_ = picker.querySelector("select");
+  const button = h("button", {
+    class: "button button-danger", type: "button", text: t("gc.settings.transfer.button"),
+    onclick: () => {
+      const userId = Number(picker_.value);
+      if (!Number.isSafeInteger(userId) || userId < 1) return; // nothing picked, nothing sent
+      const picked = picker_.selectedOptions[0]?.textContent || "";
+      openDialog(document, {
+        heading: t("gc.settings.transfer.confirmTitle"),
+        body: h("p", { class: "gate-copy",
+          text: t("gc.settings.transfer.confirmBody", { name: picked }) }),
+        modalOnly: true,
+        actions: [
+          { class: "button button-danger", text: t("gc.settings.transfer.action"), onPress: async () => {
+            try {
+              const result = await api(`/api/servers/${serverId}/transfer-ownership`, {
+                method: "POST", body: { userId },
+              });
+              if (result?.transferred === false) {
+                // The demote/self-transfer echo: the honest no-op line.
+                resultLine.textContent = t("gc.settings.transfer.noop");
+                return;
+              }
+              await Promise.all([loadRoster(serverId), refreshServers(),]);
+              router.renderCurrent();
+            } catch (error) {
+              errorLine.textContent = error.message; // verbatim (G-2)
+            }
+          } },
+          { class: "button button-quiet", text: t("gc.controls.keep") },
+        ],
+      });
+    },
+  });
+  return h("div", { class: "panel" },
+    h("h3", { text: t("gc.settings.transfer.heading") }), resultLine, picker, button, errorLine);
 }
 
 // --- E2: channels + categories -------------------------------------------------
