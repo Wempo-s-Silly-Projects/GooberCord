@@ -474,3 +474,104 @@ test("the list prefers a renamed group's stored name and grows the icon key only
   assert.match(ROUTE_SOURCE, /icon_media_id !== null && row\.icon_media_id !== undefined/);
   assert.match(ROUTE_SOURCE, /c\.name AS stored_name, c\.icon_media_id AS icon_media_id/);
 });
+
+// --- C5 fix: the add-member INSERT carries its own gates; the icon check is
+// unconditional; the bare id ceiling is the named constant -------------------------
+
+test("POST members: the cap + blocks gates ride INSIDE the INSERT's own WHERE (the reads stay pre-checks)", async () => {
+  const db = fakeDb([
+    sessionRoute,
+    GROUP_GATE_ROUTE({ ...GROUP_ROW, members: 9 }), // one UNDER the cap at read time
+    { test: TARGET_READ_TEST, first: async () => ({ id: OTHER_ID, username: "ada", is_plus: 0 }) },
+    { test: ROSTER_IDS_TEST, all: async () => ({ results: [{ user_id: USER_ID }, { user_id: 12 }] }) },
+    { test: BLOCKS_TEST, first: async () => null },
+    { test: MEMBERS_INSERT_TEST, run: () => ({ meta: { changes: 1 } }) },
+  ]);
+  const response = await dispatch(
+    authed("POST", `/api/conversations/${GROUP_ID}/members`, { userId: OTHER_ID }),
+    envWithLimiters({ GOOBER_DB: db }),
+  );
+  assert.equal(response.status, 200);
+
+  const insert = db.calls.find((call) => call.call === "run" && MEMBERS_INSERT_TEST(call.sql));
+  // The cap arm re-expresses the roster-count gate (<= the 10 incl. caller).
+  assert.match(
+    insert.sql,
+    /\(SELECT COUNT\(\*\) FROM gc_conversation_members fm WHERE fm\.channel_id = \?\) < \?/,
+  );
+  // The blocks arm is an EXISTS against either seat, joined off the LIVE
+  // roster rows (never the JS-read snapshot), hard tier only.
+  assert.match(insert.sql, /NOT EXISTS \(SELECT 1 FROM gc_conversation_members em WHERE em\.channel_id = \? AND \(/);
+  assert.match(insert.sql, /FROM blocks WHERE \(blocker_id = \? AND blocked_id = em\.user_id\)/);
+  assert.match(insert.sql, /FROM gc_blocks WHERE \(\(blocker_id = \? AND blocked_id = em\.user_id\)/);
+  assert.match(insert.sql, /kind = 'blocked'/);
+  // The full bind order, read in textual order: caps backstop sits
+  // GROUP_MEMBERS_MAX deep.
+  assert.deepEqual(insert.bound, [
+    GROUP_ID, OTHER_ID, // INSERT column values
+    GROUP_ID, // group-kind + server-less arm
+    GROUP_ID, USER_ID, // caller membership arm
+    OTHER_ID, // target existence arm
+    GROUP_ID, 10, // the cap arm
+    GROUP_ID, OTHER_ID, // the duplicate arm
+    GROUP_ID, OTHER_ID, OTHER_ID, OTHER_ID, OTHER_ID, // the blocks arm
+  ]);
+});
+
+test("a concurrently-lost add still 409s through the INSERT's own arms (a stale gate read cannot sneak it in)", async () => {
+  // The gate read answered under-cap (a member landed between the reads and
+  // the statement): the INSERT is where the cap finally holds.
+  const db = fakeDb([
+    sessionRoute,
+    GROUP_GATE_ROUTE({ ...GROUP_ROW, members: 9 }),
+    { test: TARGET_READ_TEST, first: async () => ({ id: OTHER_ID, username: "ada", is_plus: 0 }) },
+    { test: ROSTER_IDS_TEST, all: async () => ({ results: [{ user_id: USER_ID }] }) },
+    { test: BLOCKS_TEST, first: async () => null },
+    { test: MEMBERS_INSERT_TEST, run: () => ({ meta: { changes: 0 } }) },
+  ]);
+  const response = await dispatch(
+    authed("POST", `/api/conversations/${GROUP_ID}/members`, { userId: OTHER_ID }),
+    envWithLimiters({ GOOBER_DB: db }),
+  );
+  assert.equal(response.status, 409);
+});
+
+test("a junk iconMediaId is a 400 even beside a rename; null clears", async () => {
+  const junkDb = fakeDb([sessionRoute, GROUP_GATE_ROUTE({ ...GROUP_ROW })]);
+  const junk = await dispatch(
+    authed("PATCH", `/api/conversations/${GROUP_ID}`, { name: "Movie night", iconMediaId: "nope" }),
+    envWithLimiters({ GOOBER_DB: junkDb }),
+  );
+  assert.equal(junk.status, 400);
+  assert.equal((await bodyOf(junk)).error, "iconMediaId must be an attachment id, or null to clear it.");
+  assert.equal(junkDb.calls.some((call) => call.call === "run"), false);
+
+  const clearDb = fakeDb([
+    sessionRoute,
+    GROUP_GATE_ROUTE({ ...GROUP_ROW }),
+    { test: GROUP_UPDATE_TEST, run: () => ({ meta: { changes: 1 } }) },
+    {
+      test: CHANNEL_ECHO_TEST,
+      first: async () => ({ id: GROUP_ID, stored_name: "Movie night", icon_media_id: null, kind: "group" }),
+    },
+  ]);
+  const cleared = await dispatch(
+    authed("PATCH", `/api/conversations/${GROUP_ID}`, { name: "Movie night", iconMediaId: null }),
+    envWithLimiters({ GOOBER_DB: clearDb }),
+  );
+  assert.equal(cleared.status, 200);
+  const update = clearDb.calls.find((call) => call.call === "run" && GROUP_UPDATE_TEST(call.sql));
+  assert.match(update.sql, /SET name = \?, icon_media_id = \? WHERE/);
+  assert.deepEqual(update.bound, ["Movie night", null, GROUP_ID, USER_ID]);
+});
+
+test("the member id ceiling is the named MAX_ID constant, validating the create-time width", async () => {
+  const db = fakeDb([sessionRoute, GROUP_GATE_ROUTE({ ...GROUP_ROW })]);
+  const response = await dispatch(
+    authed("POST", `/api/conversations/${GROUP_ID}/members`, { userId: 1e15 }),
+    envWithLimiters({ GOOBER_DB: db }),
+  );
+  assert.equal(response.status, 400);
+  assert.equal((await bodyOf(response)).error, "A valid user id is required.");
+  assert.equal(db.calls.some((call) => call.call === "run" || call.call === "first" && GROUP_GATE_TEST(call.sql)), false);
+});

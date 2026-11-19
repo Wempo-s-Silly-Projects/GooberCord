@@ -33,6 +33,7 @@
 import { requireSignedInRead, requireUser } from "./core/auth.mjs";
 import { nowSeconds } from "./core/crypto.mjs";
 import { HttpError, json, rateLimit, readJson, requiredText } from "./core/http.mjs";
+import { GC_CONVERSATIONS_LIST_MAX, PINS_READ_BIND_CHUNK } from "../constants.mjs";
 import { plusActiveExpr, publicIsPlus } from "./plus.mjs";
 import { createAttachment, readMultipartWithImage } from "./media.mjs";
 
@@ -85,7 +86,11 @@ const DM_REQUEST_GATE_SQL =
 // The caller's dm/group channels, with the unread count derived from THEIR
 // member row's cursor (gm.id > last_read_message_id) right in the SQL. The
 // group icon reference (0015) rides the same row — a null degrades to no
-// image, exactly the pre-0015 payload.
+// image, exactly the pre-0015 payload. The page is bounded (the C5
+// fix): LIMIT + OFFSET ride the bind list behind the session user, an
+// attacker's stored-conversation pile can never come over the wire all at
+// once (the named GC_CONVERSATIONS_LIST_MAX cap; the route validates the
+// query params the same constants cap).
 const CONVERSATIONS_LIST_SQL =
   "SELECT c.id, c.name AS stored_name, c.icon_media_id AS icon_media_id, c.kind, " +
     "c.last_message_id, c.last_message_at, m.last_read_message_id, " +
@@ -93,7 +98,7 @@ const CONVERSATIONS_LIST_SQL =
       "AND gm.id > m.last_read_message_id) AS unread " +
   "FROM gc_channels c JOIN gc_conversation_members m ON m.channel_id = c.id " +
   "WHERE m.user_id = ? AND c.kind IN ('dm','group') " +
-  "ORDER BY c.last_message_id DESC, c.id DESC";
+  "ORDER BY c.last_message_id DESC, c.id DESC LIMIT ? OFFSET ?";
 
 // The group rename (SHAVERS 2): a dm's name IS its member list and a dm is
 // NEVER renamed, so this route is group-only in the SQL. A renamed group's
@@ -149,12 +154,16 @@ function conversationName(kind, members, selfId) {
 
 async function handleCreateConversationRoute(request, env) {
   const session = await requireUser(request, env);
+  // The C5 write wall (per-family key): no conversation id exists yet, so the
+  // create keys the CALLER — the same bucket the module's other write walls
+  // key when the route owns no row.
+  const selfId = Number(session.user.id);
+  await rateLimit(request, env, "write", "conversations:" + selfId);
   const body = await readJson(request);
   const raw = body.userIds;
 
   if (!Array.isArray(raw)) throw new HttpError(400, "Send the member ids as an array.");
 
-  const selfId = Number(session.user.id);
   const ids = [];
   for (const value of raw) {
     const id = Number(value);
@@ -265,19 +274,43 @@ async function handleListConversationsRoute(request, env) {
   const session = await requireSignedInRead(request, env);
   const selfId = Number(session.user.id);
 
+  // The page's limit/offset query params: the limit rides the named cap
+  // (default = cap; never above), the offset is a plain cursor. Both are
+  // validated at this boundary — 400s, never silent clamps.
+  const url = new URL(request.url);
+  const limitRaw = url.searchParams.get("limit");
+  const limit = limitRaw === null ? GC_CONVERSATIONS_LIST_MAX : Number(limitRaw);
+  if (!Number.isInteger(limit) || limit < 1 || limit > GC_CONVERSATIONS_LIST_MAX) {
+    throw new HttpError(400, "The page limit is invalid.");
+  }
+  const offsetRaw = url.searchParams.get("offset");
+  const offset = offsetRaw === null ? 0 : Number(offsetRaw);
+  if (!Number.isInteger(offset) || offset < 0) {
+    throw new HttpError(400, "The page offset is invalid.");
+  }
+
   const channels = (await env.GOOBER_DB.prepare(CONVERSATIONS_LIST_SQL)
-    .bind(selfId).all()).results || [];
+    .bind(selfId, limit, offset).all()).results || [];
 
   const channelIds = channels.map((row) => Number(row.id));
   if (channelIds.length === 0) return json({ conversations: [] });
 
-  const marks = channelIds.map(() => "?").join(",");
-  const rosters = (await env.GOOBER_DB.prepare(
-    ROSTER_SQL.replace("PLACEHOLDERS", marks),
-  ).bind(nowSeconds(), ...channelIds).all()).results || [];
-  const previews = (await env.GOOBER_DB.prepare(
-    LAST_MESSAGE_SQL.replace("PLACEHOLDERS", marks),
-  ).bind(...channelIds).all()).results || [];
+  // The roster and preview fan-out (the grouped-payload idiom): the IN-list
+  // chunks at the shared D1 bind ceiling, so a full page stays one read while
+  // a larger id set can never cross the per-query bind limit. An empty list
+  // short-circuited above, never a per-channel query.
+  const rosters = [];
+  const previews = [];
+  for (let start = 0; start < channelIds.length; start += PINS_READ_BIND_CHUNK) {
+    const chunk = channelIds.slice(start, start + PINS_READ_BIND_CHUNK);
+    const marks = chunk.map(() => "?").join(",");
+    rosters.push(...((await env.GOOBER_DB.prepare(
+      ROSTER_SQL.replace("PLACEHOLDERS", marks),
+    ).bind(nowSeconds(), ...chunk).all()).results || []));
+    previews.push(...((await env.GOOBER_DB.prepare(
+      LAST_MESSAGE_SQL.replace("PLACEHOLDERS", marks),
+    ).bind(...chunk).all()).results || []));
+  }
 
   const membersByChannel = new Map();
   for (const row of rosters) {
@@ -318,11 +351,16 @@ async function handleListConversationsRoute(request, env) {
         unread: Number(row.unread || 0),
       };
     }),
+    // The offset cursor: a full page hands the client the NEXT page's offset
+    // (a short page means the end was reached — the key is absent then).
+    ...(channels.length >= limit ? { nextOffset: offset + channels.length } : {}),
   });
 }
 
 async function handleLeaveConversationRoute(request, env, conversationId) {
   const session = await requireUser(request, env);
+  // The C5 write wall, keyed to the conversation family.
+  await rateLimit(request, env, "write", "conversations:" + conversationId);
   const selfId = Number(session.user.id);
 
   // The member row delete runs FIRST and its result GATES the channel delete:
@@ -382,6 +420,9 @@ async function groupChannelFor(env, conversationId, userId) {
 
 async function handleUpdateConversationRoute(request, env, conversationId) {
   const session = await requireUser(request, env);
+  // The C5 write wall, keyed to the conversation family (the multipart
+  // branch's own upload wall rides beside it, not instead of it).
+  await rateLimit(request, env, "write", "conversations:" + conversationId);
   const userId = Number(session.user.id);
   const contentType = (request.headers.get("Content-Type") || "").toLowerCase();
 
@@ -415,10 +456,12 @@ async function handleUpdateConversationRoute(request, env, conversationId) {
     if (body.iconMediaId !== undefined) {
       // A named (uploaded-elsewhere) media id only ever moves into the slot
       // when it is the CALLER'S OWN attachment — the UPDATE's WHERE decides,
-      // never a probe. null clears.
+      // never a probe. null clears. The shape check is UNCONDITIONAL (the C5
+      // fix): a junk id is a 400 even while a rename rides the same PATCH —
+      // the null-clear branch is the only shape exempt from it.
       iconField.present = true;
       iconField.value = body.iconMediaId === null ? null : Number(body.iconMediaId);
-      if (!nameField.present && (iconField.value === null || !Number.isInteger(iconField.value) || iconField.value <= 0)) {
+      if (body.iconMediaId !== null && (!Number.isInteger(iconField.value) || iconField.value <= 0)) {
         throw new HttpError(400, "iconMediaId must be an attachment id, or null to clear it.");
       }
     }
@@ -483,10 +526,14 @@ async function handleUpdateConversationRoute(request, env, conversationId) {
 
 async function handleAddConversationMemberRoute(request, env, conversationId) {
   const session = await requireUser(request, env);
+  // The C5 write wall, keyed to the conversation family.
+  await rateLimit(request, env, "write", "conversations:" + conversationId);
   const userId = Number(session.user.id);
   const body = await readJson(request);
   const targetId = Number(body.userId);
-  if (!Number.isInteger(targetId) || targetId <= 0 || targetId > 1e15) {
+  // The id ceiling is the named MAX_ID (the create route's same width
+  // convention) — never a bare literal.
+  if (!Number.isInteger(targetId) || targetId <= 0 || targetId >= MAX_ID) {
     throw new HttpError(400, "A valid user id is required.");
   }
 
@@ -523,15 +570,34 @@ async function handleAddConversationMemberRoute(request, env, conversationId) {
   }
 
   // The guarded INSERT: the guard carries the group kind + caller membership +
-  // target existence + the NOT-EXISTS duplicate arm; zero changes is a real
-  // conflict (the member existed before this ran).
+  // target existence + the NOT-EXISTS duplicate arm — and the C5 fix
+  // re-expresses the cap + blocks gates INSIDE (the GROUP_MEMBERS_MAX count
+  // subquery and a blocks EXISTS joined off the LIVE roster rows, so a
+  // concurrently-arriving member or block pair cannot sneak past stale
+  // reads); the route-side reads above stay pre-checks only. Zero changes is
+  // a real conflict (the member existed, the group filled, or a block pair
+  // landed between the reads and this statement).
   const result = await env.GOOBER_DB.prepare(
     "INSERT INTO gc_conversation_members (channel_id, user_id, last_read_message_id) SELECT ?, ?, 0 WHERE " +
       "EXISTS (SELECT 1 FROM gc_channels c WHERE c.id = ? AND c.kind = 'group' AND c.server_id IS NULL) " +
       "AND EXISTS (SELECT 1 FROM gc_conversation_members me WHERE me.channel_id = ? AND me.user_id = ?) " +
       "AND EXISTS (SELECT 1 FROM users u WHERE u.id = ?) " +
-      "AND NOT EXISTS (SELECT 1 FROM gc_conversation_members tm WHERE tm.channel_id = ? AND tm.user_id = ?)",
-  ).bind(conversationId, targetId, conversationId, conversationId, userId, targetId, conversationId, targetId).run();
+      "AND (SELECT COUNT(*) FROM gc_conversation_members fm WHERE fm.channel_id = ?) < ? " +
+      "AND NOT EXISTS (SELECT 1 FROM gc_conversation_members tm WHERE tm.channel_id = ? AND tm.user_id = ?) " +
+      "AND NOT EXISTS (SELECT 1 FROM gc_conversation_members em WHERE em.channel_id = ? AND (" +
+        "EXISTS (SELECT 1 FROM blocks WHERE (blocker_id = ? AND blocked_id = em.user_id) " +
+          "OR (blocked_id = ? AND blocker_id = em.user_id)) " +
+        "OR EXISTS (SELECT 1 FROM gc_blocks WHERE ((blocker_id = ? AND blocked_id = em.user_id) " +
+          "OR (blocked_id = ? AND blocker_id = em.user_id)) AND kind = 'blocked'))) ",
+  ).bind(
+    conversationId, targetId,
+    conversationId,
+    conversationId, userId,
+    targetId,
+    conversationId, GROUP_MEMBERS_MAX,
+    conversationId, targetId,
+    conversationId, targetId, targetId, targetId, targetId,
+  ).run();
   if (Number(result.meta?.changes) !== 1) {
     throw new HttpError(409, "That member is already in this group chat.");
   }
@@ -543,6 +609,8 @@ async function handleAddConversationMemberRoute(request, env, conversationId) {
 
 async function handleRemoveConversationMemberRoute(request, env, conversationId, targetUserId) {
   const session = await requireUser(request, env);
+  // The C5 write wall, keyed to the conversation family.
+  await rateLimit(request, env, "write", "conversations:" + conversationId);
   const selfId = Number(session.user.id);
 
   // The member-row delete runs FIRST (its WHERE carries the caller's
