@@ -5,7 +5,10 @@ workers_dev = true
 
 [vars]
 TURNSTILE_HOSTNAMES = "goobercord.itswempo.workers.dev"
-VERSION = "prototype"
+# Release-grade stamp (the owner's rubric-4 ask): /api/version + the
+# stale-build meta tags carry VERSION@COMMIT_SHA. 0.9.0 = final-candidate;
+# 1.0 stays the owner's call (the G+ tier-matrix law).
+VERSION = "0.9.0"
 
 [assets]
 directory = "./public"
