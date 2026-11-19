@@ -1,7 +1,7 @@
 {
   "$comment": "Shared task board (Agent Team spec): teammates claim tasks, update status, log handoffs and blockers directly. One writer at a time per task row. File boundaries are LAW - a diff outside a task's file_scope is rejected. The four Section Q anti-waste laws govern all work (see /Users/itswempo/GooberCord/CLAUDE.md).",
-  "board_version": "v75-wave7-fielded",
-  "updated": "2026-11-18",
+  "board_version": "v76-revert-pivot",
+  "updated": "2026-11-19T00:20:00Z",
   "team_roster": [
     {
       "session": "team-lead (main)",
@@ -1219,10 +1219,29 @@
       "notes": [
         "[lead 21:1x EST] Lane w7-r2-ride (backend-dev seat, worktree lane-w7-r2-ride) \u2014 changes==1-gated R2 delete ride, RED-first"
       ]
+    },
+    {
+      "id": "T-REVERT-PIVOT",
+      "title": "Revert to pre-rewrite + port everything (owner pivot 2026-11-18)",
+      "status": "in-progress",
+      "priority": "p0",
+      "owner": "team-lead",
+      "created": "2026-11-18",
+      "notes": [
+        "Owner orders: 'still wanna revert to pre-rewrite' / 'thats for all repos that got rewritten btw' / 'project kitskey is cancelled' / 'just recode all future' / 'keep the new features' / 'BACKPORT EVERYTHING'; AskUserQuestion ruling: Stay reverted, port everything.",
+        "DONE: GC main reverted history-preserved \u2014 77c5d56 = read-tree of 3a63ada (pre-rewrite anchor) + migrations/0045_gc_recreate_attachment_chunks.sql (exact 0001/0014 chunk shape; starts empty \u2014 prod verified 0 attachment rows at 0044 apply). Rollback = reset to any post-merge SHA.",
+        "DONE: kitskey cancelled \u2014 GitHub repo deleted (owner click, gh token lacks delete_repo), local clone -> ~/.Trash/project-kitskey-deleted-2026-11-18, memory framework-code-names.md flipped to CANCELLED, MEMORY.md line rewritten.",
+        "LANES FIELDED: p1-base-green (retire 9 kitskey parity pins + purge kitskey refs + CLAUDE.md law), p1-vendor-recode (api/vendor/db+http reimplemented, same interface), p1-r2-recode (R2 rides + GC_MEDIA binding ported to old modules), p1-forum-revert (forum tree revert, /Users/itswempo/wempos-forum).",
+        "NEXT (prod-restore chain): base-green lands green tree -> verify suite at pushed SHA in detached worktree -> push -> sleep 95 -> ritual deploy -> probes -> apply 0045 remote under NAME-PRESENCE. Resolves CRITICAL-1 (prod 500s: rewrite build writes/reads dropped gc_attachment_chunks).",
+        "PORT WAVE after prod green: recode rewrite-era features onto base (soundboard, jobs/quests, time capsules, morning paper, bookmarks, campfire ledger, anniversaries, welcome cards, reaction tags, emoji ladder, i18n bundles) + new slate."
+      ]
     }
   ],
   "meta": {
     "wave5_slate": "docs/drafts/feature-slate-wave5-2026-11-18.md",
     "audit_sweep_w6": "AUDIT ROWS ALL LANDED 2026-11-18: H1 (4956a8e) + M1/M2 (e60de82); deploy afc19b4f build e60de82 probes green"
-  }
+  },
+  "notes": [
+    "v76-revert-pivot: GC main reverted 77c5d56 (0045 in tree, unapplied remote) / kitskey cancelled+deleted / 4 port lanes running / prod still on broken 3d28f0b build pending chain."
+  ]
 }
