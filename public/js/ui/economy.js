@@ -408,7 +408,7 @@ function ledgerPanel() {
       try {
         await loadLedger(ledger.nextAfter);
         router.renderCurrent();
-      } catch { /* the cursor's 400 renders on the next paint */ }
+      } catch { /* failed cursor keeps the painted rows; the button stays and a later click retries */ }
     });
     panel.append(more);
   }

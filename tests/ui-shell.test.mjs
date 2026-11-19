@@ -329,3 +329,17 @@ test("an empty conversations arrival renders the empty state, not 'Fetching'", a
     restore();
   }
 });
+
+// A transient failure must not wedge the rails: loadServers' guard reads the
+// cache truth, and an empty ARRAY is truthy in JS — caching [] on the catch
+// would make the guard permanently true and the rails never retry.
+test("a failed servers list stores NULL (retryable), never the truthy empty array", () => {
+  const start = SHELL.indexOf("async function loadServers");
+  const end = SHELL.indexOf("/", SHELL.indexOf("export async function refreshServers"));
+  const block = SHELL.slice(start, end);
+  assert.ok(block, "loadServers + refreshServers block present");
+  assert.match(block, /store\.set\(\{ servers: null \}\);/,
+    "the catch stores null — the next route render's loadServers retries");
+  assert.doesNotMatch(block, /store\.set\(\{ servers: \[\] \}\);/,
+    "caching [] wedges the guard (empty array is truthy) and the rails never retry");
+});

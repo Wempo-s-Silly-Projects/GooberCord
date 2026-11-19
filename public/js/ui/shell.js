@@ -103,8 +103,9 @@ async function loadServers() {
     const payload = await api("/api/servers");
     store.set({ servers: Array.isArray(payload?.servers) ? payload.servers : [] });
   } catch {
-    // A failed list leaves the rails empty rather than a broken shell.
-    store.set({ servers: [] });
+    // A failed list stays UNCACHED (the empty array is truthy and would wedge
+    // the guard) — the next route render retries; the rails still paint empty.
+    store.set({ servers: null });
   } finally {
     serversLoading = false;
   }

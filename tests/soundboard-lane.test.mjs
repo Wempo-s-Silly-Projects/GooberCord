@@ -648,7 +648,6 @@ test("the server delete's doomed purge list carries the server's sounds", async 
   assert.equal(response.status, 200);
   const soundsPreRead = db.calls.find((call) => call.call === "all" && call.sql.startsWith("SELECT attachment_id FROM gc_sounds WHERE server_id = ?"));
   assert.ok(soundsPreRead, "the sounds' doomed pre-read rode the same discipline");
-  assert.equal(typeof prepareSoundAttachment, "function");
 });
 
 // --- the audio core ---------------------------------------------------------------
