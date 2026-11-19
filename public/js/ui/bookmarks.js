@@ -35,10 +35,12 @@ import { t } from "../i18n.js";
 
 // GET /api/bookmarks — the private list mirrors into the store lane (the
 // chat row's save state reads THIS lane; no second GET exists anywhere).
+const BOOKMARKS_LANE = "bookmarks";
+
 export async function loadBookmarks() {
   const payload = await api("/api/bookmarks");
-  store.set({ bookmarks: Array.isArray(payload?.bookmarks) ? payload.bookmarks : [] });
-  return store.get("bookmarks");
+  store.set({ [BOOKMARKS_LANE]: Array.isArray(payload?.bookmarks) ? payload.bookmarks : [] });
+  return store.get(BOOKMARKS_LANE);
 }
 
 // POST /api/messages/:messageId/bookmark — the save act. The idempotent
@@ -48,7 +50,7 @@ export async function loadBookmarks() {
 export async function saveBookmark(messageId) {
   const result = await api(`/api/messages/${Number(messageId)}/bookmark`, { method: "POST" });
   if (result?.id) {
-    store.set({ bookmarks: [...store.get("bookmarks") || [],
+    store.set({ [BOOKMARKS_LANE]: [...store.get(BOOKMARKS_LANE) || [],
       { id: Number(result.id), messageId: Number(messageId), savedAt: Number(result.savedAt) }] });
   }
   return result;
@@ -59,7 +61,7 @@ export async function saveBookmark(messageId) {
 export async function unsaveBookmark(bookmarkId) {
   const result = await api(`/api/bookmarks/${Number(bookmarkId)}`, { method: "DELETE" });
   store.set({
-    bookmarks: (store.get("bookmarks") || []).filter((row) =>
+    [BOOKMARKS_LANE]: (store.get(BOOKMARKS_LANE) || []).filter((row) =>
       row.id !== Number(bookmarkId)),
   });
   return result;
@@ -74,7 +76,7 @@ export function renderBookmarksPanel(route, mount) {
   const panel = h("div", { class: "panel" }, h("h3", { text: t("gc.bookmarks.heading") }));
   mount.append(renderShell(route, h("section", { class: "pane-main task-main" },
     h("div", { class: "pane-body" }, body, panel))));
-  const lane = store.get("bookmarks");
+  const lane = store.get(BOOKMARKS_LANE);
   if (!Array.isArray(lane)) {
     loadBookmarks().then(() => router.renderCurrent()).catch((error) => {
       panel.append(h("p", { class: "form-error", text: error.message })); // G-2 verbatim
@@ -117,7 +119,12 @@ function bookmarkRows(rows) {
 }
 
 // The pointer's saved_at is unix seconds (bookmarks.mjs writes nowSeconds()):
-// the stamp renders the UTC minute, no locale arithmetic invented.
+// the stamp renders the UTC minute, no locale arithmetic invented. A
+// non-finite seat (absent, NaN, Infinity, garbage) paints the "—" dash seat
+// — the codebase's dash idiom (the tenureStartedAt twin in economy.js) —
+// never the RangeError that would kill the whole panel render.
 function savedStamp(savedAt) {
-  return new Date(Number(savedAt) * 1000).toISOString().slice(0, 16).replace("T", " ");
+  const seconds = Number(savedAt);
+  if (!Number.isFinite(seconds)) return "—";
+  return new Date(seconds * 1000).toISOString().slice(0, 16).replace("T", " ");
 }

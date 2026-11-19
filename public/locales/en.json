@@ -478,6 +478,7 @@
   "gc.economy.quests.message": "Messages",
   "gc.economy.quests.voice": "Voice time",
   "gc.economy.quests.earned": "Coins earned",
+  "gc.economy.quests.other": "Other",
   "gc.economy.quests.progress": "{{progress}} / {{goal}}",
   "gc.economy.quests.claim": "Claim {{count}} coins",
   "gc.economy.quests.claimPlain": "Claim the daily reward",

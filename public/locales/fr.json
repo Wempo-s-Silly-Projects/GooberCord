@@ -487,6 +487,7 @@
   "gc.economy.quests.message": "Messages postés",
   "gc.economy.quests.voice": "Temps en vocal",
   "gc.economy.quests.earned": "Pièces gagnées",
+  "gc.economy.quests.other": "Autre",
   "gc.economy.quests.progress": "{{progress}} sur {{goal}}",
   "gc.economy.quests.claim": "Réclamer {{count}} pièces",
   "gc.economy.quests.claimPlain": "Réclamer la récompense quotidienne",

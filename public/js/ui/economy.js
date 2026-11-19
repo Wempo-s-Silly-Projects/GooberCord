@@ -308,11 +308,13 @@ function claimPanel(payload) {
 // verbatim, the same lane the plain claim's refusal rides.
 // The kind→key map: the backend GOALS kinds (api/quests.mjs) are message,
 // voice, earn — "earn" resolves to the seated ".earned" key (the payload's
-// bare kind would otherwise build the unwritten ".earn" seat).
+// bare kind would otherwise build the unwritten ".earn" seat). Every OTHER
+// kind resolves to the seated generic (a payload wrinkle seats the safe
+// label, never the humanized key tail).
 const QUEST_KIND_KEYS = { earn: "gc.economy.quests.earned" };
 
 function questKindKey(kind) {
-  return QUEST_KIND_KEYS[kind] ?? "gc.economy.quests." + kind;
+  return QUEST_KIND_KEYS[kind] ?? "gc.economy.quests.other";
 }
 
 function questsPanel() {
@@ -325,7 +327,9 @@ function questsPanel() {
     return panel;
   }
   const errorLine = inlineError();
-  const rows = (quests.quests || []).map((quest) => h("li", {
+  // A null row in the payload array is a data wrinkle, not a shop failure:
+  // it drops from the row build, never a TypeError inside the paint chain.
+  const rows = (quests.quests || []).filter(Boolean).map((quest) => h("li", {
     class: "quest-row" + (quest.complete ? " quest-complete" : ""),
   },
   h("span", { class: "quest-kind", text: t(questKindKey(quest.kind)) }),
@@ -343,7 +347,7 @@ function questsPanel() {
         ? t("gc.economy.quests.claim", { count: claimState.reward })
         : t("gc.economy.quests.claimPlain"),
   });
-  claim.disabled = !!quests?.claim?.claimed;
+  claim.disabled = !!claimState?.claimed;
   claim.addEventListener("click", async () => {
     try {
       await claimQuest();

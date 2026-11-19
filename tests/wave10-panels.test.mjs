@@ -111,10 +111,12 @@ test("the panel renders the payload's pointer rows — id, messageId, savedAt, n
 });
 
 test("the store lane mirrors the GET list — one shape, no client recount", () => {
-  assert.match(BOOKMARKS_UI, /store\.set\(\{ bookmarks:/,
+  // The lane key rides the BOOKMARKS_LANE constant (c15 F4's extraction —
+  // these shapes were the raw `store.set({ bookmarks:` spellings before it).
+  assert.match(BOOKMARKS_UI, /store\.set\(\{ \[BOOKMARKS_LANE\]:/,
     "the GET list lands in the store's bookmarks lane (the chat row's saved state)");
-  assert.match(BOOKMARKS_UI, /store\.set\(\{ bookmarks: \[\.\.\.store\.get\("bookmarks"\) \|\| \[\],/);
-  assert.match(BOOKMARKS_UI, /store\.set\(\{\s*bookmarks: \(store\.get\("bookmarks"\) \|\| \[\]\)\.filter\(/);
+  assert.match(BOOKMARKS_UI, /store\.set\(\{ \[BOOKMARKS_LANE\]: \[\.\.\.store\.get\(BOOKMARKS_LANE\) \|\| \[\],/);
+  assert.match(BOOKMARKS_UI, /store\.set\(\{\s*\[BOOKMARKS_LANE\]: \(store\.get\(BOOKMARKS_LANE\) \|\| \[\]\)\.filter\(/);
 });
 
 test("the empty list is a valid painted state, never an error", () => {

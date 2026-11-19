@@ -478,6 +478,7 @@
   "gc.economy.quests.message": "Nachrichten",
   "gc.economy.quests.voice": "Sprechzeit",
   "gc.economy.quests.earned": "Verdiente Coins",
+  "gc.economy.quests.other": "Sonstiges",
   "gc.economy.quests.progress": "{{progress}} von {{goal}}",
   "gc.economy.quests.claim": "{{count}} Coins einlösen",
   "gc.economy.quests.claimPlain": "Tagesbelohnung einlösen",

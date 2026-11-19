@@ -479,6 +479,7 @@
   "gc.economy.quests.message": "Mensajes",
   "gc.economy.quests.voice": "Tiempo de voz",
   "gc.economy.quests.earned": "Monedas ganadas",
+  "gc.economy.quests.other": "Otro",
   "gc.economy.quests.progress": "{{progress}} de {{goal}}",
   "gc.economy.quests.claim": "Reclamar {{count}} monedas",
   "gc.economy.quests.claimPlain": "Reclamar la recompensa diaria",

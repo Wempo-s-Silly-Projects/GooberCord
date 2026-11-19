@@ -73,6 +73,11 @@ const OWNER_EXISTS_SQL =
 export const EMOJI_TOKEN_PATTERN = /<e:([A-Za-z0-9_]{2,32}):([1-9][0-9]*)>/g;
 export const STICKER_TOKEN_PATTERN = /<s:([A-Za-z0-9_]{2,30}):([1-9][0-9]*)>/g;
 
+// The multipart headroom over the kind's file cap: the raw request carries
+// the image's part plus the form's own envelope, so the intake reader's
+// request ceiling rides fileMax + 512 KiB.
+export const GC_EMOJI_REQUEST_HEADROOM_BYTES = 512 * 1024;
+
 // The token BUILDERS (id-stable across renames — callers pass the row's id,
 // never name-dependent state).
 export function emojiToken(name, id) {
@@ -371,7 +376,7 @@ async function handleCreateExpressionRoute(request, env, serverId, kind, ctx) {
     // of the reader's).
     const { fields, files: parsed } = await readMultipartWithImage(request, {
       maxFileBytes: KIND[kind].fileMax,
-      maxRequestBytes: KIND[kind].fileMax + 512 * 1024,
+      maxRequestBytes: KIND[kind].fileMax + GC_EMOJI_REQUEST_HEADROOM_BYTES,
       tooLargeCopy: KIND[kind].tooLargeCopy,
     });
     files = parsed;
