@@ -537,6 +537,76 @@ function attachmentEgressResponse(bytes, mime, cache) {
 // private. A miss (or a bucket error, or a body the verifier cannot bless)
 // answers null and the route falls back to the D1 chunk set — the mirror is
 // an optimization, never a serving gate.
+// The >MAX streaming lane's egress re-verification (GO-HAYWIRE cycle-3): the
+// serving lane trusts the row's stored mime end-to-end, so the object body's
+// FIRST bytes now run the same image sniff every egress verifier runs —
+// BEFORE anything streams. A sniff that disagrees with the stored
+// classification refuses 502 fail-closed (one server-side error surfaced,
+// zero bytes served); a passing object streams byte-for-byte as before. The
+// head window is the sniff's longest prefix need (12 magic bytes).
+const SNIFF_WINDOW_BYTES = 12;
+
+const LANE_STREAM_FAILED_ERROR =
+  "The attachment could not be verified for serving. Please try again.";
+
+async function verifiedImageStreamResponse(object, mime, cache) {
+  const headers = securityHeaders();
+  headers.set("Content-Type", mime);
+  headers.set("Cache-Control", cache);
+  headers.set("X-Content-Type-Options", "nosniff");
+  headers.set("Content-Disposition", 'inline; filename="image"');
+  if (object.size) headers.set("Content-Length", String(object.size));
+
+  // The verification head: a ReadableStream under the binding; a whole-buffer
+  // body (tests, mirrors) walks through its own stream. The head read pulls
+  // chunks until the sniff window is met, then the SAME reader pumps the
+  // rest verbatim — the head chunk re-emits first, so the served bytes stay
+  // byte-for-byte the unverified lane's.
+  const source =
+    object.body && typeof object.body.getReader === "function"
+      ? object.body
+      : new Response(object.body).body;
+  if (!source || typeof source.getReader !== "function") return null;
+  const reader = source.getReader();
+  let head = new Uint8Array(0);
+  for (;;) {
+    const next = await reader.read();
+    if (next.done) break;
+    const merged = new Uint8Array(head.length + next.value.byteLength);
+    merged.set(head);
+    merged.set(next.value, head.length);
+    head = merged;
+    if (head.length >= SNIFF_WINDOW_BYTES) break;
+  }
+
+  const sniffed = sniffImageMime(head);
+  if (sniffed !== String(mime)) {
+    console.error(
+      "Attachment serving refused: the object's head does not match its stored image classification.",
+    );
+    throw new HttpError(502, LANE_STREAM_FAILED_ERROR);
+  }
+
+  const stream = new ReadableStream({
+    start(controller) {
+      if (head.length > 0) controller.enqueue(head);
+    },
+    async pull(controller) {
+      try {
+        const next = await reader.read();
+        if (next.done) controller.close();
+        else controller.enqueue(next.value);
+      } catch {
+        controller.close();
+      }
+    },
+    cancel() {
+      reader.cancel().catch(() => {});
+    },
+  });
+  return new Response(stream, { status: 200, headers });
+}
+
 async function serveAttachmentObject(env, row) {
   if (!env.GC_MEDIA) return null;
   let object = null;
@@ -548,24 +618,19 @@ async function serveAttachmentObject(env, row) {
   // The >LANE streaming law: a >MAX row's bytes never whole-buffer on the
   // serving path — buffering a 125 MiB lane-max object would push the
   // isolate at its 128 MB floor (the reviewer's MEDIUM against the
-  // whole-buffer consult). The intake side already sniff-verified the
-  // EXACT bytes these objects hold (the same-sanitized-bytes law pins
-  // every put to the prepared buffer), so the streaming lane trusts the
-  // row's stored mime and sizes itself from the object. >MAX rows are
-  // image rows (multipart file intake admits images; sound/sound-pack
-  // caps sit far under MAX), so the streaming headers mirror
-  // imageResponse's shape.
+  // whole-buffer consult). The intake side verified the EXACT bytes these
+  // objects hold, but the lane trusted the stored mime end-to-end — the
+  // GO-HAYWIRE cycle-3 fix closes that: the stream's head bytes are
+  // sniffed against the stored image/* classification before anything
+  // streams (verifiedImageStreamResponse refuses 502 on a mismatch,
+  // fail-closed). >MAX rows are image rows (multipart file intake admits
+  // images; sound/sound-pack caps sit far under MAX), so the streaming
+  // headers mirror imageResponse's shape.
   if (!object) return null;
   if (Number(row.size_bytes) > MAX_ATTACHMENT_BYTES) {
     if (!object.body) return null;
     const cache = row.status === "approved" ? "public, max-age=31536000, immutable" : "private, max-age=300";
-    const headers = securityHeaders();
-    headers.set("Content-Type", row.mime);
-    headers.set("Cache-Control", cache);
-    headers.set("X-Content-Type-Options", "nosniff");
-    headers.set("Content-Disposition", 'inline; filename="image"');
-    if (object.size) headers.set("Content-Length", String(object.size));
-    return new Response(object.body, { status: 200, headers });
+    return verifiedImageStreamResponse(object, row.mime, cache);
   }
   if (typeof object.arrayBuffer !== "function") return null;
   const bytes = new Uint8Array(await object.arrayBuffer());
@@ -575,6 +640,11 @@ async function serveAttachmentObject(env, row) {
 }
 
 async function handleAttachmentServingRoute(request, env, attachmentId) {
+  // The read-bucket wall, mirroring every other read route (quests.mjs's
+  // shape): the serving GET is the one anonymous-readable endpoint and had
+  // none — rate-limit is not auth (Discord-like anonymous parity stays: the
+  // gates below are unchanged), keyed per attachment id.
+  await rateLimit(request, env, "read", "attachments:" + attachmentId);
   const row = await env.GOOBER_DB.prepare(
     "SELECT id, uploader_id, status, mime, size_bytes FROM gc_attachments WHERE id = ? LIMIT 1",
   ).bind(attachmentId).first();

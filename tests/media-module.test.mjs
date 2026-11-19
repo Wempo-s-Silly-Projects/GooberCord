@@ -649,6 +649,32 @@ test("(d2) an unknown or already-reviewed attachment is a plain 404; egress re-v
   assert.equal(tampered.status, 404);
 });
 
+test("(d3) the serving route rides the read-bucket rate limit", async () => {
+  const limiters = [];
+  const buildEnv = (success) => {
+    const env = envWithLimiters({ GOOBER_DB: fakeDb([
+      attachmentRoute({ id: 55, uploader_id: USER_ID, status: "approved", mime: "image/png" }),
+      chunksRoute([pngImage()]),
+    ]) });
+    env.GC_READ_RATE_LIMITER = { limit: async ({ key }) => { limiters.push(key); return { success }; } };
+    return env;
+  };
+
+  // The read-limiter consulted before any byte read, on every serving GET —
+  // anonymous included (rate-limit is not auth; Discord-like anonymous
+  // parity stays).
+  const served = await dispatch(get("/api/attachments/55"), buildEnv(true));
+  assert.equal(served.status, 200);
+  assert.equal(limiters.length, 1);
+
+  // A denied read bucket answers 429 (the limiter's own copy) — and no bytes
+  // were assembled behind the wall.
+  const deniedEnv = buildEnv(false);
+  const denied = await dispatch(get("/api/attachments/55"), deniedEnv);
+  assert.equal(denied.status, 429);
+  assert.equal(deniedEnv.GOOBER_DB.calls.filter((call) => CHUNK_BYTES_TEST(call.sql)).length, 0);
+});
+
 test("(e) rejection deletes the chunk rows in ONE batch and leaves nothing servable", async () => {
   const staff = await sessionFixtures("moderator", 9); // stored 'moderator' → public 'admin'
   const env = envWithLimiters({ GOOBER_DB: fakeDb([sessionRoute(staff.row)]) });
