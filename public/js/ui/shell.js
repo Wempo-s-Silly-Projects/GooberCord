@@ -253,6 +253,14 @@ export function renderShell(route, paneOverride = null) {
     },
   });
   frame.append(toggle);
+  // The Escape arm (the wave-25 a11y LOW row 2): dismissal never rides the
+  // toggle alone — a drawer open in ITS OWN subtree answers Escape, keeping
+  // aria-expanded truthful. The nav acts still close by the fresh-frame
+  // render; keydown rides the frame (any drawer row focus reaches it).
+  frame.addEventListener("keydown", (event) => {
+    if (event.key !== "Escape" || frame.dataset.drawer !== "open") return;
+    setPhoneDrawer(false);
+  });
   // The socket lane's drop strip (G-9): one line of store truth, now
   // SUBSCRIBED (the store's whole purpose) — a connection flip repaints
   // THIS strip node-locally, never a route re-render. One live seat per

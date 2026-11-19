@@ -333,3 +333,19 @@ test("the search page paints pending + serializes its searches (row R8)", () => 
   assert.match(block, /seq !== searchSeq/, "a superseded search never repaints");
   assert.match(block, /gc\.controls\.fetching/, "the pending state rides the shared key");
 });
+
+// The wave-25 a11y row 1 (T-R25-A11Y-ROWS, WCAG 2.4.9): the icon-only
+// riders exposed a title but nothing voice-control could name — the
+// aria-label mirrors the title expression exactly.
+test("the icon-only riders mirror their titles into aria-labels", () => {
+  const gifAt = CHAT.indexOf('class: "gif-choice"');
+  const gifBlock = CHAT.slice(gifAt, CHAT.indexOf("},", gifAt));
+  assert.match(gifBlock, /title: gif\.description \|\| "GIF",/);
+  assert.match(gifBlock, /"aria-label": gif\.description \|\| "GIF",/,
+    "the gif choice names itself for voice control");
+  const exprAt = CHAT.indexOf('class: "icon-button expression-choice"');
+  const exprBlock = CHAT.slice(exprAt, CHAT.indexOf("},", exprAt));
+  assert.match(exprBlock, /title: row\.name,/);
+  assert.match(exprBlock, /"aria-label": row\.name,/,
+    "the expression choice names itself for voice control");
+});

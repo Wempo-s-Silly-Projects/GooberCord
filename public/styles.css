@@ -135,7 +135,8 @@ html {
 
 body {
   min-width: 320px;
-  min-height: 100vh;
+  min-height: 100svh; /* the svh fallback line first (wave-25 a11y row 3) */
+  min-height: 100dvh;
   margin: 0;
   color: var(--ink);
   background-color: var(--desk);
@@ -309,7 +310,8 @@ a:hover {
    Everything left-aligned. */
 
 .shell {
-  height: 100vh;
+  height: 100svh; /* svh fallback line first (wave-25 a11y row 3) */
+  height: 100dvh;
   display: grid;
   grid-template-columns: 72px 250px minmax(0, 1fr) 240px;
   font-size: 0.875rem;
@@ -1306,7 +1308,8 @@ textarea {
 .chat-main {
   display: flex;
   flex-direction: column;
-  min-height: 100vh;
+  min-height: 100svh; /* the svh fallback line first (wave-25 a11y row 3) */
+  min-height: 100dvh;
 }
 .chat-column {
   flex: 1;

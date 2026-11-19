@@ -438,3 +438,26 @@ test("the pruned dead locale keys stay dead (wave-25 deslop set)", () => {
     }
   }
 });
+
+// The wave-25 a11y rows 2+3 (T-R25-A11Y-ROWS): the drawer arms an Escape
+// close beside its nav-act close, and the in-flow viewport heights ride
+// the dynamic units (svh fallback line first, dvh settles).
+test("the drawer arms an Escape close (a11y LOW row 2)", () => {
+  const start = SHELL.indexOf("const toggle = h(");
+  const block = SHELL.slice(start, SHELL.indexOf("return frame", start));
+  assert.match(block, /"Escape"/, "the shell carries the Escape arm");
+  assert.match(block, /setPhoneDrawer\(false\)/, "Escape closes the drawer");
+  assert.match(block, /dataset\.drawer !== "open"/, "Escape answers only the open drawer");
+});
+
+test("the in-flow viewport heights ride svh/dvh (a11y LOW row 3)", () => {
+  const body = CSS.slice(CSS.indexOf("body {"), CSS.indexOf("}", CSS.indexOf("body {")));
+  assert.match(body, /min-height: 100svh;/, "the body's svh fallback line first");
+  assert.match(body, /min-height: 100dvh;/, "the body settles on dvh");
+  const shell = CSS.slice(CSS.indexOf(".shell {"), CSS.indexOf("}", CSS.indexOf(".shell {")));
+  assert.match(shell, /height: 100svh;/);
+  assert.match(shell, /height: 100dvh;/);
+  const chatMain = CSS.slice(CSS.indexOf(".chat-main {"), CSS.indexOf("}", CSS.indexOf(".chat-main {")));
+  assert.match(chatMain, /min-height: 100svh;/);
+  assert.match(chatMain, /min-height: 100dvh;/);
+});

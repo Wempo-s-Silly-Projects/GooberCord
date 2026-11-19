@@ -1219,7 +1219,8 @@ function gifRider(well, errorLine) {
       if (reset) grid.replaceChildren();
       for (const gif of payload.gifs || []) {
         grid.append(h("button", {
-          class: "gif-choice", type: "button", title: gif.description || "GIF",
+          class: "gif-choice", type: "button",
+          title: gif.description || "GIF", "aria-label": gif.description || "GIF",
           onClick: () => {
             // Insertion = the plain proxied URL as body text.
             const token = gifProxyUrl(gif.url);
@@ -1277,7 +1278,8 @@ function expressionRider(well, lane, errorLine) {
         : t("gc.chat.expressions.noStickers") });
     }
     return h("div", { class: "expression-grid" }, ...rows.map((row) => h("button", {
-      class: "icon-button expression-choice", type: "button", title: row.name,
+      class: "icon-button expression-choice", type: "button",
+      title: row.name, "aria-label": row.name,
       onClick: () => {
         const kind = lane === "emojis" ? "e" : "s";
         insertAtCaret(well, `<${kind}:${row.name}:${row.id}>`);
