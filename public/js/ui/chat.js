@@ -49,6 +49,12 @@ import { loadConversations, manageGroupControls } from "./social.js";
 import { startVoiceTicks } from "./economy.js";
 import { saveBookmark, unsaveBookmark } from "./bookmarks.js";
 import { getChannelSocket, closeChannelSocket, makeClientMessageId } from "../core/ws.js";
+import {
+  openChunkedUpload,
+  ridesChunkLane,
+  UI_ATTACHMENT_FREE_MAX,
+  UI_UPLOAD_LANE_MAX_BYTES,
+} from "./uploads.js";
 
 // --- mirrored constants (G-4: equality pins against constants.mjs) -----------
 
@@ -58,7 +64,9 @@ export const UI_METER_REVEAL_AT = 1800; // Rethink 8: the meter appears past 180
 export const UI_GIF_QUERY_MAX = 64;
 export const UI_GIF_PAGE_DEFAULT = 12;
 export const UI_GIF_PAGE_MAX = 24;
-export const UI_ATTACHMENT_FREE_MAX = 20971520; // MAX_ATTACHMENT_BYTES
+// Wave-14 hand-off: UI_ATTACHMENT_FREE_MAX is declared ONCE in uploads.js
+// (G-4) — re-exported here so the composer's existing consumers keep working.
+export { UI_ATTACHMENT_FREE_MAX };
 export const UI_ATTACHMENT_MINI_MAX = 52428800; // GC_MINI_ATTACHMENT_BYTES
 export const UI_ATTACHMENT_PLUS_MAX = 1073741824; // GC_PLUS_ATTACHMENT_BYTES
 export const UI_REACTIONS_COMMON = ["👍", "❤️", "😂", "😮", "😢", "🙏", "🔥"];
@@ -149,7 +157,7 @@ export function adoptMessage(channelId, message, me, pending) {
 // builds the optimistic row keyed by clientMessageId, rides the REST POST,
 // and reconciles on the response. Failed sends keep their error state with
 // an explicit retry control (G-9).
-export async function sendToChannel(channelId, body, { imageFile, clientMessageId } = {}) {
+export async function sendToChannel(channelId, body, { imageFile, attachmentId, clientMessageId } = {}) {
   const me = store.get("user");
   const clientMessageId_ = clientMessageId || makeClientMessageId();
   const prior = store.get(messagesKey(channelId)) || { list: [], oldestAfter: null, complete: false };
@@ -165,13 +173,21 @@ export async function sendToChannel(channelId, body, { imageFile, clientMessageI
     editedAt: null,
     attachmentIds: imageFile ? [] : [],
     localFile: imageFile || null,
+    laneAttachmentId: attachmentId || null, // the wave-14 attach-by-id retry face
     source: "web",
     isPlus: !!me?.isPlus,
   };
   store.set({ [messagesKey(channelId)]: { ...prior, list: [...prior.list, pending].sort((a, b) => (a.id ?? 1e15) - (b.id ?? 1e15)) } });
   try {
     let payload;
-    if (imageFile) {
+    if (attachmentId) {
+      // The large-file lane's attach-by-id send (api/messages.mjs:1181): the
+      // committed row links by id — no byte re-rides the wire.
+      payload = await api(`/api/channels/${channelId}/messages`, {
+        method: "POST",
+        body: { body, clientMessageId: clientMessageId_, attachmentId },
+      });
+    } else if (imageFile) {
       const data = new FormData();
       data.append("image", imageFile);
       data.append("body", body);
@@ -205,7 +221,7 @@ export async function sendToChannel(channelId, body, { imageFile, clientMessageI
 // clientMessageId, the same body/file. Never automatic (G-9).
 export async function retryFailed(channelId, row) {
   dropPendingRow(channelId, row.pendingId);
-  return sendToChannel(channelId, row.body, { imageFile: row.localFile || undefined });
+  return sendToChannel(channelId, row.body, { imageFile: row.localFile || undefined, attachmentId: row.laneAttachmentId || null });
 }
 
 function dropPendingRow(channelId, pendingId) {
@@ -960,6 +976,8 @@ function buildComposer(channelId, channel, column) {
   const errorLine = h("p", { class: "form-error", role: "alert", "aria-live": "polite" });
   const imageSeat = h("span", { class: "attach-seat" });
   let pendingImage = null;
+  let pendingLane = null; // the settled chunk-lane attach (the committed row + its door)
+  let laneDoor = null; // the in-flight chunked-upload door — one door per composer act
   let inFlight = false;
 
   const syncMeter = () => {
@@ -987,10 +1005,11 @@ function buildComposer(channelId, channel, column) {
     errorLine.textContent = "";
     const file = pendingImage;
     try {
-      await sendToChannel(channelId, body, { imageFile: file || undefined });
+      await sendToChannel(channelId, body, { imageFile: file || undefined, attachmentId: pendingLane?.attachmentId || null });
       well.value = "";
       try { sessionStorage.removeItem(draftKey); } catch { /* quiet */ }
       pendingImage = null;
+      pendingLane = null;
       imageSeat.replaceChildren();
       syncMeter();
       refreshColumn(column, channelId);
@@ -1002,7 +1021,7 @@ function buildComposer(channelId, channel, column) {
       errorLine.textContent = error.message;
       if (error.retryAfter) armSlowmeter(error.retryAfter);
       if (guardRulesGate(document, error, () =>
-        sendToChannel(channelId, body, { imageFile: pendingImage || undefined })
+        sendToChannel(channelId, body, { imageFile: pendingImage || undefined, attachmentId: pendingLane?.attachmentId || null })
           .then(() => { errorLine.textContent = ""; refreshColumn(column, channelId); }))) {
         errorLine.textContent = "";
       }
@@ -1033,28 +1052,69 @@ function buildComposer(channelId, channel, column) {
       errorLine.textContent = t("gc.chat.attach.tooLarge", { mib: Math.round(tierCap / 1048576) });
       return;
     }
-    if (pendingImage) {
+    if (file.size > UI_UPLOAD_LANE_MAX_BYTES) {
+      // Beyond the D1 chunk lane's own bound there is no door either
+      // (constants.mjs GC_UPLOAD_LANE_MAX_BYTES) — paint the lane cap, never
+      // send a byte to be refused.
+      errorLine.textContent = t("gc.chat.attach.tooLarge", { mib: Math.round(UI_UPLOAD_LANE_MAX_BYTES / 1048576) });
+      return;
+    }
+    if (pendingImage || pendingLane || laneDoor) {
       errorLine.textContent = t("gc.chat.attach.one"); // the server's own text shape
       return;
     }
     try {
-      const data = new FormData();
-      data.append("image", file);
-      const { attachment } = await api("/api/attachments", { method: "POST", body: data });
-      if (attachment?.status !== "pending") throw new Error(t("gc.chat.attach.failed"));
+      if (ridesChunkLane(file.size)) {
+        // Wave-14: the chunked door — the first part opens the upload, the
+        // commit births the row, the send links it by id; the strip paints
+        // the slice count actually sent (never an invented bar). The cap
+        // gates stay server-answered: a smaller-perk member's attempt rides
+        // the server's own refusal, painted verbatim below.
+        laneDoor = openChunkedUpload(file);
+        const laneProgress = h("span", { class: "muted",
+          text: t("gc.chat.attach.laneProgress", { done: 0, total: laneDoor.totalParts }) });
+        const laneRemove = h("button", { class: "control-quiet row-quiet-inline", type: "button",
+          text: t("gc.controls.remove"), onClick: async () => {
+            laneRemove.disabled = true;
+            await laneDoor.cancel();
+          } });
+        imageSeat.replaceChildren(h("span", { class: "attach-strip" }, laneProgress, laneRemove));
+        const laneAttachment = await laneDoor.send((done, total) => {
+          laneProgress.textContent = t("gc.chat.attach.laneProgress", { done, total });
+        });
+        const settledDoor = laneDoor;
+        laneDoor = null;
+        if (laneAttachment === null) {
+          imageSeat.replaceChildren();
+          return; // the cancelled act — the abandon DELETE already fired
+        }
+        pendingLane = { attachmentId: laneAttachment.id, door: settledDoor };
+        imageSeat.replaceChildren();
+      } else {
+        const data = new FormData();
+        data.append("image", file);
+        const { attachment } = await api("/api/attachments", { method: "POST", body: data });
+        if (attachment?.status !== "pending") throw new Error(t("gc.chat.attach.failed"));
+      }
       pendingImage = file;
       const preview = h("img", {
         class: "attach-preview", src: objectUrlFor(file), alt: file.name });
       const remove = h("button", { class: "control-quiet row-quiet-inline", type: "button",
-        text: t("gc.controls.remove"), onClick: () => {
+        text: t("gc.controls.remove"), onClick: async () => {
           pendingImage = null;
+          const lane = pendingLane;
+          pendingLane = null;
           imageSeat.replaceChildren();
           revokeUrlFor(file);
+          if (lane?.door) {
+            await lane.door.cancel(); // the explicit abandon act (post-commit, the same 200 no-op)
+          }
         } });
       imageSeat.replaceChildren(h("span", { class: "attach-strip" },
         preview, h("span", { class: "muted", text: t("gc.chat.attach.pending") }), remove));
     } catch (error) {
-      errorLine.textContent = error.message;
+      laneDoor = null;
+      errorLine.textContent = error.message; // the server's refusal, verbatim
     }
   });
 

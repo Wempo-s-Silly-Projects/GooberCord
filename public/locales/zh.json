@@ -10,6 +10,7 @@
   "gc.boot.stale.reload": "重新加载",
   "gc.chat.attach.button": "附加一张图片",
   "gc.chat.attach.failed": "附件失败了。",
+  "gc.chat.attach.laneProgress": "上传中 — {{done}}/{{total}} 个分段",
   "gc.chat.attach.one": "最多只附加一张图片。",
   "gc.chat.attach.pending": "待审核",
   "gc.chat.attach.tooLarge": "文件超过此层级的 {{mib}} MiB 上限。",

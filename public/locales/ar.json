@@ -10,6 +10,7 @@
   "gc.boot.stale.reload": "إعادة التحميل",
   "gc.chat.attach.button": "أرفق صورة",
   "gc.chat.attach.failed": "فشل الإرفاق.",
+  "gc.chat.attach.laneProgress": "جارٍ الرفع — {{done}}/{{total}} من المقاطع",
   "gc.chat.attach.one": "أرفق صورة واحدة كحد أقصى.",
   "gc.chat.attach.pending": "بانتظار المراجعة",
   "gc.chat.attach.tooLarge": "حجم الملف يتجاوز سقف {{mib}} MiB لهذه الفئة.",

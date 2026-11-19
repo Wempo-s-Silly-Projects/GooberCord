@@ -10,6 +10,7 @@
   "gc.boot.stale.reload": "Reload",
   "gc.chat.attach.button": "Attach an image",
   "gc.chat.attach.failed": "Attachment failed.",
+  "gc.chat.attach.laneProgress": "Uploading — {{done}}/{{total}} slices",
   "gc.chat.attach.one": "Attach at most one image.",
   "gc.chat.attach.pending": "Pending review",
   "gc.chat.attach.tooLarge": "The file is larger than the {{mib}} MiB cap for this tier.",

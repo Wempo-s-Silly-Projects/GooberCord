@@ -10,6 +10,7 @@
   "gc.boot.stale.reload": "Recharger",
   "gc.chat.attach.button": "Joindre une image",
   "gc.chat.attach.failed": "Échec de la pièce jointe.",
+  "gc.chat.attach.laneProgress": "Envoi en cours — {{done}}/{{total}} tranches",
   "gc.chat.attach.one": "Joins au plus une image.",
   "gc.chat.attach.pending": "En attente de relecture",
   "gc.chat.attach.tooLarge": "Le fichier dépasse le plafond de {{mib}} MiB de ce niveau.",

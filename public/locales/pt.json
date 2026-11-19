@@ -10,6 +10,7 @@
   "gc.boot.stale.reload": "Recarregar",
   "gc.chat.attach.button": "Anexar uma imagem",
   "gc.chat.attach.failed": "Falha no anexo.",
+  "gc.chat.attach.laneProgress": "Enviando — {{done}}/{{total}} fatias",
   "gc.chat.attach.one": "Anexe no máximo uma imagem.",
   "gc.chat.attach.pending": "Pendente de revisão",
   "gc.chat.attach.tooLarge": "O arquivo passa do teto de {{mib}} MiB deste nível.",

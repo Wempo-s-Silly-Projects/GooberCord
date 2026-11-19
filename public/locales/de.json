@@ -10,6 +10,7 @@
   "gc.boot.stale.reload": "Neu laden",
   "gc.chat.attach.button": "Ein Bild anhängen",
   "gc.chat.attach.failed": "Anhang fehlgeschlagen.",
+  "gc.chat.attach.laneProgress": "Wird hochgeladen — {{done}}/{{total}} Blöcke",
   "gc.chat.attach.one": "Höchstens ein Bild anhängen.",
   "gc.chat.attach.pending": "Prüfung ausstehend",
   "gc.chat.attach.tooLarge": "Die Datei übersteigt die {{mib}}-MiB-Grenze dieser Stufe.",

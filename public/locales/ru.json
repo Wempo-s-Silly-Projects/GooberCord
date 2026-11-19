@@ -10,6 +10,7 @@
   "gc.boot.stale.reload": "Перезагрузить",
   "gc.chat.attach.button": "Прикрепить картинку",
   "gc.chat.attach.failed": "Сбой вложения.",
+  "gc.chat.attach.laneProgress": "Загрузка — {{done}}/{{total}} частей",
   "gc.chat.attach.one": "Прикрепи не больше одной картинки.",
   "gc.chat.attach.pending": "Ждёт проверки",
   "gc.chat.attach.tooLarge": "Файл больше потолка {{mib}} MiB для этого уровня.",

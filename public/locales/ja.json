@@ -10,6 +10,7 @@
   "gc.boot.stale.reload": "再読み込み",
   "gc.chat.attach.button": "画像を添付",
   "gc.chat.attach.failed": "添付が失敗しました。",
+  "gc.chat.attach.laneProgress": "アップロード中 — {{done}}/{{total}} 個の分割",
   "gc.chat.attach.one": "画像は多くても1枚だけ添付してください。",
   "gc.chat.attach.pending": "審査待ち",
   "gc.chat.attach.tooLarge": "ファイルがこの階層の上限{{mib}} MiBを超えています。",
