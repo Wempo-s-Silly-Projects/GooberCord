@@ -198,7 +198,7 @@ test("the seat's route registers in shell.js (main.js's route table stays untouc
 // base — the uncommitted handback has no committed range to fingerprint.
 test("diff scope: the frozen paths stay untouched across LANE_BASE..LANE_TIP", () => {
   const LANE_BASE = "b8f19c6";
-  const LANE_TIP = "LANE_TIP"; // LANE_TIP_PLACEHOLDER — the lead retargets at commit time
+  const LANE_TIP = "5654da2"; // wave-15 feat tip (retargeted by the lead 2026-11-19 — the wave-9 freeze-pin lesson, seventh instance: the pin fingerprints the lane own range, never HEAD)
   const tip = LANE_TIP === "LANE_TIP" ? LANE_BASE : LANE_TIP;
   let touched;
   try {
