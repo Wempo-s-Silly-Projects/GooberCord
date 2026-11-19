@@ -85,21 +85,24 @@ const TABLES = [
   { name: "gc_sounds", hasIndex: null },
 ];
 
-test("the file is exactly 31 statements in the pinned rebuild order", () => {
+test("the file is exactly 32 statements: the deferral PRAGMA, then the pinned rebuild order", () => {
   const list = migrationStatements();
-  assert.equal(list.length, 31, `31 statements expected, got ${list.length}`);
+  assert.match(list[0], /^PRAGMA defer_foreign_keys = ON$/i,
+    "the deferral rides first, before any rebuild statement");
+  assert.equal(list.length, 32, `32 statements expected, got ${list.length}`);
+  const tail = list.slice(1);
   let at = 0;
   for (const { name, hasIndex } of TABLES) {
-    assert.match(list[at++], new RegExp(`^CREATE TABLE "?${name}_rebuild"? \\(`));
-    assert.match(list[at++], new RegExp(`^INSERT INTO ${name}_rebuild`));
-    assert.match(list[at++], new RegExp(`^DROP TABLE "?${name}"?`));
-    assert.match(list[at++], new RegExp(`^ALTER TABLE ${name}_rebuild RENAME TO ${name}\\b`));
+    assert.match(tail[at++], new RegExp(`^CREATE TABLE "?${name}_rebuild"? \\(`));
+    assert.match(tail[at++], new RegExp(`^INSERT INTO ${name}_rebuild`));
+    assert.match(tail[at++], new RegExp(`^DROP TABLE "?${name}"?`));
+    assert.match(tail[at++], new RegExp(`^ALTER TABLE ${name}_rebuild RENAME TO ${name}\\b`));
     if (hasIndex) {
       const literal = hasIndex.replace(/([().,])/g, "\\$1");
-      assert.match(list[at++], new RegExp(`^CREATE INDEX (IF NOT EXISTS )?${literal}`));
+      assert.match(tail[at++], new RegExp(`^CREATE INDEX (IF NOT EXISTS )?${literal}`));
     }
   }
-  assert.equal(at, list.length, "every statement belongs to a rebuild pair");
+  assert.equal(at, tail.length, "every statement belongs to a rebuild pair");
 });
 
 test("the five FK treatments ride exactly the intended clauses", () => {
@@ -254,12 +257,14 @@ test("the named indexes are recreated verbatim, only after their renames", () =>
     "exactly the three live named indexes are recreated");
 });
 
-test("the 0013->0014 hazard stays dead: drops are own-name, no pre-renames, no PRAGMA", () => {
+test("the 0013->0014 hazard stays dead: drops are own-name, the only PRAGMA is the deferral", () => {
   const body = stripped(MIGRATION);
   assert.equal((body.match(/DROP TABLE/g) || []).length, 7);
   assert.equal((body.match(/RENAME TO/g) || []).length, 7);
   assert.doesNotMatch(body, /RENAME TO.*pre/i);
-  assert.doesNotMatch(body, /\bPRAGMA\b/i);
+  const pragmas = [...body.matchAll(/PRAGMA[^\n]*/gi)].map((m) => m[0].trim());
+  assert.equal(pragmas.length, 1, "the one PRAGMA is the deferral, nothing else");
+  assert.match(pragmas[0], /defer_foreign_keys/i);
   for (const { name } of TABLES) {
     assert.match(body, new RegExp(`DROP TABLE "?${name}"?`), `${name} dropped by its own name`);
   }

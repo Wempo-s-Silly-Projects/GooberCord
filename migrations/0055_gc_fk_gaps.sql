@@ -37,19 +37,25 @@
 -- rename itself).
 --
 -- Shape discipline (pinned by tests/migration-scoping-0055.test.mjs):
--- PRAGMA offers no rescue for a rebuild file (0024's D1 verification,
--- 2026-11-17: foreign_keys=OFF is ignored mid-file, defer_foreign_keys
--- internal-errors). The six DROPPED originals carry NO ACTION children in
--- the real schema or none at all: gc_servers' severest child,
--- gc_channels.server_id, is a plain NO ACTION reference — so on an
--- FK-ENFORCING runner the populated DROP refuses loudly (0021's accepted
--- design; the verified full-file rollback then leaves the ledger clean), and
--- on the FK-lenient apply the prod migration history has shown (0021's
--- populated gc_messages swap preserved every pre-apply row) the dance
--- rebuilds cleanly and loses nothing. gc_invites/gc_filter_rules/
--- gc_server_bans/gc_emoji/gc_stickers/gc_sounds are referenced by NO table,
--- so their drops cannot strand a foreign key. The FK-on INSERT..SELECT
--- either copies every row or the whole file rolls back atomically.
+-- The runner is FK-ENFORCING — the first remote apply (2026-11-19, ledger
+-- top 0054) refused gc_servers' populated DROP with 7500
+-- SQLITE_CONSTRAINT_FOREIGNKEY and rolled the whole file back atomically
+-- (verified: no *_rebuild table leaked, ledger stayed clean). The audit's
+-- shape-compare LOW is honored by the same evidence: the BEFORE/AFTER
+-- sqlite_master compare normalizes whitespace/quoting before judging deltas.
+-- The rebuild relies on foreign_keys enforcement being OFF, and that PRAGMA
+-- is startup-only per connection, so deferral rides instead: the file's
+-- FIRST statement is PRAGMA defer_foreign_keys = ON (accepted on remote D1,
+-- probed 2026-11-19 — 0024's "defer_foreign_keys internal-errors" finding
+-- is stale against today's runner). Deferral moves every would-be immediate
+-- FK failure — the populated parent DROP's implicit DELETE, and the
+-- children naming a vanished parent — to COMMIT, and by COMMIT the rename
+-- has rebuilt gc_servers (and every other table) with all copied rows, so
+-- the deferred checks all pass on the restored parent. gc_invites/
+-- gc_filter_rules/gc_server_bans/gc_emoji/gc_stickers/gc_sounds are
+-- referenced by NO table, so their drops cannot strand a foreign key
+-- either way. The FK-on INSERT..SELECT either copies every row or the
+-- whole file rolls back atomically.
 --
 -- The five treatments (byte-truth DDLs captured from the live shared
 -- wempo-forum-data D1, 2026-11-19, via sqlite_master — NOT the 0xxx files;
@@ -94,6 +100,11 @@
 --   appear, vanish, or renumber); the sqlite_master shape compare must show
 --   ONLY the intended FK-clause delta per rebuilt table (line-wrap on the
 --   touched clause allowed) and the same named index set.
+
+-- Deferral is the first statement: every would-be immediate FK failure in
+-- the dance below defers to COMMIT, where the rebuilt parents exist again
+-- with every copied row.
+PRAGMA defer_foreign_keys = ON;
 
 -- gc_servers: the one delta vs the live DDL is the owner FK — NULLable with
 -- ON DELETE SET NULL (NOT NULL SET NULL is illegal; the app-side invariant
