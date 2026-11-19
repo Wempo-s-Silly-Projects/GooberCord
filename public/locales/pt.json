@@ -1,4 +1,5 @@
 {
+  "gc.app.title": "GooberCord",
   "gc.auth.banned.heading": "Sua conta está atualmente banida",
   "gc.auth.banned.noReason": "Nenhum motivo foi informado.",
   "gc.auth.banned.reactivates": "Reativa",
@@ -308,7 +309,7 @@
   "gc.shell.theme.dark": "Tema escuro",
   "gc.shell.theme.light": "Tema claro",
   "gc.shell.user.signOut": "Encerrar sessão",
-"gc.shell.user.source": "Código-fonte (AGPLv3)",
+  "gc.shell.user.source": "Código-fonte (AGPLv3)",
   "gc.social.blocks.blockOrIgnore": "Bloquear ou ignorar",
   "gc.social.blocks.confirm": "Bloquear {{name}}?",
   "gc.social.blocks.empty": "Nenhuma conta bloqueada nem ignorada.",

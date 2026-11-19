@@ -1,4 +1,5 @@
 {
+  "gc.app.title": "GooberCord",
   "gc.auth.banned.heading": "Your account is currently banned",
   "gc.auth.banned.noReason": "No reason was provided.",
   "gc.auth.banned.reactivates": "Reactivates",

@@ -1,4 +1,5 @@
 {
+  "gc.app.title": "GooberCord",
   "gc.auth.banned.heading": "你的账号目前处于封禁中",
   "gc.auth.banned.noReason": "未给出原因。",
   "gc.auth.banned.reactivates": "重新启用",
@@ -298,7 +299,7 @@
   "gc.shell.theme.dark": "深色主题",
   "gc.shell.theme.light": "浅色主题",
   "gc.shell.user.signOut": "退出登录",
-"gc.shell.user.source": "源码 (AGPLv3)",
+  "gc.shell.user.source": "源码 (AGPLv3)",
   "gc.social.blocks.blockOrIgnore": "屏蔽或忽略",
   "gc.social.blocks.confirm": "屏蔽 {{name}}？",
   "gc.social.blocks.empty": "没有屏蔽或忽略的账号。",

@@ -19,7 +19,8 @@
 // The locale lane — the ONE i18n module (the kit's law: vanilla imperative,
 // no deps, no bundler). English is the only bundle that must be complete;
 // every other locale is pure data in public/locales/<lang>.json, fetched
-// with force-cache and applied progressively so a first paint never waits.
+// no-cache over the app-build stamp and applied progressively so the boot
+// never waits on a non-en seat.
 //
 // Copy laws the loader carries (docs/i18n/glossary.md is the rulebook):
 //   - locale JSON is DATA, never markup: the binding pass sets textContent
@@ -30,10 +31,10 @@
 //     that is the translators' law, not the loader's, but t() never
 //     rewrites what a bundle hands it.
 
-// The bundle seats this repo ships. A navigator-derived tag must sit in
-// this list (with the base-script fallback); a stored human choice may
-// name any seat — a 404 just fails open to English.
-export const BUNDLE_LANGS = ["en"];
+// The bundle seats this repo ships. Every seat that reaches the lane —
+// navigator-derived or stored — rides the shipped-base gate below; the en
+// floor catches whatever the gate refuses.
+export const BUNDLE_LANGS = ["en", "es", "de", "fr", "pt", "ru", "ja", "zh", "ar"];
 
 const STORE_KEY = "lang";
 
@@ -50,17 +51,45 @@ function normalizeTag(tag) {
   return BUNDLE_LANGS.includes(base) ? base : null;
 }
 
-function storedLang() {
-  try {
-    const stored = String(localStorage.getItem(STORE_KEY) || "").trim().toLowerCase().replace(/_/g, "-");
-    return stored || null; // an explicit human choice: any seat, fail-open below
-  } catch {
-    return null; // a blocked store keeps the default for this page
-  }
+// The ONE gate every seat rides (the base-script law's single implementation:
+// the sanitize + shipped-base check storedLang() carried since aa6979a, and
+// setLang() now shares). A raw tag is sanitized to the BCP-47-ish shape, then
+// kept only when its base script (the chain's first hop) ships — "zh-hans" →
+// base "zh" → keep; a shipless choice ("it") normalizes to null, because a
+// seat with no catalog paints every t() miss as a visible key tail.
+function lawfulSeat(raw) {
+  const tag = String(raw || "").trim().toLowerCase().replace(/_/g, "-")
+    .replace(/[^a-z0-9-]/g, "");
+  if (!tag) return null;
+  return BUNDLE_LANGS.includes(tag.split("-", 1)[0]) ? tag : null;
 }
 
+function storedLang() {
+  // An explicit human choice still rides, but only over a SHIPPED base
+  // script: a stale key from a churn-era browser would otherwise keep lang
+  // on a seat with no catalog and paint every t() miss as a key tail. The
+  // exact stored seat survives when its base ships — "zh-hans" stays — and
+  // shipless choices normalize to null (→ en).
+  try { return lawfulSeat(localStorage.getItem(STORE_KEY)); }
+  catch { return null; } // a blocked store keeps the default for this page
+}
+
+// The Accept-Language class: navigator.languages is the browser's own
+// preference-ordered negotiation list (the header's candidate list, minus
+// q-values — the engine already ordered it). The walk takes the FIRST legal
+// seat: an illegal list head ("it" — no bundle ships) is skipped, never a
+// stall; single-language engines and stubs ride language alone.
 function navigatorLang() {
-  try { return normalizeTag(navigator.language); } catch { return null; }
+  try {
+    const wanted = Array.isArray(navigator.languages) && navigator.languages.length
+      ? navigator.languages
+      : navigator.language ? [navigator.language] : [];
+    for (const tag of wanted) {
+      const seat = normalizeTag(tag);
+      if (seat) return seat;
+    }
+    return null;
+  } catch { return null; }
 }
 
 // The base script ("zh-hans" → "zh") rides the chain, never a second fetch
@@ -78,35 +107,75 @@ export function currentLang() {
 }
 
 function setHtmlLang(tag) {
-  try { document.documentElement.lang = tag; } catch { /* node or a locked doc */ }
+  // The dir law rides the tag's base script: ar (any regional seat) is the
+  // fleet's one RTL bundle — documentElement flips with the lang attribute,
+  // so both chrome and body agree before paint. Everything else is ltr.
+  const direction = tag.split("-", 1)[0] === "ar" ? "rtl" : "ltr";
+  try {
+    document.documentElement.lang = tag;
+    document.documentElement.dir = direction;
+  } catch { /* node or a locked doc */ }
 }
 
 // --- loading ----------------------------------------------------------------
 
+// initI18n() — en-first paint: the en bundle (or a cached failure, which
+// leaves the catalog empty and every key visible-garbage) resolves before
+// this returns; a non-en seat loads in the background and swaps the bound
+// copy on resolve. The boot NEVER awaits the locale lane.
+//
+// The wedged-en law (the T25 churn window served the SPA-fallback HTML for
+// /locales/en.json, and force-cache kept 200s of it forever — signed-in
+// tabs painted raw key tails with zero console errors): a bundle URL rides
+// the deployed app-build stamp as a cache-buster, fetches never force old
+// cache rows, a parse failure of the en bundle retries once without cache
+// cooperation, and the en catalog seat is set either way so t() keeps its
+// en floor.
+function bundleUrl(langKey) {
+  try {
+    const stamp = document.querySelector('meta[name="app-build"]')?.content;
+    if (stamp) return `/locales/${langKey}.json?v=${encodeURIComponent(stamp)}`;
+  } catch { /* node or a locked doc */ }
+  return `/locales/${langKey}.json`;
+}
+
 async function loadBundle(langKey) {
-  const response = await fetch(`/locales/${langKey}.json`, { cache: "force-cache" });
+  const response = await fetch(bundleUrl(langKey), { cache: "no-cache" });
   if (!response.ok) return null;
   const data = await response.json();
   if (!data || typeof data !== "object" || Array.isArray(data)) return null;
   return data;
 }
 
-// initI18n() — en-first paint: the en bundle (or a cached failure, which
-// leaves the catalog empty and every key visible-garbage) resolves before
-// this returns; a non-en seat loads in the background and swaps the bound
-// copy on resolve. The boot NEVER awaits the locale lane.
 export async function initI18n() {
-  const enBundle = await loadBundle("en");
+  let enBundle = null;
+  try {
+    enBundle = await loadBundle("en");
+  } catch {
+    // the poisoned-copy retry: ONE uncached re-fetch
+    try {
+      const retry = await fetch(bundleUrl("en"), { cache: "reload" });
+      enBundle = await retry.json();
+    } catch { /* the catalog takes {}, tails stay visible */ }
+  }
   catalog.set("en", enBundle ?? {});
-  lang = storedLang() || navigatorLang() || "en";
+  // Boot scrub (defense-in-depth): a stored row the seat gate rejects is
+  // deleted at boot, so the churn-era browser keeps no unlawful key around
+  // to re-wedge a future lane (a blocked store leaves it and no-ops).
+  const seat = storedLang();
+  try {
+    const row = seat === null ? localStorage.getItem(STORE_KEY) : null;
+    if (row !== null) localStorage.removeItem(STORE_KEY);
+  } catch { /* per-page */ }
+  lang = seat || navigatorLang() || "en";
   if (lang === "en") {
     setHtmlLang("en");
-    // The paint-swap floor (T29): painters run against the EMPTY catalog
-    // while this lane is still resolving; on the en seat this return was
-    // the last stop, so the bound copy stayed humanized tails until the
-    // next route render. One sweep here clears the race the moment the en
-    // bundle lands (non-en seats already repaint below). Node (no document)
-    // sweeps nothing.
+    // The paint-swap race floor (T29): painters run against the EMPTY
+    // catalog while this lane is still resolving; on the en seat this
+    // return was the last stop, so the bound copy stayed humanized tails
+    // until the next route render. One repaint here clears the race the
+    // moment the en bundle lands (non-en seats already repaint below).
+    // Node (no document) sweeps nothing.
     applyDom(typeof document === "undefined" ? null : document);
     return lang;
   }
@@ -127,8 +196,14 @@ export async function initI18n() {
 // browser-storage law's convenience tier), loads the bundle, flips the
 // bound copy in place. Refusals fail open to English like every other lane.
 export async function setLang(next) {
-  const langKey = String(next || "").trim().toLowerCase().replace(/_/g, "-");
+  // The ONE seat gate (lawfulSeat, the same one storedLang() rides): the
+  // BCP-47-ish shape survives the sanitize, but a seat whose base script
+  // ships nowhere — "it", a bundle long unshipped — is refused outright: no
+  // store write, no switch, no fetch built from a key nobody serves. Path/
+  // realm chars (.., %, /) never reach the store or a fetch URL either way.
+  const langKey = lawfulSeat(next);
   if (!langKey) return lang;
+  const previousSeat = lang;
   try { localStorage.setItem(STORE_KEY, langKey); } catch { /* per-page */ }
   lang = langKey;
   let bundle = null;
@@ -137,9 +212,16 @@ export async function setLang(next) {
     catalog.set(langKey, bundle);
     setHtmlLang(langKey);
     applyDom();
-  } else {
-    setHtmlLang("en");
+    return lang;
   }
+  // The bundle 404'd (or failed to parse): roll back to the previous seat —
+  // the failure key never rides storage or the catalog, setHtmlLang and the
+  // bound copy return to the previous seat, and no empty-catalog state (the
+  // every-t()-paints-a-key-tail wedge) survives the switch.
+  lang = previousSeat;
+  try { localStorage.removeItem(STORE_KEY); } catch { /* per-page */ }
+  setHtmlLang(previousSeat);
+  applyDom();
   return lang;
 }
 
@@ -289,7 +371,10 @@ export function fmtDate(value, options = null) {
 // applyDom(root) — idempotent; the sweep's re-call sites are the painters
 // that already re-run per route render. Locale content is DATA: textContent
 // and attribute setters only, never a markup parse.
-export function applyDom(root = document) {
+export function applyDom(root = globalThis.document) {
+  // The nondocument contract stays: a node importer (or a catch running
+  // before any document exists) is a no-op — the browser's document IS
+  // globalThis.document, so the default rides the same object.
   if (!root || typeof root.querySelectorAll !== "function") return;
   for (const node of root.querySelectorAll("[data-i18n]")) {
     node.textContent = t(node.getAttribute("data-i18n"));

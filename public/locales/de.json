@@ -1,4 +1,5 @@
 {
+  "gc.app.title": "GooberCord",
   "gc.auth.banned.heading": "Dein Konto ist zurzeit gebannt",
   "gc.auth.banned.noReason": "Kein Grund wurde angegeben.",
   "gc.auth.banned.reactivates": "Reaktiviert sich",
@@ -302,7 +303,7 @@
   "gc.shell.theme.dark": "Dunkles Farbschema",
   "gc.shell.theme.light": "Helles Farbschema",
   "gc.shell.user.signOut": "Abmelden",
-"gc.shell.user.source": "Quelle (AGPLv3)",
+  "gc.shell.user.source": "Quelle (AGPLv3)",
   "gc.social.blocks.blockOrIgnore": "Blocken oder übergehen",
   "gc.social.blocks.confirm": "{{name}} blocken?",
   "gc.social.blocks.empty": "Keine geblockten oder übergangenen Konten.",
@@ -405,7 +406,7 @@
   "gc.members.card.nicknameHelp": "1–32 Zeichen.",
   "gc.expressions.kinds.emojis": "Emojis",
   "gc.expressions.kinds.stickers": "Sticker",
-  "gc.expressions.kinds.sounds": "Sounds",
+  "gc.expressions.kinds.sounds": "Klänge",
   "gc.expressions.intro": "Emojis, Sticker und Soundboard-Sounds — die Zählung fährt auf dem aktuellen Deckel (ein Boost-Segen erscheint hier; der Verlauf schweigt).",
   "gc.expressions.upload": "Hochladen",
   "gc.expressions.inventory.used": "{{count}} / {{cap}} belegt.",
