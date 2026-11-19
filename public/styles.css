@@ -654,6 +654,16 @@ textarea {
   }
 }
 
+/* The toggle node appends unconditionally (shell.js), so it must be
+   silent by default — above 640px a bare in-flow button would
+   auto-place into an implicit second grid row and steal desk height.
+   This base rule sits BEFORE the 640px block on purpose: media queries
+   add no specificity, so source order is the whole contract — the block
+   turns the toggle on at phone widths. */
+.phone-drawer-toggle {
+  display: none;
+}
+
 /* T-R25-SHELL-PHONE: one pane under 640px. The fixed rails left a ~54px
    desk on a 320px viewport; here the desk fills the phone and the two
    rails ride a drawer instead — the frame's own data-drawer state drives
@@ -703,14 +713,6 @@ textarea {
   }
   /* Drawer open: the toggle hops just past the drawer's edge — it is the
      close act, never covering the drawer's own header copy. */
-}
-
-/* The toggle node appends unconditionally (shell.js), so it must be
-   silent by default — above 640px a bare in-flow button would
-   auto-place into an implicit second grid row and steal desk height.
-   The 640px block turns it on. */
-.phone-drawer-toggle {
-  display: none;
 }
 
 /* ============================ waves append here ============================ */
