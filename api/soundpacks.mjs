@@ -131,6 +131,12 @@ const CLIP_INSERT_SQL =
     "SELECT ?, ?, ?, ?, ?, 'candidate', ?, ? " +
     "WHERE EXISTS (SELECT 1 FROM gc_sound_packs p WHERE p.id = ? AND p.server_id = ?) " +
     "AND EXISTS (SELECT 1 FROM gc_server_members m WHERE m.server_id = ? AND m.user_id = ?) " +
+    // The staged-bytes arm (deslop rider): the clip can only be born on
+    // staging that ACTUALLY exists at write time — a set the 7d sweep (or an
+    // abandon) removed between verifyStagedClip's reads and this INSERT
+    // answers changes 0 and the route's shared 404, never a row for dead
+    // bytes.
+    "AND EXISTS (SELECT 1 FROM gc_upload_parts u WHERE u.upload_id = ? AND u.uploader_id = ?) " +
     "AND NOT EXISTS (SELECT 1 FROM gc_sound_pack_sounds WHERE pack_id = ? AND upload_id = ?) " +
     "AND NOT EXISTS (SELECT 1 FROM gc_sound_pack_sounds WHERE pack_id = ? AND name = ?)";
 
@@ -354,6 +360,7 @@ async function handleCandidateCreateArm(env, context) {
       packIdNum, name, uploadId, staged.size, staged.mime, actorId, nowSeconds(),
       packIdNum, serverIdNum,
       serverIdNum, actorId,
+      uploadId, actorId,
       packIdNum, uploadId,
       packIdNum, name,
     ).run();

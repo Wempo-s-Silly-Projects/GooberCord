@@ -365,9 +365,13 @@ async function readJsonCommit(request) {
 //     D1 refuses every run), and an abandon wants no hold-back anyway;
 //   - a token a gc_sound_pack_sounds clip still references (a pending
 //     candidate's staged bytes, an approved clip's bytes) answers 409 — the
-//     clip's rows are dropped or cleared server-side, never abandoned.
-const ABANDON_CLEAR_SQL =
-  "DELETE FROM gc_upload_parts WHERE upload_id = ? AND uploader_id = ?";
+//     clip's rows are dropped or cleared server-side, never abandoned — and
+//     the clear ALSO carries the arm in-SQL: a clip row born between the 409
+//     check and the DELETE refuses IN THE STATEMENT (the check-then-act
+//     window), correlated, no new binds.
+export const ABANDON_CLEAR_SQL =
+  "DELETE FROM gc_upload_parts WHERE upload_id = ? AND uploader_id = ? " +
+  "AND NOT EXISTS (SELECT 1 FROM gc_sound_pack_sounds WHERE upload_id = gc_upload_parts.upload_id)";
 const CLIP_REFERENCE_SQL = "SELECT 1 FROM gc_sound_pack_sounds WHERE upload_id = ? LIMIT 1";
 
 export async function handleAbandonUploadRoute(request, env, uploadId) {

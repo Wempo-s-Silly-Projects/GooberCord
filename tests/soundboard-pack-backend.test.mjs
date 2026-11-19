@@ -61,6 +61,7 @@ function packDb(options = {}) {
   const clips = [...(options.clips || [])];        // { id, pack_id, name, status }
   let nextClip = 5000 + clips.length;
   const staging = new Map(options.staging || []);  // upload id -> { parts: [Uint8Array] }
+  const vanish = options.vanishAtInsert || [];     // tokens swept between the verify and the INSERT
   const calls = [];
 
   const packOf = (packId) => packs.get(Number(packId));
@@ -163,24 +164,33 @@ function packDb(options = {}) {
     },
     {
       // The candidate insert's arms: the pack-exists pair, the membership
-      // pair, and BOTH dup NOT-EXISTS arms — every one encoded.
+      // pair, the STAGED-BYTES pair (a swept/absent token refuses — the
+      // verify-to-insert window), and BOTH dup NOT-EXISTS arms — every one
+      // encoded.
       test: (sql) => sql.startsWith("INSERT INTO gc_sound_pack_sounds"),
       run: (bound, sql) => {
         const packId = Number(bound[7]);
         const serverId = Number(bound[8]);
         const memberServer = Number(bound[9]);
         const memberId = Number(bound[10]);
-        const dupServer = Number(bound[11]);
-        const dupUpload = String(bound[12]);
-        const dupNamePack = Number(bound[13]);
-        const dupName = String(bound[14]);
+        const stagedUpload = String(bound[11]);
+        const stagedUploader = Number(bound[12]);
+        const dupServer = Number(bound[13]);
+        const dupUpload = String(bound[14]);
+        const dupNamePack = Number(bound[15]);
+        const dupName = String(bound[16]);
         if (
           !sql.includes("gc_sound_packs p WHERE p.id = ? AND p.server_id = ?") ||
           !sql.includes("gc_server_members") ||
+          !sql.includes("gc_upload_parts u WHERE u.upload_id = ? AND u.uploader_id = ?") ||
           !sql.includes("NOT EXISTS (SELECT 1 FROM gc_sound_pack_sounds WHERE pack_id = ? AND upload_id = ?)") ||
           !sql.includes("NOT EXISTS (SELECT 1 FROM gc_sound_pack_sounds WHERE pack_id = ? AND name = ?)")
         ) {
           return { meta: { changes: 0 } };
+        }
+        if (vanish.includes(stagedUpload)) staging.delete(stagedUpload);
+        if (!staging.has(stagedUpload) || stagedUploader !== memberId) {
+          return { meta: { changes: 0 } }; // the sweep arm: no staged bytes, no clip
         }
         const pack = packOf(packId);
         if (!pack || pack.server_id !== serverId) return { meta: { changes: 0 } };
@@ -548,6 +558,29 @@ test("a member posts a clip candidate against the staged bytes: the size, mime, 
     envOf(db), {},
   );
   assert.equal(missing.status, 404, "an unstaged upload answers the staging lane's 404");
+});
+
+test("a clip cannot be born on staging bytes a sweep removed mid-window — the in-SQL staging arm refuses", async () => {
+  const source = MODULE_SOURCE();
+  assert.match(
+    source,
+    /AND EXISTS \(SELECT 1 FROM gc_upload_parts u WHERE u\.upload_id = \? AND u\.uploader_id = \?\)/,
+    "the candidate INSERT carries the staged-bytes arm (no verify-to-insert sweep race mints a clip)",
+  );
+  // The verify-to-insert window: the spread/head reads answer the staged set,
+  // then the swept bytes are gone by INSERT time (the encoded arm's refusal).
+  const db = packDb({
+    roster: [USER_ID],
+    packs: [[PACK_ID, { server_id: SERVER_ID, name: "theater" }]],
+    staging: [[STAGED_ID, { parts: [mp3Head()] }]],
+    vanishAtInsert: [STAGED_ID],
+  });
+  const response = await worker.fetch(
+    authed("POST", `/api/servers/${SERVER_ID}/sound-packs/${PACK_ID}/clips`, { uploadId: STAGED_ID, name: "hello" }),
+    envOf(db), {},
+  );
+  assert.equal(response.status, 404, "the raced insert answers changes 0 → the shared 404");
+  assert.equal(db.clips.length, 0, "no row for the swept bytes");
 });
 
 test("approve commits a candidate through the statement gate only, under the resolver's slots cap", async () => {

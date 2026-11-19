@@ -26,7 +26,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { handleUploadRoutes, sweepStaleUploadParts, UPLOAD_TIER_ERROR, UPLOAD_UNKNOWN_ERROR, UPLOAD_INCOMPLETE_ERROR, UPLOAD_ONLY_IMAGES_ERROR, UPLOAD_PART_INVALID_ERROR } from "../api/uploads.mjs";
+import { handleUploadRoutes, sweepStaleUploadParts, ABANDON_CLEAR_SQL, UPLOAD_TIER_ERROR, UPLOAD_UNKNOWN_ERROR, UPLOAD_INCOMPLETE_ERROR, UPLOAD_ONLY_IMAGES_ERROR, UPLOAD_PART_INVALID_ERROR } from "../api/uploads.mjs";
 import { handleMediaRoutes } from "../api/media.mjs";
 import { handleMessageRoutes, sendMessageToChannel } from "../api/messages.mjs";
 import { _resetFilterWordsCacheForTests } from "../api/filterstore.mjs";
@@ -574,6 +574,42 @@ test("the sweep arm: a TTL delete that never touches a clip-referenced token", a
   assert.equal(clear.bound.length, 1, "the cutoff is the one bind");
   assert.equal(Number(clear.bound[0]), at - GC_UPLOAD_STAGING_TTL_SECONDS,
     "the cutoff is now minus the TTL constant");
+});
+
+test("the abandon's clear carries its own in-SQL clip-reference arm (the check-then-act window closes)", async () => {
+  const { row: sessionRows, headers } = await sessionFixtures();
+  const db = fakeDb([sessionRoute(sessionRows)]);
+  const response = await dispatchUploads(
+    new Request(ORIGIN + "/api/uploads/AAAAAAAAAAAA", { method: "DELETE", headers: { Origin: ORIGIN, ...headers } }),
+    envWithLimiters({ GOOBER_DB: db }),
+  );
+  assert.equal(response.status, 200);
+  const clear = db.calls.find((call) => call.call === "run" && call.sql.startsWith("DELETE FROM gc_upload_parts"));
+  assert.ok(clear, "the route's one clear ran");
+  assert.ok(
+    clear.sql.includes(
+      "AND NOT EXISTS (SELECT 1 FROM gc_sound_pack_sounds WHERE upload_id = gc_upload_parts.upload_id)",
+    ),
+    "a clip row born between the 409 check and the clear refuses IN THE STATEMENT",
+  );
+  assert.equal((clear.sql.match(/\?/g) || []).length, clear.bound.length,
+    "the arm is correlated — no new binds ride it");
+});
+
+test("the clear statement itself refuses a clip-referenced token and still clears an orphan", async () => {
+  // The encoded engine: the arm's rule applied at the statement — a token a
+  // candidate/approved clip points at deletes nothing, an orphan deletes.
+  const REFERENCED = "REFERENCEDAA";
+  const db = fakeDb([
+    {
+      test: (sql) => sql === ABANDON_CLEAR_SQL,
+      run: async (bound) => ({ meta: { changes: bound[0] === REFERENCED ? 0 : 1 } }),
+    },
+  ]);
+  const refused = await db.prepare(ABANDON_CLEAR_SQL).bind(REFERENCED, USER_ID).run();
+  assert.equal(Number(refused.meta.changes), 0, "the clip-referenced token refuses");
+  const orphan = await db.prepare(ABANDON_CLEAR_SQL).bind("ORPHANEDAAAA", USER_ID).run();
+  assert.equal(Number(orphan.meta.changes), 1, "an unreferenced token still clears");
 });
 
 // --- media.mjs's paged large-row serving ------------------------------------------
