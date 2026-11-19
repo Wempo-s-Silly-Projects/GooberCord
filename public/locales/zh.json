@@ -508,5 +508,17 @@
   "gc.settings.welcomeCard.fieldLabel": "卡片文字",
   "gc.settings.welcomeCard.save": "更新欢迎卡片",
   "gc.settings.welcomeCard.confirmHeading": "确认欢迎卡片",
-  "gc.settings.welcomeCard.saved": "欢迎卡片已更新。"
+  "gc.settings.welcomeCard.saved": "欢迎卡片已更新。",
+  "gc.settings.boostTier.heading": "Boost 等级",
+  "gc.settings.boostTier.tierBadge": "等级 {{level}}",
+  "gc.settings.boostTier.boostsLine": "Boost：{{boosts}}",
+  "gc.settings.boostTier.nextLabel": "距离等级 {{level}} 的进度",
+  "gc.settings.boostTier.progress": "{{progress}}/{{goal}}",
+  "gc.settings.boostTier.topLevel": "最高等级 — 所有福利已全部生效。",
+  "gc.settings.boostTier.capsLine": "表情 {{emoji}} · 贴纸 {{stickers}} · 音效板 {{soundboard}}",
+  "gc.settings.boostTier.perks.heading": "本等级的福利",
+  "gc.settings.boostTier.perks.stream": "视频最高 {{height}}p、{{fps}} fps",
+  "gc.settings.boostTier.perks.audio": "音频 {{bitrate}} kbps",
+  "gc.settings.boostTier.perks.upload": "上传最高 {{size}} 字节",
+  "gc.settings.boostTier.perks.stage": "舞台 {{seats}} 个席位"
 }

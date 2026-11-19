@@ -525,5 +525,17 @@
   "gc.settings.welcomeCard.fieldLabel": "Текст приветствия",
   "gc.settings.welcomeCard.save": "Обновить карточку приветствия",
   "gc.settings.welcomeCard.confirmHeading": "Подтвердить карточку приветствия",
-  "gc.settings.welcomeCard.saved": "Карточка приветствия обновлена."
+  "gc.settings.welcomeCard.saved": "Карточка приветствия обновлена.",
+  "gc.settings.boostTier.heading": "Уровень бустов",
+  "gc.settings.boostTier.tierBadge": "Уровень {{level}}",
+  "gc.settings.boostTier.boostsLine": "Бусты: {{boosts}}",
+  "gc.settings.boostTier.nextLabel": "Прогресс до уровня {{level}}",
+  "gc.settings.boostTier.progress": "{{progress}} из {{goal}}",
+  "gc.settings.boostTier.topLevel": "Максимальный уровень — все привилегии активны.",
+  "gc.settings.boostTier.capsLine": "Эмодзи {{emoji}} · Стикеры {{stickers}} · Саундборд {{soundboard}}",
+  "gc.settings.boostTier.perks.heading": "Привилегии этого уровня",
+  "gc.settings.boostTier.perks.stream": "Видео до {{height}}p при {{fps}} fps",
+  "gc.settings.boostTier.perks.audio": "Аудио {{bitrate}} кбит/с",
+  "gc.settings.boostTier.perks.upload": "Загрузки до {{size}} байт",
+  "gc.settings.boostTier.perks.stage": "{{seats}} мест на сцене"
 }

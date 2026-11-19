@@ -49,6 +49,7 @@ import { handleQuestRoutes } from "./api/quests.mjs";
 import { handleCapsuleRoutes } from "./api/capsules.mjs";
 import { handleBookmarkRoutes } from "./api/bookmarks.mjs";
 import { handleWelcomeCardRoutes } from "./api/welcome-card.mjs";
+import { handleBoostTierRoutes } from "./api/boost-tier.mjs";
 import { ensureFilterWords } from "./api/filterstore.mjs";
 import { HttpError, json, rateLimit, secureResponse, unconditional } from "./api/core/http.mjs";
 // The ONE error classifier and the dispatch chain come from the vendored
@@ -224,6 +225,7 @@ const API_HANDLERS = [
   handleCapsuleRoutes,
   handleBookmarkRoutes,
   handleWelcomeCardRoutes,
+  handleBoostTierRoutes,
 ];
 // The chain is built once, from the vendor's dispatch() instead of an inlined
 // handlers-for-loop.

@@ -508,5 +508,17 @@
   "gc.settings.welcomeCard.fieldLabel": "Begrüßungstext",
   "gc.settings.welcomeCard.save": "Begrüßungskarte aktualisieren",
   "gc.settings.welcomeCard.confirmHeading": "Begrüßungskarte bestätigen",
-  "gc.settings.welcomeCard.saved": "Begrüßungskarte aktualisiert."
+  "gc.settings.welcomeCard.saved": "Begrüßungskarte aktualisiert.",
+  "gc.settings.boostTier.heading": "Boost-Stufe",
+  "gc.settings.boostTier.tierBadge": "Stufe {{level}}",
+  "gc.settings.boostTier.boostsLine": "Booster: {{boosts}}",
+  "gc.settings.boostTier.nextLabel": "Fortschritt zu Stufe {{level}}",
+  "gc.settings.boostTier.progress": "{{progress}} von {{goal}}",
+  "gc.settings.boostTier.topLevel": "Höchste Stufe — jede Gunst ist aktiv.",
+  "gc.settings.boostTier.capsLine": "Emoji {{emoji}} · Sticker {{stickers}} · Soundboard {{soundboard}}",
+  "gc.settings.boostTier.perks.heading": "Die Gunsten dieser Stufe",
+  "gc.settings.boostTier.perks.stream": "Video bis {{height}}p bei {{fps}} fps",
+  "gc.settings.boostTier.perks.audio": "Audio mit {{bitrate}} kbps",
+  "gc.settings.boostTier.perks.upload": "Uploads bis zu {{size}} Bytes",
+  "gc.settings.boostTier.perks.stage": "{{seats}} Bühnenplätze"
 }

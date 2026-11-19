@@ -508,5 +508,17 @@
   "gc.settings.welcomeCard.fieldLabel": "Welcome blurb",
   "gc.settings.welcomeCard.save": "Update welcome card",
   "gc.settings.welcomeCard.confirmHeading": "Confirm the welcome card",
-  "gc.settings.welcomeCard.saved": "Welcome card updated."
+  "gc.settings.welcomeCard.saved": "Welcome card updated.",
+  "gc.settings.boostTier.heading": "Boost tier",
+  "gc.settings.boostTier.tierBadge": "Level {{level}}",
+  "gc.settings.boostTier.boostsLine": "Boosts: {{boosts}}",
+  "gc.settings.boostTier.nextLabel": "Progress to level {{level}}",
+  "gc.settings.boostTier.progress": "{{progress}} / {{goal}}",
+  "gc.settings.boostTier.topLevel": "Top level — every blessing is live.",
+  "gc.settings.boostTier.capsLine": "Emoji {{emoji}} · Stickers {{stickers}} · Soundboard {{soundboard}}",
+  "gc.settings.boostTier.perks.heading": "This level's perks",
+  "gc.settings.boostTier.perks.stream": "Video up to {{height}}p at {{fps}} fps",
+  "gc.settings.boostTier.perks.audio": "Audio at {{bitrate}} kbps",
+  "gc.settings.boostTier.perks.upload": "Uploads up to {{size}} bytes",
+  "gc.settings.boostTier.perks.stage": "{{seats}} stage seats"
 }

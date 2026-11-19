@@ -509,5 +509,17 @@
   "gc.settings.welcomeCard.fieldLabel": "Texto de bienvenida",
   "gc.settings.welcomeCard.save": "Actualizar tarjeta de bienvenida",
   "gc.settings.welcomeCard.confirmHeading": "Confirmar la tarjeta de bienvenida",
-  "gc.settings.welcomeCard.saved": "Tarjeta de bienvenida actualizada."
+  "gc.settings.welcomeCard.saved": "Tarjeta de bienvenida actualizada.",
+  "gc.settings.boostTier.heading": "Nivel de boosts",
+  "gc.settings.boostTier.tierBadge": "Nivel {{level}}",
+  "gc.settings.boostTier.boostsLine": "Impulsos: {{boosts}}",
+  "gc.settings.boostTier.nextLabel": "Progreso al nivel {{level}}",
+  "gc.settings.boostTier.progress": "{{progress}} de {{goal}}",
+  "gc.settings.boostTier.topLevel": "Nivel máximo — todos los beneficios están activos.",
+  "gc.settings.boostTier.capsLine": "Emojis {{emoji}} · Stickers {{stickers}} · Panel de sonido {{soundboard}}",
+  "gc.settings.boostTier.perks.heading": "Beneficios de este nivel",
+  "gc.settings.boostTier.perks.stream": "Vídeo hasta {{height}}p a {{fps}} fps",
+  "gc.settings.boostTier.perks.audio": "Audio a {{bitrate}} kbps",
+  "gc.settings.boostTier.perks.upload": "Subidas de hasta {{size}} bytes",
+  "gc.settings.boostTier.perks.stage": "{{seats}} asientos de escenario"
 }

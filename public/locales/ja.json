@@ -508,5 +508,17 @@
   "gc.settings.welcomeCard.fieldLabel": "カードの文章",
   "gc.settings.welcomeCard.save": "ウェルカムカードを更新",
   "gc.settings.welcomeCard.confirmHeading": "ウェルカムカードの確認",
-  "gc.settings.welcomeCard.saved": "ウェルカムカードを更新しました。"
+  "gc.settings.welcomeCard.saved": "ウェルカムカードを更新しました。",
+  "gc.settings.boostTier.heading": "ブースト階層",
+  "gc.settings.boostTier.tierBadge": "レベル {{level}}",
+  "gc.settings.boostTier.boostsLine": "ブースト: {{boosts}}",
+  "gc.settings.boostTier.nextLabel": "レベル {{level}} への進捗",
+  "gc.settings.boostTier.progress": "{{progress}}/{{goal}}",
+  "gc.settings.boostTier.topLevel": "最上位の階層 — すべての特典が有効です。",
+  "gc.settings.boostTier.capsLine": "絵文字 {{emoji}} · スタンプ {{stickers}} · サウンドボード {{soundboard}}",
+  "gc.settings.boostTier.perks.heading": "この階層の特典",
+  "gc.settings.boostTier.perks.stream": "{{fps}} fps で最大 {{height}}p の動画",
+  "gc.settings.boostTier.perks.audio": "音声 {{bitrate}} kbps",
+  "gc.settings.boostTier.perks.upload": "最大 {{size}} バイトのアップロード",
+  "gc.settings.boostTier.perks.stage": "ステージ {{seats}} 席"
 }

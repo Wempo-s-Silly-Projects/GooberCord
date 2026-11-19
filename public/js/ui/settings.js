@@ -179,12 +179,54 @@ function welcomeCardPanel(serverId) {
   return h("div", { class: "panel" },
     h("h3", { text: t("gc.settings.welcomeCard.heading") }), form, note, errorLine);
 }
+
+// The boost tier (wave-12): the 0023 matrix's face — a READ-ONLY panel. ONE
+// auto-GET per visit (the defaults law: the panel's own open pulls the
+// tier), every painted number rides the payload (the client NEVER mirrors
+// the level table — no GC_BOOST_LEVELS mirror, no local thresholds), the
+// next floor's progress rides the {{progress}}/{{goal}} neutral-seat idiom
+// (gc.economy.quests.progress's shape), and nextLevel null seats the
+// top-level line instead of a bar. levelPerks paints as-is (the resolver's
+// null-entry law keeps it silent at level 0), refusals paint the server's
+// string verbatim (G-2).
+function boostTierPanel(serverId) {
+  const errorLine = inlineError();
+  const well = h("div", { class: "panel" },
+    h("h3", { text: t("gc.settings.boostTier.heading") }), errorLine);
+  api(`/api/servers/${serverId}/boost-tier`).then((payload) => {
+    const nextLevel = payload?.nextLevel ?? null;
+    const perks = payload?.levelPerks ?? null;
+    well.append(
+      h("p", { class: "boost-tier-badge", text: t("gc.settings.boostTier.tierBadge", { level: payload?.level }) }),
+      h("p", { class: "muted", text: t("gc.settings.boostTier.boostsLine", { boosts: payload?.boosts }) }),
+      nextLevel !== null
+        ? h("p", { class: "muted", text: t("gc.settings.boostTier.nextLabel", { level: nextLevel.level }) })
+        : h("p", { class: "muted", text: t("gc.settings.boostTier.topLevel") }),
+      nextLevel !== null
+        ? h("p", { class: "count-line", text: t("gc.settings.boostTier.progress", { progress: payload.boosts, goal: nextLevel.boosts }) })
+        : null,
+      h("p", { class: "count-line", text: t("gc.settings.boostTier.capsLine", {
+        emoji: payload?.caps?.emoji, stickers: payload?.caps?.stickers, soundboard: payload?.caps?.soundboard }) }),
+      perks !== null ? h("p", { class: "muted perks-heading", text: t("gc.settings.boostTier.perks.heading") }) : null,
+      perks !== null ? h("p", { class: "muted", text: t("gc.settings.boostTier.perks.stream", { height: perks.streamHeight, fps: perks.streamFps }) }) : null,
+      perks !== null ? h("p", { class: "muted", text: t("gc.settings.boostTier.perks.audio", { bitrate: perks.audioBitrate }) }) : null,
+      perks !== null ? h("p", { class: "muted", text: t("gc.settings.boostTier.perks.upload", { size: perks.uploadBytes }) }) : null,
+      perks !== null ? h("p", { class: "muted", text: t("gc.settings.boostTier.perks.stage", { seats: perks.stageSeats }) }) : null,
+    );
+  }).catch((error) => {
+    errorLine.textContent = error.message; // the shared 404 / 429 family paints verbatim (G-2)
+  });
+  return well;
+}
 // --- E1: the server settings page ---------------------------------------------
 
 export function renderServerSettings(route, mount) {
   const serverId = Number(route.params.serverId);
   manageGate(mount, serverId, t("gc.settings.heading"), (server) => {
     const nodes = [settingsForm(serverId, server), rulesPanel(serverId), welcomeCardPanel(serverId)];
+    // The boost tier joins the member-facing build (wave-12) — riding AFTER the
+    // base panels, BEFORE the owner-only seats (the nodes.push registration idiom).
+    nodes.push(boostTierPanel(serverId));
     if (server.role === "owner") nodes.push(deletePanel(serverId), transferPanel(serverId));
     return nodes;
   });

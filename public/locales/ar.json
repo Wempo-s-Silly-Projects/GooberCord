@@ -522,5 +522,17 @@
   "gc.settings.welcomeCard.fieldLabel": "نص الترحيب",
   "gc.settings.welcomeCard.save": "تحديث بطاقة الترحيب",
   "gc.settings.welcomeCard.confirmHeading": "تأكيد بطاقة الترحيب",
-  "gc.settings.welcomeCard.saved": "تم تحديث بطاقة الترحيب."
+  "gc.settings.welcomeCard.saved": "تم تحديث بطاقة الترحيب.",
+  "gc.settings.boostTier.heading": "مستوى التعزيزات",
+  "gc.settings.boostTier.tierBadge": "المستوى {{level}}",
+  "gc.settings.boostTier.boostsLine": "التعزيزات: {{boosts}}",
+  "gc.settings.boostTier.nextLabel": "التقدم إلى المستوى {{level}}",
+  "gc.settings.boostTier.progress": "{{progress}} من {{goal}}",
+  "gc.settings.boostTier.topLevel": "المستوى الأعلى — كل المكافآت مفعّلة.",
+  "gc.settings.boostTier.capsLine": "الإيموجي {{emoji}} · الملصقات {{stickers}} • السبورة الصوتية {{soundboard}}",
+  "gc.settings.boostTier.perks.heading": "مكافآت هذا المستوى",
+  "gc.settings.boostTier.perks.stream": "فيديو حتى {{height}}p بمعدل {{fps}} fps",
+  "gc.settings.boostTier.perks.audio": "الصوت بسرعة {{bitrate}} kbps",
+  "gc.settings.boostTier.perks.upload": "التحميلات حتى {{size}} بايت",
+  "gc.settings.boostTier.perks.stage": "{{seats}} مقعدًا على المسرح"
 }
