@@ -136,7 +136,7 @@ test("NO avatar reference enters the messages/chat payload surface", () => {
 // uncommitted handback has no committed range to fingerprint.
 test("freeze: the frozen paths stay untouched across LANE_BASE..LANE_TIP", () => {
   const LANE_BASE = "44bed23";
-  const LANE_TIP = "LANE_TIP";
+  const LANE_TIP = "5c5e42f";
   const tip = LANE_TIP === "LANE_TIP" ? LANE_BASE : LANE_TIP;
   let touched;
   try {
