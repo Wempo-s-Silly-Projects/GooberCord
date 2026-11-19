@@ -128,7 +128,7 @@ function publicCapsule(row, body = undefined) {
   return capsule;
 }
 
-async function handleCapsuleCreateRoute(request, env, serverId) {
+async function handleCapsuleCreateRoute(request, env, serverId, clock) {
   const userId = await memberGate(request, env, serverId);
   await rateLimit(request, env, "write", "capsule:create:" + serverId + ":" + userId);
   const payload = await readJson(request);
@@ -137,7 +137,7 @@ async function handleCapsuleCreateRoute(request, env, serverId) {
   if (text.length < 1 || text.length > GC_CAPSULE_BODY_MAX) {
     throw new HttpError(400, "Your letter needs between 1 and 2000 characters.");
   }
-  const now = nowSeconds();
+  const now = clock();
   const revealAt = payload?.revealAt;
   if (!Number.isInteger(revealAt) ||
     revealAt - now < GC_CAPSULE_MIN_AHEAD_SECONDS ||
@@ -166,10 +166,10 @@ async function handleCapsuleCreateRoute(request, env, serverId) {
   }), 201);
 }
 
-async function handleCapsuleMineRoute(request, env, serverId) {
+async function handleCapsuleMineRoute(request, env, serverId, clock) {
   const userId = await memberGate(request, env, serverId);
   await rateLimit(request, env, "read", "capsule:mine:" + serverId + ":" + userId);
-  const now = nowSeconds();
+  const now = clock();
   const page = (await env.GOOBER_DB.prepare(CAPSULES_MINE_SQL)
     .bind(userId, serverId).all()).results || [];
   // sealed recomputes per row against now — no stored state, no timers.
@@ -181,10 +181,10 @@ async function handleCapsuleMineRoute(request, env, serverId) {
   });
 }
 
-async function handleCapsuleDeleteRoute(request, env, serverId, capsuleId) {
+async function handleCapsuleDeleteRoute(request, env, serverId, capsuleId, clock) {
   const userId = await memberGate(request, env, serverId);
   await rateLimit(request, env, "write", "capsule:delete:" + serverId + ":" + userId);
-  const now = nowSeconds();
+  const now = clock();
   const row = await env.GOOBER_DB.prepare(CAPSULE_AUTHOR_READ_SQL)
     .bind(capsuleId, userId).first();
   if (!row) throw new HttpError(404, "This capsule does not exist or you cannot view it.");
@@ -203,10 +203,10 @@ async function handleCapsuleDeleteRoute(request, env, serverId, capsuleId) {
   return json({ ok: true, id: Number(capsuleId) });
 }
 
-async function handleCapsuleRevealRoute(request, env, serverId, capsuleId) {
+async function handleCapsuleRevealRoute(request, env, serverId, capsuleId, clock) {
   const userId = await memberGate(request, env, serverId);
   await rateLimit(request, env, "read", "capsule:reveal:" + serverId + ":" + userId);
-  const now = nowSeconds();
+  const now = clock();
   const authorArm = await env.GOOBER_DB.prepare(CAPSULE_AUTHOR_READ_SQL)
     .bind(capsuleId, userId).first();
   if (authorArm) {
@@ -239,19 +239,22 @@ async function handleCapsuleRevealRoute(request, env, serverId, capsuleId) {
   return json(publicCapsule(row, letter?.body ?? ""));
 }
 
-export async function handleCapsuleRoutes(request, env, url, path, method, ctx) {
+// The optional clock seam (tests inject one fixed clock so the schedule's
+// window edges cannot slip between the caller's read and the handler's);
+// production rides the default real wall clock, unchanged.
+export async function handleCapsuleRoutes(request, env, url, path, method, ctx, clock = nowSeconds) {
   void url;
   void ctx;
 
   const createMatch = method === "POST"
     ? path.match(/^\/api\/servers\/(0|[1-9][0-9]*)\/capsules$/)
     : null;
-  if (createMatch) return handleCapsuleCreateRoute(request, env, Number(createMatch[1]));
+  if (createMatch) return handleCapsuleCreateRoute(request, env, Number(createMatch[1]), clock);
 
   const mineMatch = method === "GET"
     ? path.match(/^\/api\/servers\/(0|[1-9][0-9]*)\/capsules\/mine$/)
     : null;
-  if (mineMatch) return handleCapsuleMineRoute(request, env, Number(mineMatch[1]));
+  if (mineMatch) return handleCapsuleMineRoute(request, env, Number(mineMatch[1]), clock);
 
   const capsuleMatch = (method === "GET" || method === "DELETE")
     ? path.match(/^\/api\/servers\/(0|[1-9][0-9]*)\/capsules\/(0|[1-9][0-9]*)$/)
@@ -260,8 +263,8 @@ export async function handleCapsuleRoutes(request, env, url, path, method, ctx) 
     const serverId = Number(capsuleMatch[1]);
     const capsuleId = Number(capsuleMatch[2]);
     return method === "GET"
-      ? handleCapsuleRevealRoute(request, env, serverId, capsuleId)
-      : handleCapsuleDeleteRoute(request, env, serverId, capsuleId);
+      ? handleCapsuleRevealRoute(request, env, serverId, capsuleId, clock)
+      : handleCapsuleDeleteRoute(request, env, serverId, capsuleId, clock);
   }
 
   return undefined;
