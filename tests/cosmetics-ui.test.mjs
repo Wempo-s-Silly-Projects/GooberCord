@@ -153,6 +153,6 @@ test("the plural seats carry the arms their rules demand — ru's mod-10 seat, a
   const ar = JSON.parse(readFileSync(join(HERE, "../public/locales/ar.json"), "utf8"));
   assert.ok("gc.economy.items.costPlus_few" in ru, "ru carries the few arm (2–4)");
   assert.ok("gc.economy.items.uses_few" in ru, "ru's uses line carries the few arm");
-  assert.ok("gc.economy.items.uses_few" in ar, "ar carries the few arm (2–10)");
+  assert.ok("gc.economy.items.uses_few" in ar, "ar carries the few arm (3-10: ar two=2, few=3-10)");
   assert.ok(!("gc.economy.items.costPlus_few" in enData), "en's two-branch seat stays two-branch");
 });
