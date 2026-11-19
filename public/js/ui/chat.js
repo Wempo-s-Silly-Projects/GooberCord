@@ -1113,6 +1113,7 @@ function buildComposer(channelId, channel, column) {
       imageSeat.replaceChildren(h("span", { class: "attach-strip" },
         preview, h("span", { class: "muted", text: t("gc.chat.attach.pending") }), remove));
     } catch (error) {
+      imageSeat.replaceChildren(); // the in-flight strip dies with its door — no dead remove button rides the nulled door
       laneDoor = null;
       errorLine.textContent = error.message; // the server's refusal, verbatim
     }

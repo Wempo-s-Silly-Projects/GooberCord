@@ -29,7 +29,7 @@ import { t } from "../i18n.js";
 // (api/uploads.mjs:225 and 261), never raised client-side. chat.js imports
 // these; they are declared ONCE here.
 export const UI_ATTACHMENT_FREE_MAX = 20971520; // MAX_ATTACHMENT_BYTES
-export const UI_UPLOAD_PART_BYTES = 1048576; // GC_UPLOAD_PART_BYTES (16 × ATTACHMENT_CHUNK_BYTES)
+export const UI_UPLOAD_PART_BYTES = 1024000; // GC_UPLOAD_PART_BYTES (GC_UPLOAD_PART_CHUNKS 16 × ATTACHMENT_CHUNK_BYTES 64_000)
 export const UI_UPLOAD_LANE_MAX_BYTES = 131072000; // GC_UPLOAD_LANE_MAX_BYTES
 
 // The uploadId shape the commit + abandon routes resolve (api/uploads.mjs:211
@@ -53,6 +53,7 @@ export function ridesChunkLane(fileSize) {
 // already-committed token's abandon is the same 200 no-op).
 export function openChunkedUpload(file) {
   const totalParts = Math.ceil(file.size / UI_UPLOAD_PART_BYTES);
+  const controller = new AbortController(); // the cancel act's abort — an in-flight part can never 201 a staging after the abandon
   let uploadId = null; // the first part's staging token, the abandon route's key
   let cancelled = false; // the composer's cancel act arms it
 
@@ -67,14 +68,22 @@ export function openChunkedUpload(file) {
   const send = async (onPart = null) => {
     try {
       for (let seq = 0; seq < totalParts; seq += 1) {
-        if (cancelled) return null;
+        if (cancelled) {
+          await abandonUpload(); // the cancelled return never leaves an orphan staging
+          return null;
+        }
         const partEnd = Math.min((seq + 1) * UI_UPLOAD_PART_BYTES, file.size);
         const part = file.slice(seq * UI_UPLOAD_PART_BYTES, partEnd);
         const form = new FormData();
         form.append("chunk", part, file.name);
         form.append("seq", String(seq));
+        if (seq > 0) form.append("uploadId", uploadId); // the continuation's token (api/uploads.mjs:240-242, 400 otherwise)
         form.append("size", String(file.size));
-        const answer = await api("/api/uploads/chunks", { method: "POST", body: form });
+        const answer = await api("/api/uploads/chunks", {
+          method: "POST",
+          body: form,
+          signal: controller.signal,
+        });
         if (seq === 0) {
           if (!(typeof answer?.uploadId === "string" && UPLOAD_ID_OK_RE.test(answer.uploadId))) {
             throw new Error(t("gc.chat.attach.failed"));
@@ -86,6 +95,7 @@ export function openChunkedUpload(file) {
       const committed = await api(`/api/uploads/${uploadId}/commit`, {
         method: "POST",
         body: { size: file.size },
+        signal: controller.signal,
       });
       const attachment = committed?.attachment;
       if (!attachment || !Number.isInteger(attachment.id)) {
@@ -104,6 +114,7 @@ export function openChunkedUpload(file) {
 
   const cancel = async () => {
     cancelled = true;
+    controller.abort(); // the wire dies before the DELETE — no part can 201 after the abandon
     await abandonUpload();
   };
 

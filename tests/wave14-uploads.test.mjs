@@ -62,13 +62,30 @@ test("the client mirrors ride the G-4 literal law with provenance, declared ONCE
   assert.match(UPLOADS_UI, /G-4: MAX_ATTACHMENT_BYTES, GC_UPLOAD_PART_BYTES and/);
   assert.match(UPLOADS_UI, /GC_UPLOAD_LANE_MAX_BYTES \(constants\.mjs\)/);
   assert.match(UPLOADS_UI, /export const UI_ATTACHMENT_FREE_MAX = 20971520;/);
-  assert.match(UPLOADS_UI, /export const UI_UPLOAD_PART_BYTES = 1048576;/);
+  assert.match(UPLOADS_UI, /export const UI_UPLOAD_PART_BYTES = 1024000;/);
   assert.match(UPLOADS_UI, /export const UI_UPLOAD_LANE_MAX_BYTES = 131072000;/);
   assert.doesNotMatch(UPLOADS_UI, /import .*constants\.mjs/, "the client never imports constants.mjs");
   // One seat: chat.js re-exports (the existing ui-chat pin keeps working) and
   // never re-declares the mirror out from under uploads.js.
   assert.doesNotMatch(CHAT, /export const UI_ATTACHMENT_FREE_MAX/);
   assert.match(CHAT, /export \{ UI_ATTACHMENT_FREE_MAX \};/);
+});
+
+test("the part-bytes mirror EQUALS the constants.mjs formula result — computed, not asserted", () => {
+  // C1: the mirror once carried an invented MiB-rounded literal (1048576)
+  // while the backend's GC_UPLOAD_PART_BYTES = 16 × 64_000 = 1,024,000 — a
+  // green suite over a dead lane. The pin now computes the backend formula
+  // from constants.mjs and demands byte-equality with the mirror, BOTH ways.
+  const chunks = Number(CONSTANTS.match(/export const GC_UPLOAD_PART_CHUNKS = (\d+);/)?.[1]);
+  const chunkBytes = Number(CONSTANTS.match(/export const ATTACHMENT_CHUNK_BYTES = (\d+);/)?.[1]);
+  const partsMax = Number(CONSTANTS.match(/export const GC_UPLOAD_PARTS_MAX = (\d+);/)?.[1]);
+  assert.equal(chunks * chunkBytes, 1024000, "the backend's own formula");
+  const mirrorPart = Number(UPLOADS_UI.match(/export const UI_UPLOAD_PART_BYTES = (\d+);/)?.[1]);
+  assert.equal(mirrorPart, chunks * chunkBytes,
+    "UI_UPLOAD_PART_BYTES EQUALS GC_UPLOAD_PART_BYTES (constants.mjs), never an invented figure");
+  const mirrorLane = Number(UPLOADS_UI.match(/export const UI_UPLOAD_LANE_MAX_BYTES = (\d+);/)?.[1]);
+  assert.equal(mirrorLane, partsMax * (chunks * chunkBytes),
+    "UI_UPLOAD_LANE_MAX_BYTES EQUALS GC_UPLOAD_PARTS_MAX × GC_UPLOAD_PART_BYTES");
 });
 
 // --- the frozen backend route table (read, never edited) ---------------------
@@ -88,7 +105,7 @@ test("the frozen route table keeps its three arms (api/uploads.mjs:415-427)", ()
 // --- the door (public/js/ui/uploads.js) --------------------------------------
 
 test("the door slices bounded by GC_UPLOAD_PART_BYTES and reads the lane predicate", () => {
-  assert.match(UPLOADS_UI, /export const UI_UPLOAD_PART_BYTES = 1048576;/);
+  assert.match(UPLOADS_UI, /export const UI_UPLOAD_PART_BYTES = 1024000;/);
   assert.match(UPLOADS_UI,
     /const partEnd = Math\.min\(\(seq \+ 1\) \* UI_UPLOAD_PART_BYTES, file\.size\);/,
     "the slice end is bounded — the final part may be short, never oversized");
@@ -108,10 +125,13 @@ test("the door wires the three LIVE arms with the server's own field names", () 
     "the part position field (api/uploads.mjs fields.seq)");
   assert.match(UPLOADS_UI, /form\.append\("size", String\(file\.size\)\);/,
     "the FIRST part carries the declared total (api/uploads.mjs fields.size)");
-  assert.match(UPLOADS_UI, /api\("\/api\/uploads\/chunks", \{ method: "POST", body: form \}\)/,
+  assert.match(UPLOADS_UI, /if \(seq > 0\) form\.append\("uploadId", uploadId\);/,
+    "a continuation part carries the staged token (api/uploads.mjs:240-242 — fields.uploadId, 400 otherwise)");
+  assert.match(UPLOADS_UI,
+    /api\("\/api\/uploads\/chunks", \{\s*method: "POST",\s*body: form,\s*signal: controller\.signal,\s*\}\)/,
     "POST /api/uploads/chunks (api/uploads.mjs:415 route arm)");
   assert.match(UPLOADS_UI,
-    /api\(`\/api\/uploads\/\$\{uploadId\}\/commit`, \{\s*method: "POST",\s*body: \{ size: file\.size \},\s*\}\)/,
+    /api\(`\/api\/uploads\/\$\{uploadId\}\/commit`, \{\s*method: "POST",\s*body: \{ size: file\.size \},\s*signal: controller\.signal,\s*\}\)/,
     "POST :id/commit carries the size the commit verifies (api/uploads.mjs:287)");
   assert.match(UPLOADS_UI,
     /api\(`\/api\/uploads\/\$\{id\}`, \{ method: "DELETE" \}\)/,
@@ -137,6 +157,18 @@ test("cancel and refusal are their own acts; the abandon never rides a refusal",
     "a refused part paints verbatim upward; the door's act is the one abandon");
   assert.match(UPLOADS_UI, /if \(cancelled\) return null;/,
     "a cancelled act resolves null so the composer paints no invented refusal");
+  // H1: the wire is abortable and the cancelled return fires its own abandon —
+  // an aborted act can never orphan a staging row past the abandon DELETE.
+  assert.match(UPLOADS_UI, /const controller = new AbortController\(\);/,
+    "the act's abort lives in the door");
+  assert.match(UPLOADS_UI, /signal: controller\.signal/,
+    "the chunk POST arm is abortable (core/api.js passes signal through to fetch)");
+  assert.match(UPLOADS_UI,
+    /const cancel = async \(\) => \{\s*cancelled = true;\s*controller\.abort\(\);[\s\S]{0,120}?await abandonUpload\(\);/,
+    "the cancel act aborts the wire FIRST, then fires its explicit DELETE");
+  assert.match(UPLOADS_UI,
+    /if \(cancelled\) \{\s*await abandonUpload\(\);[\s\S]{0,120}?return null;\s*\}/,
+    "the cancelled return between parts fires its own abandon — no orphan staging");
 });
 
 test("the progress face is the sent slice count — no invented timers or bars", () => {
@@ -183,6 +215,11 @@ test("the progress strip paints the slice count through t() and the remove butto
     "a cancelled act clears the strip, never a refusal paint");
   assert.match(CHAT, /pendingLane = \{ attachmentId: laneAttachment\.id, door: settledDoor \};/,
     "the settled lane attach holds the committed row's id and its door for the abandon arm");
+  // H2: a refusal clears the in-flight strip — a dead laneRemove button
+  // never rides a nulled door.
+  assert.match(CHAT,
+    /catch \(error\) \{\s*imageSeat\.replaceChildren\(\);[\s\S]{0,200}?laneDoor = null;\s*errorLine\.textContent = error\.message;/,
+    "the lane catch clears imageSeat with the door; the refusal keeps its errorLine seat");
 });
 
 test("the send flow rides attach-by-id — the committed row links without re-riding the wire", () => {
@@ -220,13 +257,12 @@ test("the tier gate never rides the client — the mirrors carry no tier numbers
     "the door knows no tiers — attachmentCapBytes stays server-side (api/uploads.mjs:233)");
 });
 
-// --- the freeze (the wave-9 lesson, five instances) --------------------------
+// --- the freeze (the wave-9 lesson, six instances) --------------------------
 
 // LANE_BASE = 7aea317 (main tip at lane open). LANE_TIP = the wave's own
 // committed feat tip (the lead retargeted the placeholder 2026-11-19 — the
 // wave-9 freeze-pin lesson, sixth instance: the pin fingerprints the
 // lane's own range, never HEAD, or a later audit fix breaks this pin).
-// commit at commit time (the wave-9 freeze-pin lesson, fifth instance).
 test("diff scope: the frozen paths stay untouched across LANE_BASE..LANE_TIP", () => {
   const LANE_BASE = "7aea317";
   const LANE_TIP = "81efcae";
