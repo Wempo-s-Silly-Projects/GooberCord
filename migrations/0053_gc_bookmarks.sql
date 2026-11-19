@@ -16,10 +16,11 @@
 -- GNU Affero General Public License along with this program.  If not,
 -- see <https://www.gnu.org/licenses/>
 
--- 0054 — bookmarks (lane2-lifecycle recode, 2026-11-18): ONE table's DDL,
+-- 0053 — bookmarks (lane2-lifecycle recode, 2026-11-18): ONE table's DDL,
 -- nothing else (no shared-table edit, no ALTER, no FK, no seed). 0052
--- carried this lane's capsules table; 0053 stays the lead's free ordinal
--- (the expression and community pairs took 0050/0051).
+-- carried this lane's capsules table; 0053 is this lane's second ordinal
+-- by the lead ruling (first-lane-claimed-wins: expression took 0050,
+-- community took 0051; interactions and i18n ship no migrations).
 -- Scar note: the rewrite-era 0038 created this exact table and the whole
 -- 0029-0044 chain was ALREADY applied to the live shared wempo-forum-data
 -- D1 (0045's header proves 0044 rode that chain), so on the live D1 this

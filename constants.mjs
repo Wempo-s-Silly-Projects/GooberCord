@@ -410,7 +410,7 @@ export const GC_CAPSULE_MIN_AHEAD_SECONDS = 300;
 export const GC_CAPSULE_MAX_AHEAD_SECONDS = 2592000;
 export const GC_CAPSULES_MAX_OPEN_PER_MEMBER = 10;
 
-// Bookmarks (lane2-lifecycle recode, migration 0054): the private reading
+// Bookmarks (lane2-lifecycle recode, migration 0053): the private reading
 // list's only cap — the newest N of the caller's own pointers the GET
 // answers (GC-shaped — no Discord parity source; sized against the pin
 // read's own cap idiom, GC_PINS_MAX_PER_CHANNEL above).

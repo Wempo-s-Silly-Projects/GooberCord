@@ -16,7 +16,7 @@
 // GNU Affero General Public License along with this program.  If not,
 // see <https://www.gnu.org/licenses/>
 
-// Migrations 0052 (time capsules) and 0054 (bookmarks) scoping pins: both
+// Migrations 0052 (time capsules) and 0053 (bookmarks) scoping pins: both
 // are additive, CREATE-only migrations on the shared wempo-forum-data D1 —
 // every statement creates one gc_-prefixed object, and neither touches a
 // shared table, an existing row, or a foreign table's write path.
@@ -46,7 +46,7 @@ const gc = (value) => /^idx_gc_|^gc_/.test(String(value || "").replace(/^"(.*)"$
 
 for (const [file, name] of [
   ["0052_gc_time_capsules.sql", "0052 time capsules"],
-  ["0054_gc_bookmarks.sql", "0054 bookmarks"],
+  ["0053_gc_bookmarks.sql", "0053 bookmarks"],
 ]) {
   const sql = readFileSync(path.join(TESTS_DIR, "..", "migrations", file), "utf8");
   const statements = statementsOf(sql);

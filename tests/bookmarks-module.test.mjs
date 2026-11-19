@@ -16,7 +16,7 @@
 // GNU Affero General Public License along with this program.  If not,
 // see <https://www.gnu.org/licenses/>
 
-// Bookmarks (lane2-lifecycle recode, migration 0054): the private reading
+// Bookmarks (lane2-lifecycle recode, migration 0053): the private reading
 // queue. A bookmark is a THIN POINTER — owner_user_id, message_id,
 // saved_at, and NOTHING else (no text copy, no read-state, no note). The
 // contract the tests pin: the idempotent statement-gated save (a duplicate
