@@ -67,18 +67,52 @@ export async function buyCosmetic(item) {
   return result;
 }
 
-// POST /api/coins/cosmetics/equip — one equipped row per slot (the route
-// clears the slot, sets the picked row, and echoes the standing inventory).
-// The echo lands back in the store's shop shape; the rows re-read equipped
-// from the payload's inventory on the re-render (the toggle rides the
-// payload's inventory read, never a client-side guess).
+// POST /api/coins/cosmetics/equip — the equip arm clears the slot and sets
+// the picked row; the unequip arm rides the SAME route as the body's
+// `unequip: true` flag (no second wire). Either echo lands back in the
+// store's shop shape through the one weld: the inventory arm verbatim, and
+// the echoed rows' standing equipped state merged onto the payload's items —
+// the rows re-read equipped from the route's echo on the re-render, never a
+// client-side guess.
 export async function equipCosmetic(itemKey) {
   const result = await api("/api/coins/cosmetics/equip", {
     method: "POST", body: { itemKey },
   });
-  const shop = store.get("shop");
-  if (result?.inventory && shop) store.set({ shop: { ...shop, inventory: result.inventory } });
+  weldShopEcho(result);
   return result;
+}
+
+// POST /api/coins/cosmetics/equip with `unequip: true` — the route's one-row
+// verdict (an unequipped or lost row echoes the route's shared 404).
+export async function unequipCosmetic(itemKey) {
+  const result = await api("/api/coins/cosmetics/equip", {
+    method: "POST", body: { itemKey, unequip: true },
+  });
+  weldShopEcho(result);
+  return result;
+}
+
+// The echo weld: the route's echoed inventory is the only data it rides —
+// the store's items take the echoed rows' equipped state (the payload's own
+// shape, never re-derived); consumable rows carry no equipped state to weld.
+function weldShopEcho(result) {
+  const shop = store.get("shop");
+  const inventory = result?.inventory;
+  if (!Array.isArray(inventory) || !shop) return;
+  const equippedOf = new Map(
+    inventory
+      .filter((row) => row.kind !== "consumable")
+      .map((row) => [row.itemKey, row.equipped]),
+  );
+  store.set({
+    shop: {
+      ...shop,
+      inventory,
+      items: (shop.items || []).map((item) => equippedOf.has(item.item)
+        ? { ...item, equipped: equippedOf.get(item.item) }
+        : item),
+    },
+  });
 }
 
 // POST /api/me/cosmetics — GC's own apply surface (Accounts owns profile).
@@ -371,7 +405,8 @@ function inventoryRow(item, errorLine) {
   }
   if (item.kind === "own" && item.owned) {
     nodes.push(item.equipped
-      ? h("span", { class: "muted item-equipped", text: t("gc.economy.items.equipped") })
+      ? [h("span", { class: "muted item-equipped", text: t("gc.economy.items.equipped") }),
+        unequipButton(item, errorLine)]
       : equipButton(item, errorLine));
   } else {
     nodes.push(shopBuyButton(item, errorLine));
@@ -403,7 +438,26 @@ function equipButton(item, errorLine) {
         errorLine.textContent = "";
         router.renderCurrent();
       } catch (error) {
-        errorLine.textContent = error.message; // 403 lost row / 400 kind verbatim
+        errorLine.textContent = error.message; // 403 lost row / 409 empty pack / 400 kind verbatim
+      }
+    },
+  });
+}
+
+// The unequip control (the equipped own row's ride beside the span): ONE
+// verdict-gated route arm — the shared 404 (a lost or already-unequipped
+// row) renders verbatim inline.
+function unequipButton(item, errorLine) {
+  return h("button", {
+    class: "button button-quiet shop-unequip row-quiet-inline", type: "button",
+    text: t("gc.economy.items.unequip"),
+    onClick: async () => {
+      try {
+        await unequipCosmetic(item.item);
+        errorLine.textContent = "";
+        router.renderCurrent();
+      } catch (error) {
+        errorLine.textContent = error.message; // 404 lost/unequipped / 400 kind verbatim
       }
     },
   });

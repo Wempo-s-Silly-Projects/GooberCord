@@ -430,6 +430,7 @@
   "gc.economy.items.costPlus_other": "Goober+ {{count}} pièces",
   "gc.economy.items.equipped": "équipé",
   "gc.economy.items.equip": "Équiper",
+  "gc.economy.items.unequip": "Retirer",
   "gc.economy.items.fxBurstConfetti": "Boîte de rafale de confettis (5 utilisations)",
   "gc.economy.items.frameGold": "Cadre doré",
   "gc.economy.items.frameNeon": "Cadre néon",

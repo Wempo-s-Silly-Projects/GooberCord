@@ -430,6 +430,7 @@
   "gc.economy.items.costPlus_other": "Goober+ {{count}} moedas",
   "gc.economy.items.equipped": "equipado",
   "gc.economy.items.equip": "Equipar",
+  "gc.economy.items.unequip": "Remover",
   "gc.economy.items.fxBurstConfetti": "Pacote de confete (5 usos)",
   "gc.economy.items.frameGold": "Moldura dourada",
   "gc.economy.items.frameNeon": "Moldura de neon",

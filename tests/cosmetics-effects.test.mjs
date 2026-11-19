@@ -525,7 +525,7 @@ test("the fx_burst pack equips through the one batch (the effects slot's equippe
       statement.first = async () => {
         calls.push({ call: "first", sql, bound: statement.bound });
         if (SESSION_READ_TEST(sql)) return SESSION_ROW;
-        if (sql.startsWith("SELECT 1 AS owned FROM gc_cosmetic_inventory")) return { owned: 1 };
+        if (sql.startsWith("SELECT qty FROM gc_cosmetic_inventory")) return { qty: packRow.qty };
         return null;
       };
       statement.all = async () => ({ results: [{ ...packRow, equipped: 1 }] });

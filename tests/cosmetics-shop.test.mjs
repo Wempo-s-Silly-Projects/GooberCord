@@ -261,6 +261,20 @@ function shopDb(options = {}) {
       first: async (bound) => seats.has(bound[0] + ":" + bound[1]) ? { "1": 1 } : null,
     },
     {
+      // the unequip arm: [now, userId, itemKey] — the equipped = 1 arm IS the
+      // verdict; an unowned or already-unequipped row is changes = 0/404.
+      test: (sql) =>
+        sql.startsWith("UPDATE gc_cosmetic_inventory SET equipped = 0") &&
+        sql.includes("AND equipped = 1"),
+      run: (bound) => {
+        const [now, userId, itemKey] = bound;
+        const stored = invRow(userId, itemKey);
+        if (stored === null || stored.equipped !== 1) return { meta: { changes: 0 } };
+        inventory.set(userId + ":" + itemKey, { ...stored, equipped: 0, updated_at: now });
+        return { meta: { changes: 1 } };
+      },
+    },
+    {
       // the equip clear: [now, userId, ...slotSkus]
       test: (sql) => sql.startsWith("UPDATE gc_cosmetic_inventory SET equipped = 0"),
       run: (bound) => {
@@ -276,8 +290,13 @@ function shopDb(options = {}) {
       },
     },
     {
-      test: (sql) => sql.startsWith("SELECT 1 AS owned FROM gc_cosmetic_inventory"),
-      first: async (bound) => invRow(bound[0], bound[1]) ? { owned: 1 } : null,
+      // The ownership pre-check (the equip arm's read-before-batch): the qty
+      // rides beside the existence — the empty-pack guard spends the same row.
+      test: (sql) => sql.startsWith("SELECT qty FROM gc_cosmetic_inventory"),
+      first: async (bound) => {
+        const row = invRow(bound[0], bound[1]);
+        return row === null ? null : { qty: row.qty };
+      },
     },
     {
       // the equip set: [now, userId, itemKey]
@@ -803,6 +822,99 @@ test("the consume UPDATE carries its guards INSIDE the SQL", async () => {
   assert.match(use.sql, /qty > 0/, "the zero pack never decrements");
 });
 
+// --- the unequip arm (the UX rider: one verdict-gated row clear) -------------------
+
+test("unequipping is ONE verdict-gated write on the picked row, never a slot clear", async () => {
+  const db = shopDb({ ...SEED_FUNDS, inventory: [
+    { user_id: USER_ID, item_key: "frame_gold", kind: "own", qty: 1, equipped: 1, server_id: null },
+    { user_id: USER_ID, item_key: "frame_neon", kind: "own", qty: 1, equipped: 0, server_id: null },
+    { user_id: USER_ID, item_key: "channel_banner_dusk", kind: "own", qty: 1, equipped: 1, server_id: 11 },
+  ] });
+  const { env, limitCalls } = envWithLimiters(db);
+  const { built } = await authed("/api/coins/cosmetics/equip", {
+    method: "POST", body: { itemKey: "frame_gold", unequip: true },
+  });
+  const response = await dispatch(built, env);
+  assert.equal(response.status, 200);
+  const body = await bodyOf(response);
+  assert.equal(body.unequipped, true);
+  assert.equal(db.invRow(USER_ID, "frame_gold").equipped, 0);
+  assert.equal(db.invRow(USER_ID, "channel_banner_dusk").equipped, 1,
+    "the unequip clears ONLY the picked row — no sibling, no slot walk");
+  assert.ok(Array.isArray(body.inventory), "the standing inventory echoes back");
+  assert.equal(db.calls.filter((entry) => entry.call === "batch").length, 0,
+    "no slot-clear batch rides the arm");
+  const clear = db.calls.find(
+    (entry) => entry.call === "run" && entry.sql.startsWith("UPDATE gc_cosmetic_inventory SET equipped = 0"));
+  assert.ok(clear, "the unequip rode one guarded UPDATE");
+  assert.match(clear.sql, /AND equipped = 1/, "the verdict arm sits INSIDE the SQL");
+  assert.deepEqual(clear.bound.slice(1), [USER_ID, "frame_gold"],
+    "the row IS the whole target — no IN-list");
+  assert.equal(body.inventory.every((row) => row.itemKey !== "frame_gold" || row.equipped === false),
+    true, "the echo re-reads the cleared row");
+  assert.ok(limitCalls.includes(await sha256Hex("write:coins:cosmetic-equip:" + USER_ID)),
+    "the arm rides the equip family's write bucket");
+});
+
+test("the unequip verdicts: an already-unequipped and an unowned row are the same 404, no echo", async () => {
+  const db = shopDb({ ...SEED_FUNDS, inventory: [
+    { user_id: USER_ID, item_key: "frame_gold", kind: "own", qty: 1, equipped: 0, server_id: null },
+  ] });
+  const { env } = envWithLimiters(db);
+  const { built } = await authed("/api/coins/cosmetics/equip", {
+    method: "POST", body: { itemKey: "frame_gold", unequip: true },
+  });
+  const refused = await dispatch(built, env);
+  assert.equal(refused.status, 404, "a row already sitting unequipped loses the verdict");
+  assert.deepEqual(await bodyOf(refused), { error: "Cosmetic not found." });
+
+  const { built: unowned } = await authed("/api/coins/cosmetics/equip", {
+    method: "POST", body: { itemKey: "frame_neon", unequip: true },
+  });
+  assert.equal((await dispatch(unowned, env)).status, 404, "a lost row is the same shared 404");
+});
+
+test("unequipping a consumable is the kind's refusal shape — the burst pack stays equip-only", async () => {
+  const db = shopDb({ ...SEED_FUNDS, inventory: [
+    { user_id: USER_ID, item_key: "fx_burst_confetti", kind: "consumable", qty: GC_COSMETIC_FX_BURST_USES, equipped: 1, server_id: null },
+  ] });
+  const { env } = envWithLimiters(db);
+  const { built } = await authed("/api/coins/cosmetics/equip", {
+    method: "POST", body: { itemKey: "fx_burst_confetti", unequip: true },
+  });
+  const response = await dispatch(built, env);
+  assert.equal(response.status, 400);
+  assert.deepEqual(await bodyOf(response), { error: "That cosmetic is a consumable pack." });
+  assert.equal(db.invRow(USER_ID, "fx_burst_confetti").equipped, 1,
+    "neither the equipped state nor the qty moved");
+});
+
+test("the unequip arm still names a catalog SKU: anything else is a 400", async () => {
+  const db = shopDb({});
+  const { env } = envWithLimiters(db);
+  for (const body of [{ itemKey: "fx_nope", unequip: true }, { unequip: true }, { itemKey: 7, unequip: true }]) {
+    const { built } = await authed("/api/coins/cosmetics/equip", { method: "POST", body });
+    assert.equal((await dispatch(built, env)).status, 400, "bad unequip body " + JSON.stringify(body));
+  }
+  assert.equal(db.calls.filter((entry) => entry.call === "batch" || entry.call === "run").length, 0);
+});
+
+test("equipping an EMPTY pack is the empty-pack 409 before any batch (the low-4 guard)", async () => {
+  const db = shopDb({ ...SEED_FUNDS, inventory: [
+    { user_id: USER_ID, item_key: "fx_burst_confetti", kind: "consumable", qty: 0, equipped: 0, server_id: null },
+  ] });
+  const { env } = envWithLimiters(db);
+  const { built } = await authed("/api/coins/cosmetics/equip", {
+    method: "POST", body: { itemKey: "fx_burst_confetti" },
+  });
+  const response = await dispatch(built, env);
+  assert.equal(response.status, 409);
+  assert.deepEqual(await bodyOf(response), { error: "That pack is empty." });
+  assert.equal(db.invRow(USER_ID, "fx_burst_confetti").equipped, 0, "the inert-wart state never forms");
+  assert.equal(db.calls.filter((entry) => entry.call === "batch").length, 0,
+    "the refusal is pre-batch — no orphan echo");
+});
+
 // --- the wire surface -------------------------------------------------------------
 
 test("the new routes answer on the wire and the forbidden money paths stay 404", async () => {
@@ -816,7 +928,8 @@ test("the new routes answer on the wire and the forbidden money paths stay 404",
     const response = await dispatch(built, env);
     assert.notEqual(response.status, 404, method + " " + path + " exists");
   }
-  for (const path of ["/api/coins/cosmetics/purchase", "/api/coins/cosmetics/buy"]) {
+  for (const path of ["/api/coins/cosmetics/purchase", "/api/coins/cosmetics/buy",
+    "/api/coins/cosmetics/unequip"]) {
     const base = new Request(ORIGIN + path, {
       method: "POST",
       headers: { "Content-Type": "application/json", Origin: ORIGIN },

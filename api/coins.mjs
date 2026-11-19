@@ -328,13 +328,15 @@ const INVENTORY_BUMP_SQL =
 // The inventory read (the shop payload's inventory arm) and the ownership
 // pre-check the equip arm demands BEFORE its batch (a lost equip must never
 // clear the slot's standing state — the batch's clear stands unless the
-// whole route owns the row first).
+// whole route owns the row first). The probe reads the qty beside the
+// existence: the consumable equip arm's empty-pack guard spends the same
+// read (a qty < 1 pack is never the slot's standing state).
 const INVENTORY_READ_SQL =
   "SELECT item_key, kind, qty, equipped, server_id " +
   "FROM gc_cosmetic_inventory WHERE user_id = ?";
 
 const INVENTORY_OWNED_PROBE_SQL =
-  "SELECT 1 AS owned FROM gc_cosmetic_inventory " +
+  "SELECT qty FROM gc_cosmetic_inventory " +
   "WHERE user_id = ? AND item_key = ? LIMIT 1";
 
 // The post-batch classification probe (the after-the-fact house style): one
@@ -353,6 +355,19 @@ const INVENTORY_EQUIP_CLEAR_SQL =
 const INVENTORY_EQUIP_SET_SQL =
   "UPDATE gc_cosmetic_inventory SET equipped = 1, updated_at = ? " +
   "WHERE user_id = ? AND item_key = ?";
+
+// The unequip arm (the UX lane's rider): ONE verdict-gated row clear — the
+// equipped arm rides INSIDE the WHERE, so an already-unequipped row is
+// changes = 0 and the route's 404. Never a slot walk: the row IS the
+// target (no IN-list, no sibling reads).
+const INVENTORY_UNEQUIP_SQL =
+  "UPDATE gc_cosmetic_inventory SET equipped = 0, updated_at = ? " +
+  "WHERE user_id = ? AND item_key = ? AND equipped = 1";
+
+// The unequip verdict's shared 404: a row the caller does not hold and a row
+// already sitting unequipped read the same — the guarded write IS the whole
+// classification.
+const INVENTORY_UNEQUIP_404 = "Cosmetic not found.";
 
 // The consumable use (economy-skill law 3): ONE guarded UPDATE — the qty > 0
 // arm IS the claim, so two racing uses can never both clear a one-use pack,
@@ -880,6 +895,13 @@ async function inventoryPurchaseRefusal(env, userId, sku, serverId) {
 // ownership is probed FIRST (a lost equip must never clear the slot's
 // standing state), then ONE batch — clear the slot's SKUs, set the picked
 // row. The response echoes the standing inventory either way.
+//
+// The unequip arm rides the SAME route as the body's `unequip: true` flag
+// (the smaller diff: one session/rate-limit/body surface, no second wire —
+// "/api/coins/cosmetics/unequip" stays a 404). It is the consumable's
+// refusal shape: only an 'own' row unequips (the burst pack keeps its equip
+// arm for the effects slot), and ONE guarded UPDATE clears the picked row —
+// equipped = 1 is the WHERE arm, never a slot walk.
 async function handleCosmeticEquipRoute(request, env) {
   const session = await requireUser(request, env);
   const userId = Number(session.user.id);
@@ -887,6 +909,7 @@ async function handleCosmeticEquipRoute(request, env) {
   const body = await readJson(request);
   const sku = typeof body?.itemKey === "string" ? inventoryShape(body.itemKey) : null;
   if (!sku) throw new HttpError(400, "That cosmetic is not in the shop.");
+  if (body?.unequip === true) return handleCosmeticUnequipArm(sku, env, userId);
   // The kind guard: slots carry 'own' items — with ONE admitted exception (the
   // 2026-11-19 slate's Phase 3): the effects slot's pack IS the equip surface,
   // because the reaction route's burst arm spends only the EQUIPPED row. The
@@ -900,6 +923,13 @@ async function handleCosmeticEquipRoute(request, env) {
   const owned = await env.GOOBER_DB.prepare(INVENTORY_OWNED_PROBE_SQL)
     .bind(userId, sku.itemKey).first();
   if (!owned) throw new HttpError(403, "Buy that cosmetic in the coin shop first.");
+  // The empty-pack guard (the low-4 wart): an admitted consumable row with no
+  // uses left never becomes the slot's standing state — the refusal is
+  // PRE-batch, so a lost equip leaves no orphan echo of a batch that never
+  // ran (the empty-pack copy is the same 409 the consume arm pins).
+  if (sku.kind !== "own" && Number(owned.qty) < 1) {
+    throw new HttpError(409, "That pack is empty.");
+  }
 
   const now = nowSeconds();
   const slotSkus = GC_COSMETIC_INVENTORY_SKUS
@@ -914,6 +944,20 @@ async function handleCosmeticEquipRoute(request, env) {
   ]);
   const inventoryRows = (await env.GOOBER_DB.prepare(INVENTORY_READ_SQL).bind(userId).all()).results || [];
   return json({ equipped: true, itemKey: sku.itemKey, inventory: inventoryRows.map(publicInventoryRow) });
+}
+
+// The unequip arm's body: ONE guarded UPDATE (the verdict), the echoed
+// inventory either way — the route's own read, never a client-side guess.
+async function handleCosmeticUnequipArm(sku, env, userId) {
+  if (sku.kind !== "own") throw new HttpError(400, "That cosmetic is a consumable pack.");
+  const result = await env.GOOBER_DB.prepare(INVENTORY_UNEQUIP_SQL)
+    .bind(nowSeconds(), userId, sku.itemKey)
+    .run();
+  if (Number(result.meta?.changes) !== 1) {
+    throw new HttpError(404, INVENTORY_UNEQUIP_404);
+  }
+  const inventoryRows = (await env.GOOBER_DB.prepare(INVENTORY_READ_SQL).bind(userId).all()).results || [];
+  return json({ unequipped: true, itemKey: sku.itemKey, inventory: inventoryRows.map(publicInventoryRow) });
 }
 
 // The consumable use (economy-skill law 3): ONE guarded UPDATE — the qty > 0

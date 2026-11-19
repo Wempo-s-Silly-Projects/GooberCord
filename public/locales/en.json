@@ -433,6 +433,7 @@
   "gc.economy.items.costPlus_one": "Goober+ {{count}} coin",
   "gc.economy.items.equipped": "equipped",
   "gc.economy.items.equip": "Equip",
+  "gc.economy.items.unequip": "Unequip",
   "gc.economy.items.fxBurstConfetti": "Confetti burst pack (5 uses)",
   "gc.economy.items.frameGold": "Gold frame",
   "gc.economy.items.frameNeon": "Neon frame",

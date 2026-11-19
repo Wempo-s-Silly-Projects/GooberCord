@@ -428,6 +428,7 @@
   "gc.economy.items.costPlus_other": "Goober+ {{count}} عملة",
   "gc.economy.items.equipped": "مجهز",
   "gc.economy.items.equip": "تجهيز",
+  "gc.economy.items.unequip": "إزالة",
   "gc.economy.items.fxBurstConfetti": "حزمة انفجار الكونفيتي (5 استخدامات)",
   "gc.economy.items.frameGold": "إطار ذهبي",
   "gc.economy.items.frameNeon": "إطار نيون",
