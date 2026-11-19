@@ -195,3 +195,7 @@ export async function handleMessagesPinsRoutes(request, env, path, method) {
 
   return undefined;
 }
+
+// The seam gate's export (tests/guard-binds-seam.test.mjs prepares the
+// composed grant read on real SQLite); the builder text stays verbatim.
+export { PIN_MANAGER_READ_SQL };

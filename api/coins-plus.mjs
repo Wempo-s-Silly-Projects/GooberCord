@@ -212,3 +212,10 @@ export async function handleCoinsPlusRoutes(request, env, path, method) {
   }
   return undefined;
 }
+
+// The seam gate's exports (tests/guard-binds-seam.test.mjs prepares these on
+// real SQLite — the same additive-expose precedent as server-invites.mjs's
+// INVITE_* consts riding tests/guard-binds.test.mjs); the SQL text above
+// stays verbatim, and the 19-placeholder term upsert is the historical
+// 6-for-7 class's standing pin.
+export { PLUS_SPEND_SQL, PLUS_TERM_UPSERT_SQL, GIFT_TARGET_READ_SQL };

@@ -450,3 +450,22 @@ export async function handleCosmeticsRoutes(request, env, path, method) {
   }
   return undefined;
 }
+
+// The seam gate's exports (tests/guard-binds-seam.test.mjs prepares these on
+// real SQLite — the same additive-expose precedent as server-invites.mjs's
+// INVITE_* consts riding tests/guard-binds.test.mjs); the SQL text above
+// stays verbatim.
+export {
+  COSMETIC_LEDGER_SPEND_SQL,
+  COSMETIC_OWNERSHIP_INSERT_SQL,
+  COSMETIC_LEGACY_SPEND_HEAD_SQL,
+  INVENTORY_SPEND_SQL,
+  INVENTORY_OWN_SQL,
+  INVENTORY_BUMP_SQL,
+  INVENTORY_OWNED_PROBE_SQL,
+  INVENTORY_MEMBERSHIP_SQL,
+  INVENTORY_EQUIP_CLEAR_SQL,
+  INVENTORY_EQUIP_SET_SQL,
+  INVENTORY_UNEQUIP_SQL,
+  INVENTORY_CONSUME_SQL,
+};
