@@ -551,12 +551,16 @@ export const GC_CAPSULE_MIN_AHEAD_SECONDS = 300;
 export const GC_CAPSULE_MAX_AHEAD_SECONDS = 2592000;
 export const GC_CAPSULES_MAX_OPEN_PER_MEMBER = 10;
 
-// The capsules mine page's own cap — the newest page of the author's own
-// letters the GET answers on the wire (GC-shaped — no Discord parity
-// source; sized at the bookmarks list cap's seat, the same capped-list
-// family beside it below). Revealed rows are undeletable by law and
-// accumulate forever, so the read MUST cap: past the open-envelope cap
-// above (which covers only reveal_at > now) the mine page is unbounded.
+// The capsules mine page's own cap — the page of the author's own letters
+// the GET answers on the wire (GC-shaped — no Discord parity source; sized
+// at the bookmarks list cap's seat, the same capped-list family beside it
+// below). Revealed rows are undeletable by law and accumulate forever, so
+// the read MUST cap: past the open-envelope cap above (which covers only
+// reveal_at > now) the mine page is unbounded. Direction note (deslop-c17
+// MEDIUM, parked follow-up): the statement's pinned ORDER BY reveal_at ASC
+// means the capped answer is the SOONEST-revealing 100, not a newest-first
+// page — an author past the cap sees the actionable open rows fall to the
+// truncated side until the order law is revisited.
 export const GC_CAPSULES_MINE_LIST_MAX = 100;
 
 // Bookmarks (lane2-lifecycle recode, migration 0053): the private reading
