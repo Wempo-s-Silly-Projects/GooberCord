@@ -464,3 +464,24 @@ test("the in-flow viewport heights ride svh/dvh (a11y LOW row 3)", () => {
   assert.match(chatMain, /min-height: 100svh;/);
   assert.match(chatMain, /min-height: 100dvh;/);
 });
+
+// The drawer focus-containment row (T-R25-FOCUS-TRAP): while the drawer
+// holds the pane, Tab stays inside the drawer's rails — the visually hidden
+// desk behind the scrim never takes focus. ONE listener carries both the
+// Escape arm and the Tab wrap (no second keydown seat).
+test("the drawer contains Tab within its rails (focus-containment row)", () => {
+  const start = SHELL.indexOf("The drawer's keydown arms");
+  const block = SHELL.slice(start, SHELL.indexOf("// The socket lane's", start));
+  assert.ok(block, "the drawer keydown block is present");
+  assert.equal([...block.matchAll(/addEventListener\("keydown"/g)].length, 1,
+    "ONE keydown listener carries both arms");
+  assert.match(block, /dataset\.drawer !== "open"/, "both arms answer only the open drawer");
+  assert.match(block, /event\.key === "Escape"/, "the Escape close stays");
+  assert.match(block, /event\.key === "Tab" && frame\.dataset\.drawer === "open"/,
+    "the Tab wrap arm rides the same listener");
+  assert.match(block, /getClientRects\(\)\.length > 0/,
+    "the probe answers visible fixed overlays, refuses display:none (offsetParent would lie here)");
+  assert.match(block, /set\.length === 0/, "an empty focusable set no-ops");
+  assert.match(block, /preventDefault/, "a wrapped Tab never falls through to the desk");
+  assert.match(block, /set\[(set\.length - 1)\]/, "the set's far edge is reachable");
+});

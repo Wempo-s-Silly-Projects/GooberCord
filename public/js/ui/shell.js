@@ -253,13 +253,49 @@ export function renderShell(route, paneOverride = null) {
     },
   });
   frame.append(toggle);
-  // The Escape arm (the wave-25 a11y LOW row 2): dismissal never rides the
-  // toggle alone — a drawer open in ITS OWN subtree answers Escape, keeping
-  // aria-expanded truthful. The nav acts still close by the fresh-frame
-  // render; keydown rides the frame (any drawer row focus reaches it).
+  // The drawer's keydown arms (the wave-25 a11y rows + the focus-containment
+  // row): dismissal never rides the toggle alone — a drawer open in ITS OWN
+  // subtree answers Escape, keeping aria-expanded truthful; Tab stays inside
+  // the drawer's rails, so the visually hidden desk behind the scrim never
+  // takes focus (wrap at the set's edges, no-op on an empty set, and an
+  // out-of-set focus is forced in at the Tab direction's near edge). The
+  // nav acts still close by the fresh-frame render; keydown rides the frame
+  // (any drawer row focus reaches it).
+  // The visibility probe is getClientRects: a display:none node answers
+  // ZERO rects and a position:fixed overlay answers real ones — offsetParent
+  // would lie here (fixed overlays answer null), and checkVisibility's
+  // fallback chain is heavier than the one question this seat asks.
+  // The toggle sits OUTSIDE the rails by design: Escape is the open
+  // drawer's close act, so its keyboard loop never has to reach for it.
+  const drawerFocusables = () => [...frame.querySelectorAll(
+    ".rail-servers a[href], .rail-servers button, .rail-servers input, "
+    + ".rail-channels a[href], .rail-channels button, .rail-channels input",
+  )].filter((node) => !node.disabled && node.getClientRects().length > 0);
   frame.addEventListener("keydown", (event) => {
-    if (event.key !== "Escape" || frame.dataset.drawer !== "open") return;
-    setPhoneDrawer(false);
+    if (frame.dataset.drawer !== "open") return;
+    if (event.key === "Escape") {
+      setPhoneDrawer(false);
+      return;
+    }
+    if (event.key === "Tab" && frame.dataset.drawer === "open") {
+      const set = drawerFocusables();
+      if (set.length === 0) { // the drawer paints nothing focusable: hold Tab
+        event.preventDefault();
+        return;
+      }
+      const first = set[0];
+      const last = set[set.length - 1];
+      const at = set.indexOf(document.activeElement);
+      if (at === -1 || (!event.shiftKey && document.activeElement === last)) {
+        event.preventDefault();
+        (event.shiftKey ? last : first).focus();
+        return;
+      }
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      }
+    }
   });
   // The socket lane's drop strip (G-9): one line of store truth, now
   // SUBSCRIBED (the store's whole purpose) — a connection flip repaints
