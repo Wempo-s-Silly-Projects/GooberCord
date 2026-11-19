@@ -40,7 +40,7 @@
 import { requireUser } from "./core/auth.mjs";
 import { nowSeconds } from "./core/crypto.mjs";
 import { HttpError, json, rateLimit, readJson } from "./core/http.mjs";
-import { GC_REACTION_TAG_TEXT_MAX, GC_REACTION_TAGS_MAX } from "../constants.mjs";
+import { GC_REACTION_TAG_EMOJI_MAX, GC_REACTION_TAG_TEXT_MAX, GC_REACTION_TAGS_MAX } from "../constants.mjs";
 
 // The shared refusal body: a wrong role, a wrong emoji, an unreachable
 // tag, and an unknown id all answer this ONE copy — no oracle between them.
@@ -54,6 +54,13 @@ const LOCALE_KEY_SHAPE = /^[a-z0-9_]+(\.[a-z0-9_]+)+$/;
 function isValidTagText(tagText) {
   if (LOCALE_KEY_SHAPE.test(tagText)) return true;
   return [...tagText].length >= 1 && [...tagText].length <= GC_REACTION_TAG_TEXT_MAX;
+}
+
+// The emoji hygiene law (cycle-5): the emoji half of the pair is
+// code-point-bounded like the tag text — an over-long emoji never reaches a
+// statement on either door (the pin or the unmap).
+function isValidEmoji(emoji) {
+  return [...emoji].length >= 1 && [...emoji].length <= GC_REACTION_TAG_EMOJI_MAX;
 }
 
 // --- the statements -------------------------------------------------------------
@@ -140,7 +147,7 @@ async function handleTagPutRoute(request, env, serverId) {
   const body = await readJson(request);
   const emoji = typeof body?.emoji === "string" ? body.emoji : "";
   const tagText = typeof body?.tag === "string" ? body.tag : "";
-  if (!emoji || !isValidTagText(tagText)) {
+  if (!isValidEmoji(emoji) || !isValidTagText(tagText)) {
     throw new HttpError(400, "Send an emoji plus a short tag (or a locale key like gc.tags.campfire).");
   }
 
@@ -176,7 +183,7 @@ async function handleTagUnmapRoute(request, env, serverId) {
 
   const body = await readJson(request);
   const emoji = typeof body?.emoji === "string" ? body.emoji : "";
-  if (!emoji) {
+  if (!isValidEmoji(emoji)) {
     throw new HttpError(400, "Send the emoji to unmap.");
   }
   const result = await env.GOOBER_DB.prepare(TAG_UNMAP_SQL)

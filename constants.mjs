@@ -479,6 +479,10 @@ export const GC_REACTIONS_MAX_UNIQUE_PER_MESSAGE = 20;
 // gc.tags.campfire is exempt from the code-point cap — api/reaction-tags.mjs).
 export const GC_REACTION_TAGS_MAX = 20;
 export const GC_REACTION_TAG_TEXT_MAX = 32;
+// The emoji side of the pair (cycle-5 hygiene): the reactive emoji string is
+// code-point-bounded like the tag text — GC's own cap, the same 32 the text
+// side carries.
+export const GC_REACTION_TAG_EMOJI_MAX = 32;
 
 // Mentions (parity law): the persisted per-mention rows a send may carry.
 // Today's developer docs cap AllowedMentions' id arrays at 100 per message

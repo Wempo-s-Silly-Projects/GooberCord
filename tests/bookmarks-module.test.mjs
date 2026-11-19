@@ -110,6 +110,16 @@ const BOOKMARK_LIST_TEST = (sql) =>
   sql.startsWith("SELECT id, message_id, saved_at FROM gc_bookmarks");
 const BOOKMARK_DELETE_TEST = (sql) => sql.startsWith("DELETE FROM gc_bookmarks");
 
+// The cycle-5 VIEW-deny walk (the imported viewerCanViewChannel chain): the
+// message's channel rides the pre-read, the layer walks match messages.mjs's
+// own SQL shapes.
+const BOOKMARK_TARGET_TEST = (sql) =>
+  sql.startsWith("SELECT c.id AS id, c.server_id AS server_id FROM gc_messages m JOIN gc_channels c");
+const LAYER_MEMBERSHIP_TEST = (sql) =>
+  sql.includes("SELECT role FROM gc_server_members WHERE server_id = ?");
+const LAYER_ROLE_ROWS_TEST = (sql) => sql.includes("FROM gc_member_roles gmr JOIN gc_roles r");
+const LAYER_CHAIN_TEST = (sql) => sql.includes("FROM gc_channel_overwrites o");
+
 async function run(method, path, routes = [], payload, viewerId = USER_ID) {
   const token = randomToken();
   const row = {
@@ -159,6 +169,39 @@ test("bookmark save is idempotent through the owner-scoped duplicate read", asyn
   assert.equal(body.duplicate, true);
   const duplicate = db.calls.find((call) => BOOKMARK_DUPLICATE_TEST(call.sql));
   assert.equal(duplicate.bound[0], USER_ID, "the duplicate read is owner-scoped");
+});
+
+test("bookmark save answers the shared message 404 on a VIEW-denied channel (the cycle-5 deny arm)", async () => {
+  const { db, response, body } = await run("POST", "/api/messages/101/bookmark", [
+    // The gate's read chain (the imported viewerCanViewChannel walk): the
+    // message's channel, the membership, the role rows, the chain.
+    { test: BOOKMARK_TARGET_TEST, first: () => ({ id: 5, server_id: 1 }) },
+    { test: LAYER_MEMBERSHIP_TEST, first: () => ({ role: "member" }) },
+    { test: LAYER_ROLE_ROWS_TEST, all: () => ({ results: [] }) },
+    { test: LAYER_CHAIN_TEST, all: () => ({ results: [{ channel_id: 5, role_id: null, allow_mask: 0, deny_mask: 32 }] }) },
+    { test: BOOKMARK_SAVE_TEST, run: () => ({ meta: { changes: 1 } }) },
+  ]);
+  assert.equal(response.status, 404, "the VIEW deny arms the shared 404 BEFORE the save statement");
+  assert.equal(body.error, "Message not found.");
+  assert.equal(db.calls.filter((call) => BOOKMARK_SAVE_TEST(call.sql)).length, 0,
+    "the denied save never writes the pointer");
+  assert.equal(db.calls.filter((call) => LAYER_MEMBERSHIP_TEST(call.sql)).length, 1,
+    "the walk runs once, before the statement");
+});
+
+// The graceful default: a channel whose chain carries no deny that binds the
+// viewer saves exactly as before — the gate is a read, never a new write
+// wall on ordinary channels.
+test("bookmark save keeps the plain shape when no deny touches the viewer", async () => {
+  const { db, response, body } = await run("POST", "/api/messages/101/bookmark", [
+    { test: BOOKMARK_TARGET_TEST, first: () => ({ id: 5, server_id: 1 }) },
+    { test: LAYER_MEMBERSHIP_TEST, first: () => ({ role: "member" }) },
+    { test: LAYER_ROLE_ROWS_TEST, all: () => ({ results: [] }) },
+    { test: LAYER_CHAIN_TEST, all: () => ({ results: [] }) },
+    { test: BOOKMARK_SAVE_TEST, run: () => ({ meta: { changes: 1, last_row_id: 3 } }) },
+  ]);
+  assert.equal(response.status, 200);
+  assert.equal(body.saved, true);
 });
 
 test("bookmark save answers the shared message 404 for an unreachable message", async () => {

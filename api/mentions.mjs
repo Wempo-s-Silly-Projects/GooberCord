@@ -109,6 +109,10 @@ export function matchRosterMentions(text, members) {
 import { GC_MENTIONS_MAX_PER_MESSAGE, GC_MENTIONS_PAGE_DEFAULT, GC_MENTIONS_PAGE_MAX } from "../constants.mjs";
 import { requireUser } from "./core/auth.mjs";
 import { HttpError, json, rateLimit } from "./core/http.mjs";
+// The cycle-5 VIEW gate: the same layer walk the search route's per-hit gate
+// rides (servers.mjs imports it for the identical post-read shape) — imported,
+// never re-declared.
+import { viewerCanViewChannel } from "./messages.mjs";
 
 // The roster reads a send's mention resolve needs. ONLY a body carrying an
 // "@" spends one (the "@" pre-gate lives in mentionPersistStatements). The
@@ -155,7 +159,7 @@ export async function mentionPersistStatements(env, serverId, channelId, authorI
 
 const MENTION_LIST_SQL =
   "SELECT gm.message_id AS message_id, gm.created_at AS mentioned_at, " +
-    "m.channel_id AS channel_id, c.name AS channel_name, c.kind AS channel_kind, " +
+    "m.channel_id AS channel_id, c.server_id AS server_id, c.name AS channel_name, c.kind AS channel_kind, " +
     "m.author_id AS author_id, gu.username AS author_username, " +
     "m.body AS body, m.created_at AS created_at " +
   "FROM gc_mentions gm " +
@@ -189,8 +193,33 @@ async function handleListMentionsRoute(request, env, url) {
 
   const rows = (await env.GOOBER_DB.prepare(MENTION_LIST_SQL + " ORDER BY gm.message_id DESC LIMIT " + limit)
     .bind(userId, userId, userId).all()).results || [];
+
+  // The cycle-5 VIEW gate (the search route's per-hit shape): the page read
+  // keeps the SQL-side membership guard, and the layer chain rides AFTER it —
+  // server-channel rows whose channel the viewer's history read would 404
+  // (a deny-touched VIEW miss) drop HERE, so the inbox never carries a body
+  // the reader's own VIEW gate refuses. Conversation rows have no layers and
+  // pass untouched; the verdict memos per distinct channel (a channel with
+  // many mentions costs one walk); a thrown/failed walk classifies as deny —
+  // the row drops, the page never 500s.
+  const viewable = new Map();
+  const keptRows = [];
+  for (const row of rows) {
+    if (row.server_id === null || row.server_id === undefined) {
+      keptRows.push(row);
+      continue;
+    }
+    const channelId = Number(row.channel_id);
+    if (!viewable.has(channelId)) {
+      viewable.set(channelId, await viewerCanViewChannel(
+        env, { id: channelId, server_id: Number(row.server_id) }, userId,
+      ).catch(() => false));
+    }
+    if (viewable.get(channelId)) keptRows.push(row);
+  }
+
   return json({
-    mentions: rows.map((row) => ({
+    mentions: keptRows.map((row) => ({
       messageId: Number(row.message_id),
       channelId: Number(row.channel_id),
       channelName: row.channel_name,
