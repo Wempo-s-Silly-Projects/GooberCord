@@ -602,3 +602,13 @@ export const GC_EXPRESSION_ID_CEILING = 1_000_000_000_000;
 // is the statement's ceiling; a body over the cap is REFUSED (a 400 at the
 // gate), never bound — its over-cap tokens are never resolved.
 export const GC_EXPRESSION_TOKENS_MAX = 90;
+
+// Server audit log (wave 26, W26-1, migration 0059): the moderation
+// trail's caps. GC-shaped (no Discord parity source — GC's own surface;
+// house-sized against the capped-list family above: the bookmarks/
+// capsules 100-seat). AUDIT_READ_LIMIT caps the newest-first page the
+// read answers. AUDIT_PAYLOAD_MAX_BYTES bounds one row's before→after
+// JSON: the migration's CHECK duplicates it as a literal (SQL cannot
+// import), and tests/audit-seam.test.mjs holds the two to each other.
+export const AUDIT_READ_LIMIT = 100;
+export const AUDIT_PAYLOAD_MAX_BYTES = 4096;

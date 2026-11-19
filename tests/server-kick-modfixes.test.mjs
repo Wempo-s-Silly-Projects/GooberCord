@@ -219,9 +219,10 @@ test("a kick is ONE batch of four: roles strip, boost strip, member DELETE, reco
   assert.equal(response.status, 200);
   assert.deepEqual(await bodyOf(response), { kicked: true, serverId: SERVER_ID, userId: TARGET_ID });
 
-  // ONE write: the guarded batch, never a standalone recount.
+  // TWO writes: the guarded batch, never a standalone recount, plus the
+  // audit row's own batch (T-R26-AUDIT — the kick's commit point records).
   const writes = db.calls.filter((call) => call.call === "run" || call.call === "batch");
-  assert.equal(writes.length, 1);
+  assert.equal(writes.length, 2);
   const batch = db.calls.find((call) => call.call === "batch");
   assert.ok(batch);
   assert.equal(batch.statements.length, 4);

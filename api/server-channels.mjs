@@ -45,6 +45,9 @@ import {
   rolePayload,
   viewerPayload,
 } from "./servers.mjs";
+// T-R26-AUDIT: the overwrite edits write their audit rows (migration 0059)
+// at their commit points through the ONE shared writer.
+import { recordAudit } from "./audit.mjs";
 
 // The manage-guard fragments mirror the sibling lanes' exact copies (invite,
 // soundboard, soundpacks keep them local by the same design note; a guard
@@ -829,6 +832,11 @@ async function handlePutOverwriteRoute(request, env, serverId, channelId, roleId
   }
 
   const guard = overwriteGuardSql(serverId, userId, channelId, roleId);
+  // The edit class's before→after delta: the CURRENT layer (if one exists)
+  // is read before the guarded upsert (the audit row is the only consumer).
+  const before = await env.GOOBER_DB.prepare(
+    "SELECT allow_mask, deny_mask FROM gc_channel_overwrites WHERE channel_id = ? AND role_id IS ? LIMIT 1",
+  ).bind(channelId, roleId).first();
   const results = await env.GOOBER_DB.batch([
     env.GOOBER_DB.prepare(
       "DELETE FROM gc_channel_overwrites WHERE channel_id = ? AND role_id IS ? AND " + guard.sql,
@@ -842,6 +850,17 @@ async function handlePutOverwriteRoute(request, env, serverId, channelId, roleId
   if (Number(results[1]?.meta?.changes) !== 1) {
     throw new HttpError(403, "You do not have permission to do that.");
   }
+
+  // The audit row: the layer's PUT committed. The target_ref carries the
+  // "channel:<id>" arm of the edit (the role side rides the payload).
+  await recordAudit(env, userId, serverId, "overwrite.update", null,
+    "channel:" + channelId,
+    JSON.stringify({
+      before: before
+        ? { roleId: roleId === null ? null : Number(roleId), allow: permissionNames(Number(before.allow_mask)), deny: permissionNames(Number(before.deny_mask)) }
+        : null,
+      after: { roleId: roleId === null ? null : Number(roleId), allow: permissionNames(allowMask), deny: permissionNames(denyMask) },
+    }));
 
   return json(
     {
@@ -871,6 +890,13 @@ async function handleDeleteOverwriteRoute(request, env, serverId, channelId, rol
     // oracle between them.
     throw new HttpError(403, "You do not have permission to do that.");
   }
+
+  // The audit row: the layer's DELETE committed (target_ref carries the
+  // same "channel:<id>" arm; the role side is gone with the row, so the
+  // payload carries it).
+  await recordAudit(env, userId, serverId, "overwrite.delete", null,
+    "channel:" + channelId,
+    JSON.stringify({ roleId: roleId === null ? null : Number(roleId) }));
 
   return json({ deleted: true, channelId, roleId: roleId === null ? null : Number(roleId) }, 200);
 }

@@ -483,8 +483,12 @@ test("renaming a role rides the position-guarded UPDATE (old position < caller t
   assert.match(update.sql, /gc_roles\.position < \(SELECT COALESCE\(MAX\(hr\.position\), -1\)/);
   assert.deepEqual(update.bound, ["Moderators", "#f3cf67", 4, 3, 3, USER_ID, 3, USER_ID, 3, USER_ID]);
 
-  // No write batch on a rename: one guarded UPDATE, no fan-out.
-  assert.deepEqual(db.calls.filter((entry) => entry.call === "batch"), []);
+  // No write batch on a rename beyond the audit row's own batch
+  // (T-R26-AUDIT — the edit's commit point records): the ONE batch is the
+  // single audit INSERT, never a fan-out.
+  const batches = db.calls.filter((entry) => entry.call === "batch");
+  assert.equal(batches.length, 1);
+  assert.match(batches[0].statements[0].sql, /^INSERT INTO gc_server_audit/);
 });
 
 test("a role above the caller's top position cannot be renamed (even with MANAGE_ROLES)", async () => {

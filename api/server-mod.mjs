@@ -38,6 +38,7 @@
 import { requireUser } from "./core/auth.mjs";
 import { nowSeconds } from "./core/crypto.mjs";
 import { HttpError, json, rateLimit, readJson, requiredText } from "./core/http.mjs";
+import { AUDIT_READ_LIMIT } from "../constants.mjs";
 import {
   PRUNE_DAYS,
   SERVER_PERMISSIONS,
@@ -68,6 +69,11 @@ import {
   moderationGuardSql,
   readActorContext,
 } from "./servers.mjs";
+// T-R26-AUDIT: the ONE shared audit writer (migration 0059's
+// gc_server_audit) — every enforcement arm below records its row at its
+// exact commit point; the audit's INSERT keeps its single home in
+// api/audit.mjs.
+import { recordAudit } from "./audit.mjs";
 
 // The manage-guard fragments mirror the sibling lanes' exact copies (invite,
 // channels, roles keep them local by the same design note; a guard change
@@ -348,6 +354,58 @@ async function handleListFilterAlertsRoute(request, env, serverId, url) {
   }, 200);
 }
 
+// --- T-R26-AUDIT: the audit log's read (the Logs tab's page) -------------------
+//
+// The owner/moderator string tier is the manage-class read here (GC's
+// permission vocabulary carries no MANAGE_SERVER bit — this is the
+// settings-panel manage class the sibling read arms ride): the guard rides
+// INSIDE the read's SQL exactly like every read in this module, so a
+// member without the tier reads the shared 403-shaped empty page — the
+// guard's WHERE empties it, the response shape never varies.
+const AUDIT_GUARD_SQL =
+  "EXISTS (SELECT 1 FROM gc_server_members ag WHERE ag.server_id = ? AND ag.user_id = ? " +
+    "AND ag.role IN ('owner','moderator'))";
+
+// The newest-first page (the id is monotonic — 0059's PK): the cap rides
+// the constants.mjs single home.
+const AUDIT_READ_SQL =
+  "SELECT ga.id, ga.server_id, ga.actor_id, ga.action_key, ga.target_user_id, " +
+    "ga.target_ref, ga.payload_json, ga.created_at " +
+  "FROM gc_server_audit ga WHERE ga.server_id = ? AND " + AUDIT_GUARD_SQL + " " +
+  "ORDER BY ga.id DESC LIMIT " + AUDIT_READ_LIMIT;
+
+// The row's wire shape (the alerts feed's mapping idiom): ids are numbers,
+// the JSON payload is parsed once (a poisoned string degrades to null —
+// never a 500).
+function auditEntryPayload(row) {
+  let payload = null;
+  if (row.payload_json !== null) {
+    try {
+      payload = JSON.parse(row.payload_json);
+    } catch {
+      payload = null;
+    }
+  }
+  return {
+    id: Number(row.id),
+    serverId: Number(row.server_id),
+    actorId: Number(row.actor_id),
+    actionKey: row.action_key,
+    targetUserId: row.target_user_id === null ? null : Number(row.target_user_id),
+    targetRef: row.target_ref,
+    payload,
+    createdAt: isoTimestamp(row.created_at),
+  };
+}
+
+async function handleListAuditRoute(request, env, serverId) {
+  const session = await requireUser(request, env);
+  const userId = Number(session.user.id);
+  const rows = (await env.GOOBER_DB.prepare(AUDIT_READ_SQL)
+    .bind(serverId, serverId, userId).all()).results || [];
+  return json({ entries: rows.map(auditEntryPayload) }, 200);
+}
+
 // --- phase-3 kicks (KICK_MEMBERS + the position rule, batched) ------------------
 
 async function handleKickMemberRoute(request, env, serverId, targetUserId) {
@@ -399,6 +457,11 @@ async function handleKickMemberRoute(request, env, serverId, targetUserId) {
   if (Number(results[2]?.meta?.changes) !== 1) {
     throw new HttpError(403, "You do not have permission to do that.");
   }
+
+  // The audit row: the kick already committed (the above verdict read the
+  // member-row delete's changes).
+  await recordAudit(env, userId, serverId, "member.kick", targetUserId, null,
+    JSON.stringify({}));
 
   return json({ kicked: true, serverId, userId: targetUserId }, 200);
 }
@@ -506,6 +569,11 @@ async function handleBanMemberRoute(request, env, serverId) {
     throw new HttpError(403, "You do not have permission to do that.");
   }
 
+  // The audit row rides the CHANGED path only — the idempotent answer
+  // above records no new fact (the standing ban's own row already did).
+  await recordAudit(env, userId, serverId, "member.ban", targetUserId, null,
+    JSON.stringify({ reason }));
+
   return json(
     { ban: { serverId, userId: targetUserId, reason, bannedAt: isoTimestamp(now) }, changed: true },
     201,
@@ -532,6 +600,10 @@ async function handleUnbanMemberRoute(request, env, serverId, targetUserId) {
   if (Number(result.meta?.changes) !== 1) {
     throw new HttpError(403, "You do not have permission to do that.");
   }
+
+  // The audit row: the un-ban committed.
+  await recordAudit(env, userId, serverId, "member.unban", targetUserId, null,
+    JSON.stringify({}));
 
   return json({ banned: false, serverId, userId: targetUserId }, 200);
 }
@@ -736,8 +808,17 @@ async function handlePruneRoute(request, env, serverId) {
     env.GOOBER_DB.prepare(BOOST_RECOUNT_SQL).bind(serverId, serverId),
   ]);
 
+  // The audit row: the prune's kick batch committed. Zero-kick runs (the
+  // in-statement guard refused every candidate) record nothing — the prune
+  // changed no member, and the trail collects actions, not attempts.
+  const kicked = Number(results[2]?.meta?.changes) || 0;
+  if (kicked > 0) {
+    await recordAudit(env, userId, serverId, "member.prune", null, null,
+      JSON.stringify({ days: body.days, role_filter_id: roleFilterId, kicked }));
+  }
+
   return json(
-    { dry_run: false, kicked: Number(results[2]?.meta?.changes) || 0 },
+    { dry_run: false, kicked },
     200,
   );
 }
@@ -773,6 +854,15 @@ export async function handleServerModRoutes(request, env, url, path, method) {
   if (filterAlertsMatch) {
     return handleListFilterAlertsRoute(request, env, Number(filterAlertsMatch[1]), url);
   }
+  // T-R26-AUDIT: the audit log's read — the newest-first page (the Logs
+  // tab's data) behind the manage tier.
+  const auditMatch = method === "GET"
+    ? path.match(/^\/api\/servers\/(0|[1-9][0-9]*)\/audit$/)
+    : null;
+  if (auditMatch) {
+    return handleListAuditRoute(request, env, Number(auditMatch[1]));
+  }
+
   const kickMatch = method === "DELETE"
     ? path.match(/^\/api\/servers\/(0|[1-9][0-9]*)\/members\/(0|[1-9][0-9]*)$/)
     : null;

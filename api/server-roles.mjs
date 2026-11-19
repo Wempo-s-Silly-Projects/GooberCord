@@ -51,6 +51,10 @@ import {
   rolePayload,
   viewerPayload,
 } from "./servers.mjs";
+// T-R26-AUDIT: the role CRUD + the managed member nick write their audit
+// rows (migration 0059) at their commit points through the ONE shared
+// writer.
+import { recordAudit } from "./audit.mjs";
 
 // The manage-guard fragments mirror the sibling lanes' exact copies (invite,
 // channels, soundboard keep them local by the same design note; a guard
@@ -204,6 +208,11 @@ async function handleCreateRoleRoute(request, env, serverId) {
     throw new HttpError(500, "The role could not be created. Please try again.");
   }
 
+  // The audit row: the create committed; the created row's own shape is
+  // the payload's "after" (nothing existed before).
+  await recordAudit(env, userId, serverId, "role.create", null, null,
+    JSON.stringify({ after: rolePayload(role) }));
+
   return json({ role: rolePayload(role) }, 201);
 }
 
@@ -322,7 +331,15 @@ async function handleUpdateRoleRoute(request, env, serverId, roleId) {
   const updated = await env.GOOBER_DB.prepare(ROLE_SELECT_SQL)
     .bind(roleId, serverId).first();
 
-  return json({ role: updated ? rolePayload(updated) : null }, 200);
+  // The audit row: the edit committed (either path — the move or the
+  // rename/recolor). The edit class records its before→after delta: the
+  // CURRENT row was read at the handler's head, the updated one here.
+  const beforeRole = rolePayload(role);
+  const afterRole = updated ? rolePayload(updated) : null;
+  await recordAudit(env, userId, serverId, "role.update", null, null,
+    JSON.stringify({ before: beforeRole, after: afterRole }));
+
+  return json({ role: afterRole }, 200);
 }
 
 async function handleDeleteRoleRoute(request, env, serverId, roleId) {
@@ -347,6 +364,12 @@ async function handleDeleteRoleRoute(request, env, serverId, roleId) {
   if (Number(results[0]?.meta?.changes) !== 1) {
     throw new HttpError(403, "You do not have permission to do that.");
   }
+
+  // The audit row: the role (and its fan-out) committed. The name is gone
+  // with the row, so the payload carries the id (the trail survives the
+  // actor it names — 0059's no-FK law).
+  await recordAudit(env, userId, serverId, "role.delete", null, null,
+    JSON.stringify({ roleId }));
 
   return json({ deleted: true, roleId }, 200);
 }
@@ -653,6 +676,11 @@ async function handleSetMemberNicknameRoute(request, env, serverId, targetUserId
     SERVER_PERMISSIONS.KICK_MEMBERS,
     SERVER_PERMISSIONS.MANAGE_ROLES,
   ]);
+  // The edit class's before→after delta: the CURRENT nickname is read
+  // before the guarded UPDATE (the audit row is the only consumer).
+  const before = await env.GOOBER_DB.prepare(
+    "SELECT nickname FROM gc_server_members WHERE server_id = ? AND user_id = ? LIMIT 1",
+  ).bind(serverId, targetUserId).first();
   const result = await env.GOOBER_DB.prepare(
     "UPDATE gc_server_members SET nickname = ? WHERE server_id = ? AND user_id = ? " +
       "AND role <> 'owner' AND " + guard.sql,
@@ -661,6 +689,10 @@ async function handleSetMemberNicknameRoute(request, env, serverId, targetUserId
   if (Number(result.meta?.changes) !== 1) {
     throw new HttpError(403, "You do not have permission to do that.");
   }
+
+  // The audit row: the managed nick committed.
+  await recordAudit(env, userId, serverId, "member.nick", targetUserId, null,
+    JSON.stringify({ before: before ? before.nickname : null, after: nickname }));
 
   return json({ member: { serverId, userId: targetUserId, nickname } }, 200);
 }

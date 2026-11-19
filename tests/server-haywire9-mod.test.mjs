@@ -247,9 +247,10 @@ test("F1: the prune run is ONE batch of four: roles strip, boost strip, member D
   const { response, db } = await dispatchPrune();
   assert.equal(response.status, 200);
 
-  // ONE write: the batched run, never a standalone recount.
+  // TWO writes: the batched run, never a standalone recount, plus the
+  // audit row's own batch (T-R26-AUDIT — the prune's commit point records).
   const writes = db.calls.filter((call) => call.call === "run" || call.call === "batch");
-  assert.equal(writes.length, 1);
+  assert.equal(writes.length, 2);
   const batch = batchOf(db);
   assert.ok(batch);
   assert.equal(batch.statements.length, 4);
@@ -395,9 +396,10 @@ test("F2: the ban is ONE batch of five: ban INSERT, boost strip, member DELETE, 
   assert.equal(banBody.ban.serverId, SERVER_ID);
   assert.equal(banBody.ban.userId, TARGET_ID);
 
-  // ONE write: the batch, never a standalone recount.
+  // TWO writes: the batch, never a standalone recount, plus the audit
+  // row's own batch (T-R26-AUDIT — the ban's commit point records).
   const writes = db.calls.filter((call) => call.call === "run" || call.call === "batch");
-  assert.equal(writes.length, 1);
+  assert.equal(writes.length, 2);
   const batch = batchOf(db);
   assert.ok(batch);
   assert.equal(batch.statements.length, 5);
