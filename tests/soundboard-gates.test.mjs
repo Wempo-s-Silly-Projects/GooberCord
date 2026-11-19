@@ -186,15 +186,23 @@ async function multipartCreate(routes, name) {
   const form = new FormData();
   form.append("name", name);
   form.append("sound", new Blob([ID3_MP3]));
-  const response = await dispatchBoard(
-    new Request(ORIGIN + "/api/servers/" + SERVER_ID + "/sounds", {
-      method: "POST",
-      headers: { ...(await SESSION_FIXTURES).headers, Origin: ORIGIN },
-      body: form,
-    }),
-    env,
-  );
-  return { response, db, recorder, r2: env.GC_MEDIA };
+  let response = null;
+  let thrown = null;
+  try {
+    response = await dispatchBoard(
+      new Request(ORIGIN + "/api/servers/" + SERVER_ID + "/sounds", {
+        method: "POST",
+        headers: { ...(await SESSION_FIXTURES).headers, Origin: ORIGIN },
+        body: form,
+      }),
+      env,
+    );
+  } catch (error) {
+    // A non-HttpError rethrow escapes the dispatcher; the db/R2 context
+    // still rides back so the rethrow arms stay observable.
+    thrown = error;
+  }
+  return { response, db, recorder, r2: env.GC_MEDIA, thrown };
 }
 
 // FIX 1: a non-member POST mints NOTHING — no pending attachment row, no R2
@@ -241,6 +249,25 @@ test("duplicate-name 409 in the mint branch sweeps the minted pending row and em
   );
   assert.ok(sweep, "the minted pending row is swept despite the UNIQUE 409");
   assert.equal(r2.store.size, 0, "the minted R2 object is gone after the 409");
+});
+
+// The generic rethrow arm (a non-UNIQUE D1 error — e.g. the FOREIGN KEY
+// constraint the RESTRICT arm answers with a raw 500) leaves the catch the
+// same way: the minted pending row + object must never survive it.
+test("a non-UNIQUE INSERT rethrow in the mint branch also sweeps the minted row and empties the R2 store", async () => {
+  const { thrown, db, r2 } = await multipartCreate(
+    baseRoutes({ insertError: new Error("FOREIGN KEY constraint failed") }),
+    "dropthebass",
+  );
+  assert.ok(thrown, "the generic rethrow surfaces (not an HttpError)");
+  assert.equal(thrown.message, "FOREIGN KEY constraint failed");
+  const sweep = db.calls.find((entry) =>
+    entry.statements
+      ? entry.statements.some((statement) => PENDING_ROW_DELETE_TEST(statement.sql))
+      : PENDING_ROW_DELETE_TEST(entry.sql),
+  );
+  assert.ok(sweep, "the minted pending row is swept despite the generic rethrow");
+  assert.equal(r2.store.size, 0, "the minted R2 object is gone after the rethrow");
 });
 
 // FIX 2: the resolver's cap is bound, never concatenated into the statement.

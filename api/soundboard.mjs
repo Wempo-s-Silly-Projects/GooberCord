@@ -319,10 +319,10 @@ async function handleCreateSoundRoute(request, env, serverId, ctx) {
     Number(serverId),
     cap,
   ).run().catch(async (error) => {
+    // EVERY INSERT-catch rethrow sweeps the minted row + object FIRST —
+    // the FK-RESTRICT arm (a raw 500 rethrow) is no exception.
+    if (minted) await sweepMintedAttachment(env, ctx, attachmentId);
     if (/UNIQUE|SQLITE_CONSTRAINT/i.test(String(error))) {
-      // The duplicate-name 409 rides the catch BEFORE the changes!=1 block:
-      // the just-minted pending row + object must never survive it.
-      if (minted) await sweepMintedAttachment(env, ctx, attachmentId);
       throw new HttpError(409, "That sound name is already taken in this server.");
     }
     throw error;
