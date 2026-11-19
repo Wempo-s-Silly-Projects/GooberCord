@@ -54,6 +54,9 @@ export const UI_MAX_CHANNELS_PER_SERVER = 500;
 export const UI_CATEGORIES_MAX_PER_SERVER = 50;
 export const UI_ROLES_MAX = 250; // incl. @everyone, never raised by boosts
 export const UI_RULES_MAX = 20000;
+// G-4 mirror: GC_WELCOME_CARD_BLURB_MAX (constants.mjs) — the blurb cap the
+// backend's 400 family enforces (welcome-card.mjs), never raised client-side.
+export const UI_WELCOME_CARD_BLURB_MAX = 300;
 
 // The gear affordance lives where the bits say so: the server's membership
 // role, or any channel's effectivePermissions carrying a manage bit.
@@ -131,12 +134,52 @@ function manageGate(mount, serverId, title, build) {
   mount.append(shellWrap(taskPane(serverId, title, ...build(server))));
 }
 
+// The welcome card (wave-10 F3): the mod's write door. ONE blurb field, ONE
+// confirm step BEFORE the PUT (the defaults law: opt-in, one explicit save —
+// the PUT lives only in the confirm action); the cap rides the mirrored
+// constant, refusals render verbatim (G-2), and the echo's blurb re-fills
+// the field (the response IS the stored text).
+function welcomeCardPanel(serverId) {
+  const errorLine = inlineError();
+  const note = h("p", { class: "muted", text: "" });
+  const blurbBox = createInput(document, {
+    id: "welcome-card-blurb", label: t("gc.settings.welcomeCard.fieldLabel"),
+    maxLength: UI_WELCOME_CARD_BLURB_MAX,
+  });
+  const form = createForm(document, "welcome-card", [blurbBox],
+    t("gc.settings.welcomeCard.save"));
+  form.addEventListener("submit", (event) => {
+    event.preventDefault();
+    const blurb = form.querySelector("#welcome-card-blurb").value;
+    // One explicit confirm step (the defaults law) before the single PUT.
+    openDialog(document, {
+      heading: t("gc.settings.welcomeCard.confirm"),
+      body: h("p", { class: "gate-copy", text: t("gc.settings.welcomeCard.confirm") }),
+      modalOnly: true,
+      actions: [
+        { class: "button button-primary", text: t("gc.settings.welcomeCard.save"), onPress: async () => {
+          try {
+            const payload = await api(`/api/servers/${serverId}/welcome-card`, { method: "PUT", body: { blurb } });
+            errorLine.textContent = "";
+            note.textContent = t("gc.settings.welcomeCard.saved");
+            form.querySelector("#welcome-card-blurb").value = payload?.blurb ?? blurb;
+          } catch (error) {
+            errorLine.textContent = error.message; // cap 400 / shared 404 verbatim
+          }
+        } },
+        { class: "button button-quiet", text: t("gc.controls.keep") },
+      ],
+    });
+  });
+  return h("div", { class: "panel" },
+    h("h3", { text: t("gc.settings.welcomeCard.heading") }), form, note, errorLine);
+}
 // --- E1: the server settings page ---------------------------------------------
 
 export function renderServerSettings(route, mount) {
   const serverId = Number(route.params.serverId);
   manageGate(mount, serverId, t("gc.settings.heading"), (server) => {
-    const nodes = [settingsForm(serverId, server), rulesPanel(serverId)];
+    const nodes = [settingsForm(serverId, server), rulesPanel(serverId), welcomeCardPanel(serverId)];
     if (server.role === "owner") nodes.push(deletePanel(serverId), transferPanel(serverId));
     return nodes;
   });

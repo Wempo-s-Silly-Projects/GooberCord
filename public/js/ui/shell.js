@@ -50,6 +50,11 @@ import { loadMentions } from "./mentions.js";
 import { coinFooterLine } from "./economy.js";
 import { serverAdminRights } from "./settings.js";
 import { wempoAccountsSignOutUrl } from "./landing.js";
+import { renderBookmarksPanel } from "./bookmarks.js";
+
+// The bookmarks panel: its route registers here (the shell owns the nav
+// entry AND its door; main.js's route table stays untouched).
+router.addRoute("/bookmarks", "bookmarks", renderBookmarksPanel);
 
 // AGPL §13's source-offer rides the shell's user footer: every signed-in
 // screen carries the quiet anchor next to sign-out, pointing at the repo.
@@ -289,6 +294,12 @@ function channelRail() {
     hidden: !Array.isArray(mentions) || mentions.length === 0 ? true : undefined,
     text: Array.isArray(mentions) ? String(mentions.length) : t("gc.shell.mentions.loading"),
   })));
+
+  // The bookmarks door: the private saved panel (bookmarks.js owns it), the
+  // same text-and-label grammar the button law demands (no bare icons).
+  rail.append(h("a", { class: "channel-row bookmarks-item", href: "/bookmarks",
+    "aria-label": t("gc.shell.nav.bookmarks") },
+  h("span", { class: "channel-hash", text: "*" }), t("gc.shell.nav.bookmarks")));
 
   if (server && Array.isArray(server.channels)) {
     // Channels file under their categories when the server has any;

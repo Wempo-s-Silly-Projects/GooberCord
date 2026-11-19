@@ -61,6 +61,30 @@ export async function loadShop() {
   return payload;
 }
 
+// GET /api/quests — the day's three progress counts + the shared claim
+// state (api/quests.mjs). The GOAL numbers ride the payload's own values
+// (questPayload ships kind/goal/progress/complete verbatim) — never a
+// client-side mirror and never a constants import.
+export async function loadQuests() {
+  const payload = await api("/api/quests");
+  store.set({ quests: payload });
+  return payload;
+}
+
+// POST /api/quests/claim — the completed day's claim. The shared daily slot
+// is the backend's own NOT-EXISTS pair (one slot with economy.js's plain
+// claim): whichever door fires first wins, the other answers its 409/400
+// verdict verbatim — no client dedup logic is invented. The response's
+// claim state re-renders the panel and the balance refresh rides loadCoins
+// (the flat 25 mints server-side; the client adds no arithmetic).
+export async function claimQuest() {
+  const result = await api("/api/quests/claim", { method: "POST" });
+  const quests = store.get("quests");
+  if (result?.claim && quests) store.set({ quests: { ...quests, claim: result.claim } });
+  await loadCoins();
+  return result;
+}
+
 export async function buyCosmetic(item) {
   const result = await api("/api/coins/cosmetics", { method: "POST", body: { item } });
   await loadCoins();
@@ -229,6 +253,7 @@ export function renderShop(route, mount) {
     h("div", { class: "pane-body" }, body))));
   loadShop().then((payload) => {
     body.append(
+      questsPanel(),
       claimPanel(payload),
       plusPanel(payload),
       itemsPanel(payload));
@@ -275,6 +300,47 @@ function claimPanel(payload) {
     h("p", { class: "count-line" }, t("gc.economy.balance"), " ", coinAmount(payload.balance),
       h("span", { text: t("gc.economy.claim.ceiling", { earned: payload.earnedToday, ceiling: payload.dailyCeiling }) })),
     claim, errorLine);
+}
+
+// The daily quests (wave-10 F2): the payload's own kind/goal/progress rows
+// paint as-is — the goal numbers are the GET's, never a client mirror; the
+// claim rides the shared daily slot and the 409/400 verdict renders inline
+// verbatim, the same lane the plain claim's refusal rides.
+function questsPanel() {
+  const panel = h("div", { class: "panel" }, h("h3", { text: t("gc.economy.quests.heading") }));
+  const quests = store.get("quests");
+  if (!quests) {
+    loadQuests().then(() => router.renderCurrent()).catch((error) => {
+      panel.append(h("p", { class: "form-error", text: error.message })); // G-2 verbatim
+    });
+    return panel;
+  }
+  const errorLine = inlineError();
+  const rows = (quests.quests || []).map((quest) => h("li", {
+    class: "quest-row" + (quest.complete ? " quest-complete" : ""),
+  },
+  h("span", { class: "quest-kind", text: t("gc.economy.quests." + quest.kind) }),
+  h("span", { class: "quest-progress",
+    text: t("gc.economy.quests.progress", { progress: quest.progress, goal: quest.goal }) })));
+  panel.append(h("ul", { class: "quest-list" }, ...rows));
+  const claim = h("button", {
+    class: "button button-primary quest-claim", type: "button",
+    text: quests?.claim?.claimed
+      ? t("gc.economy.quests.claimed")
+      : t("gc.economy.quests.claim", { count: quests?.claim?.reward }),
+  });
+  claim.disabled = !!quests?.claim?.claimed;
+  claim.addEventListener("click", async () => {
+    try {
+      await claimQuest();
+      errorLine.textContent = "";
+      router.renderCurrent();
+    } catch (error) {
+      errorLine.textContent = error.message; // the shared daily slot, verbatim
+    }
+  });
+  panel.append(claim, errorLine);
+  return panel;
 }
 
 // The plus bundles: perks GRAY under grace (the banner dates stay), renewal

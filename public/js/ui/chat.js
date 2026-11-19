@@ -47,6 +47,7 @@ import { renderShell } from "./shell.js";
 import { guardRulesGate } from "./rules-gate.js";
 import { loadConversations, manageGroupControls } from "./social.js";
 import { startVoiceTicks } from "./economy.js";
+import { saveBookmark, unsaveBookmark } from "./bookmarks.js";
 import { getChannelSocket, closeChannelSocket, makeClientMessageId } from "../core/ws.js";
 
 // --- mirrored constants (G-4: equality pins against constants.mjs) -----------
@@ -388,6 +389,35 @@ export function renderBody(message, { inventory = null, roster = [], me = null }
 let voiceTickStop = null;
 let rosterUnsub = null;
 
+// The welcome card pull (wave-10 F3): the member's GET
+// /api/servers/:id/welcome-card — ride-less by default (the backend owns
+// the once-shown ledger, the view row records on the first GET), and the
+// server's unconfigured row answers the shared 404 whose off-state is
+// SILENCE here, never an error lane.
+function pullWelcomeCard(serverId, column, { repeat = false } = {}) {
+  return api(`/api/servers/${serverId}/welcome-card${repeat ? "?repeat=1" : ""}`).then((payload) => {
+    if (payload && typeof payload.blurb === "string" && payload.blurb) {
+      column.prepend(welcomeCardBlock(payload.blurb));
+    }
+  }).catch(() => { /* the off-state IS the missing row — silence, never an error */ });
+}
+
+// The card's paint: the blurb is member-composed server content — stored
+// verbatim, painted VERBATIM through the single textContent seat, never
+// routed through t() and never interpolated (welcome-card.mjs's law). Only
+// the card CHROME (title, dismiss) rides keys.
+function welcomeCardBlock(blurb) {
+  const blurbLine = h("p", { class: "welcome-card-blurb" });
+  const card = h("div", { class: "welcome-card" },
+    h("p", { class: "welcome-card-title", text: t("gc.chat.welcome.title") }),
+    blurbLine);
+  card.append(h("button", { class: "control-quiet row-quiet-inline", type: "button",
+    text: t("gc.chat.welcome.dismiss"),
+    onClick: () => card.remove() }));
+  blurbLine.textContent = blurb;
+  return card;
+}
+
 export function renderChannelPane(route, mount) {
   currentServerId = Number(route.params.serverId);
   const channelId = Number(route.params.channelId);
@@ -400,10 +430,17 @@ export function renderChannelPane(route, mount) {
     h("span", { class: "channel-name", text: (channel ? "#" + channel.name : t("gc.shell.placeholder.channelTitle")) }),
     h("nav", { class: "chat-header-nav" },
       h("a", { class: "control-quiet", href: `/s/${currentServerId}/search`, text: t("gc.controls.search") }),
-      h("a", { class: "control-quiet", href: `/s/${currentServerId}/${channelId}/pins`, text: t("gc.chat.pins.link") })));
+      h("a", { class: "control-quiet", href: `/s/${currentServerId}/${channelId}/pins`, text: t("gc.chat.pins.link") }),
+      h("button", { class: "control-quiet", type: "button", text: t("gc.chat.welcome.again"),
+        onClick: () => { pullWelcomeCard(currentServerId, column, { repeat: true }); } })));
   const footer = h("footer", { class: "composer-foot" });
   pane.append(header, column, footer);
   mount.append(renderShell(route, pane));
+  // The server's welcome card (wave-10 F3): the member's ONCE-PER-VIEW pull
+  // fires on open WITHOUT ?repeat=1 (the backend records the view row; the
+  // client keeps no view state); a re-show is ONLY the header's explicit
+  // door above. The off-state (the missing config row's 404) IS silence.
+  pullWelcomeCard(currentServerId, column);
 
   if (channel && channel.kind === "voice") {
     wireChannelSocket(channelId, column, header);
@@ -674,6 +711,25 @@ function hoverControls(message, context) {
   const controls = h("span", { class: "row-controls chat-row-controls" },
     h("button", { class: "row-quiet-control", type: "button", text: t("gc.chat.row.react"),
       onClick: () => reactionPicker(message) }));
+  // The bookmark save (wave-10 F1): OPT-IN, DEFAULT-OFF — no automatic save
+  // ever fires; the click saves, a second click unsaves. The default label is
+  // the OFF state's word; the saved state reads the store's bookmarks lane
+  // (bookmarks.js mirrors the GET list there), never its own fetch.
+  const savedRow = (store.get("bookmarks") || [])
+    .find((row) => row.messageId === message.id) || null;
+  controls.append(h("button", {
+    class: "row-quiet-control", type: "button",
+    text: savedRow ? t("gc.chat.row.unsave") : t("gc.chat.row.save"),
+    onClick: async () => {
+      try {
+        if (savedRow) await unsaveBookmark(savedRow.id);
+        else await saveBookmark(message.id);
+        refreshColumn(columnNodeRef, context.channelId);
+      } catch (error) {
+        controls.title = error.message; // the 404 family, verbatim
+      }
+    },
+  }));
   if ((message.reactions || []).length > 0) {
     controls.append(h("button", { class: "row-quiet-control", type: "button", text: t("gc.chat.reactions.see"),
       onClick: () => reactionsDialog(message, context) }));
