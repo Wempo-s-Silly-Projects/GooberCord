@@ -609,15 +609,19 @@ async function handleAddReactionRoute(request, env, messageId) {
   // row replays 201 (the idempotent verdict), a genuine cap refusal answers
   // the filed copy verbatim.
   const cap = GC_REACTIONS_MAX_UNIQUE_PER_MESSAGE;
+  // GO-HAYWIRE cycle-2 fix 2: the old INSERT..SELECT admitted the caller's
+  // ALREADY-HELD emoji through its EXISTS arm and the composite PK then
+  // threw UNIQUE on real SQLite — every repeat PUT 500ed and the held-replay
+  // branch below was unreachable. INSERT OR IGNORE makes changes = 1 mean
+  // exactly "a fresh row landed" (the burst verdict's premise), the held
+  // case is IGNOREd (no cap math involved — a hold replays 201 even at
+  // cap), and a genuine cap refusal still classifies by the re-read.
   const insert = await env.GOOBER_DB.prepare(
-    "INSERT INTO gc_message_reactions (message_id, user_id, emoji, created_at) " +
+    "INSERT OR IGNORE INTO gc_message_reactions (message_id, user_id, emoji, created_at) " +
       "SELECT ?, ?, ?, ? " +
-      "WHERE EXISTS (SELECT 1 FROM gc_message_reactions " +
-        "WHERE message_id = ? AND user_id = ? AND emoji = ?) " +
-      "OR (SELECT COUNT(DISTINCT emoji) FROM gc_message_reactions WHERE message_id = ?) < " + cap,
+      "WHERE (SELECT COUNT(DISTINCT emoji) FROM gc_message_reactions WHERE message_id = ?) < " + cap,
   ).bind(
     Number(message.id), selfId, emoji, nowSeconds(),
-    Number(message.id), selfId, emoji,
     Number(message.id),
   ).run();
 

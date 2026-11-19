@@ -157,7 +157,7 @@ function coinDb(options = {}) {
     sql.startsWith("INSERT INTO gc_coin_ledger (user_id, delta, source, related_user_id, created_at)") &&
     sql.includes("'voice'");
   const SPEND_TEST = (sql) =>
-    sql.startsWith("INSERT INTO gc_coin_ledger (user_id, delta, source, related_user_id, created_at)") &&
+    sql.startsWith("INSERT INTO gc_coin_ledger (user_id, delta, source, related_user_id, created_at, spend_nonce)") &&
     sql.includes("WHERE EXISTS (SELECT 1 FROM users");
   const UPSERT_TEST = (sql) =>
     sql.startsWith("INSERT INTO gc_plus_state") && sql.indexOf("ON CONFLICT(user_id) DO UPDATE") >= 0;
@@ -224,12 +224,12 @@ function coinDb(options = {}) {
     {
       test: SPEND_TEST,
       run: (bound) => {
-        // [gifter, -price, source, related, now, recipient, gifter, price]
-        const [gifter, delta, source, related, now] = bound;
-        const recipientExists = users.some((user) => user.id === bound[5]);
-        const affordable = balanceOf(bound[6]) >= bound[7];
+        // [gifter, -price, source, related, now, nonce, recipient, gifter, price]
+        const [gifter, delta, source, related, now, nonce] = bound;
+        const recipientExists = users.some((user) => user.id === bound[6]);
+        const affordable = balanceOf(bound[7]) >= bound[8];
         if (!(recipientExists && affordable)) return { meta: { changes: 0 } };
-        ledger.push({ user_id: gifter, delta, source, related_user_id: related, created_at: now });
+        ledger.push({ user_id: gifter, delta, source, related_user_id: related, spend_nonce: nonce, created_at: now });
         return { meta: { changes: 1, last_row_id: ++nextRowId } };
       },
     },
@@ -237,16 +237,17 @@ function coinDb(options = {}) {
       test: UPSERT_TEST,
       run: (bound) => {
         // bound: [target, MAX(now, now), +term, tenure, trail, updated, tier, |
-        //         gifter, source, -price, now, related, | now, term, trail, tier, now]
+        //         gifter, source, -price, now, related, nonce, | now, term, trail, tier, now]
         const [
           target, insertMaxA, insertMaxB, insertTerm, insertTenure, insertTrail, insertedAt, insertTier,
-          fpUser, fpSource, fpDelta, fpNow, fpRelated,
+          fpUser, fpSource, fpDelta, fpNow, fpRelated, fpNonce,
           updateNow, updateTerm, updateTrail, updateTier, updatedAt,
         ] = bound;
         void insertMaxA; void insertMaxB; // the INSERT branch MAX()s them; both carry `now`
         const fingerprint = ledger.some((row) =>
           row.user_id === fpUser && row.source === fpSource && row.delta === fpDelta &&
-          row.created_at === fpNow && (row.related_user_id ?? null) === fpRelated);
+          row.created_at === fpNow && (row.related_user_id ?? null) === fpRelated &&
+          row.spend_nonce === fpNonce);
         if (!fingerprint) return { meta: { changes: 0 } };
         const stored = plusRows.get(target);
         if (stored) {
@@ -662,8 +663,9 @@ test("POST /api/plus/renew buys a term in ONE batch: the spend and the fingerpri
   assert.equal(spend.bound[1], -GC_PLUS_PRICE);
   assert.equal(spend.bound[2], "plus_renewal");
   assert.equal(typeof spend.bound[4], "number", "created_at is bound");
+  assert.equal(typeof spend.bound[5], "string", "the spend mints its own nonce (0058 fingerprint)");
   assert.match(spend.sql, /SELECT COALESCE\(SUM\(le\.delta\), 0\) FROM gc_coin_ledger le/, "the sufficient-coins arm rides the INSERT");
-  assert.equal(spend.bound[7], GC_PLUS_PRICE, "the balance check compares the price INSIDE the SQL");
+  assert.equal(spend.bound[8], GC_PLUS_PRICE, "the balance check compares the price INSIDE the SQL");
 
   const upsert = batch.statements.find((statement) =>
     statement.sql.startsWith("INSERT INTO gc_plus_state"));
@@ -823,7 +825,7 @@ test("a Mini purchase writes tier='mini' on the term row it mints, at the MINI p
     "the upsert names the tier on both arms");
   assert.match(upsert.sql, /tier = \?/);
   assert.equal(upsert.bound[7], "mini");
-  assert.equal(upsert.bound[16], "mini");
+  assert.equal(upsert.bound[17], "mini");
   const stored = db.plusRows.get(USER_ID);
   assert.equal(stored.tier, "mini");
   // The tier is the WRITE-side stamp only — the read-side perk predicate is

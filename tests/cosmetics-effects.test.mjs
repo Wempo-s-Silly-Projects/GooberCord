@@ -148,7 +148,7 @@ const CHANNEL_ACCESS_TEST = (sql) =>
   sql.includes("FROM gc_channels c") && sql.includes("gc_conversation_members cm");
 const MEMBER_GATE_TEST = (sql) =>
   sql.includes("FROM gc_server_members m JOIN users u") && sql.includes("timed_out_until");
-const REACTION_INSERT_TEST = (sql) => sql.startsWith("INSERT INTO gc_message_reactions");
+const REACTION_INSERT_TEST = (sql) => sql.startsWith("INSERT OR IGNORE INTO gc_message_reactions");
 const REACTION_HELD_TEST = (sql) =>
   sql.startsWith("SELECT 1 AS held FROM gc_message_reactions");
 const BURST_FLAG_TEST = (sql) => sql.startsWith("UPDATE gc_message_reactions SET fx_burst = 1");
