@@ -1319,8 +1319,11 @@ test("a deleted message takes its attachment chunks and rows with it in the same
 
   const batch = db.calls.find((call) => call.call === "batch");
   assert.ok(batch);
-  assert.equal(batch.statements.length, 3);
-  const [chunksDelete, attachmentsDelete, messageDelete] = batch.statements;
+  // Four statements since lane-r2-sweep: the doomed gc_bookmarks sweep rides
+  // third, behind the SAME three-tier guard (its shape is pinned in
+  // tests/r2-sweep-messages.test.mjs).
+  assert.equal(batch.statements.length, 4);
+  const [chunksDelete, attachmentsDelete, , messageDelete] = batch.statements;
 
   // Chunks first (the FK on chunks allows them to die while the attachment
   // row still stands), each delete GUARDED by the same tier logic the message

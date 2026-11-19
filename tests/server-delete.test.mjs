@@ -168,6 +168,13 @@ test("the owner's delete strips the whole server in one batch and counts its tab
       expressionAttachments: 3,
       memberRoles: 4,
       roles: 5,
+      // The orphan sweeps since lane-r2-sweep (bookmarks + the welcome pair +
+      // the reaction-tag pair) count like every other table.
+      messageBookmarks: 1,
+      welcomeCardViews: 1,
+      welcomeCards: 1,
+      reactionTagOpts: 1,
+      reactionTags: 1,
       servers: 1,
       iconAttachmentChunks: 3,
       iconAttachments: 1,

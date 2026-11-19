@@ -55,7 +55,7 @@ import { plusMemberActive } from "./plus.mjs";
 // The create intake IS the attachment intake (magic bytes, structural
 // sanitizer, 64k chunks, pending moderation) reused end to end — no second
 // storage gate can ever drift away from the message one.
-import { createAttachment, readMultipartWithImage } from "./media.mjs";
+import { createAttachment, readMultipartWithImage, scheduleAttachmentObjectDelete } from "./media.mjs";
 import { serverBoostTier } from "./boost-level.mjs";
 // The manage-guard fragments mirror the channel-delete lane's shapes
 // (servers.mjs) — kept local rather than imported so the bundle's commit can
@@ -495,7 +495,7 @@ async function handleRenameExpressionRoute(request, env, serverId, expressionId,
 // sibling survived (serve-then-404, live data loss). Post-row-delete, the
 // sibling NOT EXISTS reads decide honestly: shared → the bytes survive with
 // the sibling; sole referencer → the bytes leave with the row.
-async function handleDeleteExpressionRoute(request, env, serverId, expressionId, kind) {
+async function handleDeleteExpressionRoute(request, env, serverId, expressionId, kind, ctx) {
   const session = await requireUser(request, env);
   await rateLimit(request, env, "write", "emoji:" + session.user.id);
   const actorId = Number(session.user.id);
@@ -552,6 +552,13 @@ async function handleDeleteExpressionRoute(request, env, serverId, expressionId,
   if (Number(results[0]?.meta?.changes) !== 1) {
     throw new HttpError(403, "You do not have permission to do that.");
   }
+  // The bucket follows the D1 verdict: the third statement's own guard (sole
+  // referencer AND standalone) already decided the attachment row died — its
+  // object dies with it, best-effort, through the caller's waitUntil. A
+  // surviving sibling keeps the bytes.
+  if (Number(results[2]?.meta?.changes) === 1) {
+    scheduleAttachmentObjectDelete(env, ctx, Number(target.attachment_id));
+  }
   return json({ ok: true });
 }
 
@@ -559,7 +566,8 @@ async function handleDeleteExpressionRoute(request, env, serverId, expressionId,
 
 export async function handleExpressionRoutes(request, env, url, path, method, ctx) {
   void url;
-  void ctx;
+  // ctx threads into the DELETE ride: the doomed attachment's R2 object rides
+  // the caller's waitUntil (media.mjs's scheduleAttachmentObjectDelete).
 
   for (const [kindName, kind] of Object.entries(KIND)) {
     const listMatch = (method === "GET" || method === "POST")
@@ -577,7 +585,7 @@ export async function handleExpressionRoutes(request, env, url, path, method, ct
     if (itemMatch) {
       return method === "PATCH"
         ? handleRenameExpressionRoute(request, env, Number(itemMatch[1]), itemMatch[2], kindName)
-        : handleDeleteExpressionRoute(request, env, Number(itemMatch[1]), itemMatch[2], kindName);
+        : handleDeleteExpressionRoute(request, env, Number(itemMatch[1]), itemMatch[2], kindName, ctx);
     }
   }
   return undefined;

@@ -66,6 +66,7 @@ import {
   prepareAttachmentBytes,
   putAttachmentObject,
   readMultipartWithImage,
+  scheduleAttachmentObjectDelete,
 } from "./media.mjs";
 import { attachmentCapBytes, plusActiveExpr, plusPerkActive, publicIsPlus } from "./plus.mjs";
 import {
@@ -1356,25 +1357,64 @@ const MESSAGE_ATTACHMENTS_DELETE_SQL =
     ATTACHMENT_MODERATOR_TIER_SQL +
     "OR ? = 1)";
 
-async function handleDeleteMessageRoute(request, env, messageId) {
+// The doomed attachments' ids, pre-read with the SAME three tiers the batch's
+// deletes carry — the object store's purge list rides the servers.mjs
+// discipline (no id is ever derived INSIDE a batch). The bucket follows the
+// batch's verdict, never leads: a 404 verdict schedules nothing.
+const MESSAGE_ATTACHMENT_IDS_SELECT_SQL =
+  "SELECT id FROM gc_attachments WHERE message_id = ? AND (" +
+    "EXISTS (SELECT 1 FROM gc_messages m WHERE m.id = gc_attachments.message_id AND m.author_id = ?) " +
+    ATTACHMENT_MODERATOR_TIER_SQL +
+    "OR ? = 1)";
+
+// The bookmarks sweep (0 orphan law): gc_bookmarks carries NO message FK
+// (migration 0053's shape is owner/message/saved_at, bare), so the doomed
+// pointers die in the batch behind the SAME tier guard. Every other
+// message-scoped table (gc_message_reactions, gc_mentions) already rides the
+// gc_messages FK CASCADE — see tests/r2-sweep-fk-pins.test.mjs.
+const MESSAGE_BOOKMARKS_DELETE_SQL =
+  "DELETE FROM gc_bookmarks WHERE message_id = ? AND (" +
+    "EXISTS (SELECT 1 FROM gc_messages m WHERE m.id = gc_bookmarks.message_id AND m.author_id = ?) " +
+    ATTACHMENT_MODERATOR_TIER_SQL +
+    "OR ? = 1)";
+
+async function handleDeleteMessageRoute(request, env, messageId, ctx) {
   const session = await requireUser(request, env);
   const userId = Number(session.user.id);
   // Platform staff ('owner'/'admin' at the public tier) carry the flag into
   // the guard; server moderation stays a pure SQL membership EXISTS.
   const staff = session.user.role === "owner" || session.user.role === "admin" ? 1 : 0;
-  // ONE batch: attachment cleanup + the guarded message DELETE, all-or-
-  // nothing. Each of the first two statements carries the SAME tier guard as
-  // the message DELETE itself, so the 404 path (changes 0) also deleted
-  // nothing — the chunk rows die with the attachment rows, in the same SQL.
+  // The object purge list's pre-read (same guard, same binds as the
+  // attachments DELETE below).
+  const doomedRows = (await env.GOOBER_DB.prepare(MESSAGE_ATTACHMENT_IDS_SELECT_SQL)
+    .bind(messageId, userId, messageId, userId, staff).all()).results || [];
+  const doomedIds = doomedRows
+    .map((row) => Number(row.id))
+    .filter((id) => Number.isInteger(id) && id > 0);
+  // ONE batch: attachment cleanup + the bookmarks sweep + the guarded message
+  // DELETE, all-or-nothing. Each of the first three statements carries the
+  // SAME tier guard as the message DELETE itself, so the 404 path (changes 0)
+  // also deleted nothing — the chunk rows die with the attachment rows, in
+  // the same SQL.
   const results = await env.GOOBER_DB.batch([
     env.GOOBER_DB.prepare(MESSAGE_ATTACHMENT_CHUNKS_DELETE_SQL)
       .bind(messageId, userId, messageId, userId, staff),
     env.GOOBER_DB.prepare(MESSAGE_ATTACHMENTS_DELETE_SQL)
       .bind(messageId, userId, messageId, userId, staff),
+    env.GOOBER_DB.prepare(MESSAGE_BOOKMARKS_DELETE_SQL)
+      .bind(messageId, userId, messageId, userId, staff),
     env.GOOBER_DB.prepare(MESSAGE_DELETE_SQL)
       .bind(messageId, userId, userId, staff),
   ]);
-  if (Number(results[2]?.meta?.changes) !== 1) throw new HttpError(404, "Message not found.");
+  if (Number(results[3]?.meta?.changes) !== 1) throw new HttpError(404, "Message not found.");
+
+  // The bucket follows the D1 verdict: exactly the pre-read doomed ids'
+  // objects die with the batch, best-effort (the ride never blocks or fails
+  // the row deletion — scheduleAttachmentObjectDelete catches its own
+  // errors), one R2 delete per doomed id, through the caller's waitUntil.
+  for (const attachmentId of doomedIds) {
+    scheduleAttachmentObjectDelete(env, ctx, attachmentId);
+  }
 
   return json({ ok: true });
 }
@@ -1520,9 +1560,9 @@ async function handleChannelPinsRoute(request, env, channelId) {
         reactionGroupsByMessage.get(Number(row.id)) || null)),
   });
 }export async function handleMessageRoutes(request, env, url, path, method, ctx) {
-  // ctx (the worker's execution context) completes the dispatch loop's
-  // handler signature; these routes schedule no background work today.
-  void ctx;
+  // ctx (the worker's execution context) threads into the DELETE ride: the
+  // doomed attachments' R2 objects ride the caller's waitUntil (media.mjs's
+  // scheduleAttachmentObjectDelete).
 
   const channelsMatch = (method === "GET" || method === "POST")
     ? path.match(/^\/api\/channels\/([1-9][0-9]{0,14})\/messages$/)
@@ -1540,7 +1580,7 @@ async function handleChannelPinsRoute(request, env, channelId) {
   if (messageMatch) {
     return method === "PATCH"
       ? handleEditMessageRoute(request, env, Number(messageMatch[1]))
-      : handleDeleteMessageRoute(request, env, Number(messageMatch[1]));
+      : handleDeleteMessageRoute(request, env, Number(messageMatch[1]), ctx);
   }
 
   // The pins lane (0026): PUT/DELETE /api/messages/:id/pin and the channel's

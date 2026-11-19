@@ -79,7 +79,7 @@ import {
 // upload (magic bytes, structural sanitizer, 64k chunks, pending moderation)
 // and the same multipart reader — no new storage SQL, no second gate to have
 // drifted away from the attachment one.
-import { createAttachment, readMultipartWithImage } from "./media.mjs";
+import { createAttachment, readMultipartWithImage, scheduleAttachmentObjectDelete } from "./media.mjs";
 // The search's per-hit VIEW gate rides the shared layer machinery (one
 // boolean, never the throwing route gate — a denied hit is DROPPED, not a
 // page-kill).
@@ -294,6 +294,13 @@ async function handleCreateServerRoute(request, env) {
 // media id out as a plain URL and visibility stays the media module's job.
 function attachmentUrl(mediaId) {
   return mediaId === null || mediaId === undefined ? null : "/api/attachments/" + Number(mediaId);
+}
+
+// errorName(error): the failure's compact label for the best-effort ride
+// logs below — D1/R2 errors carry a name/message pair worth one line of
+// context, never a swallowed void (the messages.mjs pattern, same idiom).
+function errorName(error) {
+  return error && error.name ? error.name : "UnknownError";
 }
 
 // One query: memberships for the caller joined to their servers and the
@@ -2791,7 +2798,7 @@ function channelManageGuard(serverId, actorId) {
   };
 }
 
-async function handleDeleteChannelRoute(request, env, serverId, channelId) {
+async function handleDeleteChannelRoute(request, env, serverId, channelId, ctx) {
   const session = await requireUser(request, env);
   const userId = Number(session.user.id);
 
@@ -2811,9 +2818,21 @@ async function handleDeleteChannelRoute(request, env, serverId, channelId) {
   //        DELETE action — chunks → attachments LAST-to-channel, the exact
   //        ordering the message DELETE mirrors, so the channel's implicit
   //        message CASCADE never meets a live attachment row);
-  //   3. the guarded channel DELETE itself — whose cascades take the messages,
+  //   3. the doomed bookmarks' sweep (gc_bookmarks carries NO message FK —
+  //        migration 0053's shape is bare; the orphan pointers die behind the
+  //        same guard);
+  //   4. the guarded channel DELETE itself — whose cascades take the messages,
   //      read states, overwrites, filter alerts, and conversation members.
   const guard = channelManageGuard(serverId, userId);
+  // The object purge list's pre-read (the servers.mjs discipline: no id is
+  // ever derived INSIDE a batch) — the doomed attachments the pre-clean
+  // statements below will kill.
+  const doomedRows = (await env.GOOBER_DB.prepare(
+    "SELECT id FROM gc_attachments WHERE message_id IN (SELECT id FROM gc_messages WHERE channel_id = ?)",
+  ).bind(channelId).all()).results || [];
+  const doomedAttachmentIds = doomedRows
+    .map((row) => Number(row.id))
+    .filter((id) => Number.isInteger(id) && id > 0);
   const results = await env.GOOBER_DB.batch([
     env.GOOBER_DB.prepare(
       "DELETE FROM gc_attachment_chunks WHERE attachment_id IN " +
@@ -2825,10 +2844,14 @@ async function handleDeleteChannelRoute(request, env, serverId, channelId) {
         "(SELECT id FROM gc_messages WHERE channel_id = ?) AND " + guard.sql,
     ).bind(channelId, ...guard.params),
     env.GOOBER_DB.prepare(
+      "DELETE FROM gc_bookmarks WHERE message_id IN " +
+        "(SELECT id FROM gc_messages WHERE channel_id = ?) AND " + guard.sql,
+    ).bind(channelId, ...guard.params),
+    env.GOOBER_DB.prepare(
       "DELETE FROM gc_channels WHERE id = ? AND server_id = ? AND server_id IS NOT NULL AND " + guard.sql,
     ).bind(channelId, serverId, ...guard.params),
   ]);
-  if (Number(results[2]?.meta?.changes) !== 1) {
+  if (Number(results[3]?.meta?.changes) !== 1) {
     // Same diagnostics discipline as the PATCH: a caller WITH channel
     // authority hit an unknown (or non-server) channel → 404; everyone else
     // gets the shared 403 (never an existence oracle).
@@ -2862,6 +2885,14 @@ async function handleDeleteChannelRoute(request, env, serverId, channelId) {
     ).bind(sourceCategoryId, serverId).run();
   }
 
+  // The bucket follows the D1 verdict: the pre-read doomed ids' objects die
+  // with the batch, best-effort, one R2 delete per doomed id (the ride never
+  // blocks or fails the row deletion — scheduleAttachmentObjectDelete catches
+  // its own errors), through the caller's waitUntil.
+  for (const attachmentId of doomedAttachmentIds) {
+    scheduleAttachmentObjectDelete(env, ctx, attachmentId);
+  }
+
   return json({ ok: true });
 }
 
@@ -2889,7 +2920,7 @@ async function handleDeleteChannelRoute(request, env, serverId, channelId) {
 // bytes.
 const SERVER_DELETE_ATTACHMENT_IDS_LIMIT = 127;
 
-async function handleDeleteServerRoute(request, env, serverId) {
+async function handleDeleteServerRoute(request, env, serverId, ctx) {
   const session = await requireUser(request, env);
   const userId = Number(session.user.id);
 
@@ -2969,6 +3000,33 @@ async function handleDeleteServerRoute(request, env, serverId) {
   push("roles",
     "DELETE FROM gc_roles WHERE server_id = ? AND " + guard.sql,
     [serverId, ...guard.params]);
+  // The orphan sweeps (lane-r2-sweep): these server-scoped tables carry NO FK
+  // to gc_servers (the welcome pair is migration 0054's bare PK shape; the
+  // reaction-tag pair rides the prod-applied migration 0041 outside this
+  // tree), so the purge sweeps them behind the SAME guard — the opts rows
+  // before their tag rows, whichever FK law the prod ledger carries. The
+  // doomed messages' gc_bookmarks pointers (also FK-less, migration 0053)
+  // die with the messageAttachments statement above's scope. FK-covered
+  // siblings (gc_read_state, gc_message_reactions, gc_mentions, gc_sounds,
+  // the members/invites/bans family) ride the schema's CASCADEs instead —
+  // see tests/r2-sweep-fk-pins.test.mjs.
+  push("messageBookmarks",
+    "DELETE FROM gc_bookmarks WHERE message_id IN (SELECT id FROM gc_messages WHERE channel_id IN (SELECT id FROM gc_channels WHERE server_id = ?)) " +
+      "AND " + guard.sql,
+    [serverId, ...guard.params]);
+  push("welcomeCardViews",
+    "DELETE FROM gc_welcome_card_views WHERE server_id = ? AND " + guard.sql,
+    [serverId, ...guard.params]);
+  push("welcomeCards",
+    "DELETE FROM gc_welcome_cards WHERE server_id = ? AND " + guard.sql,
+    [serverId, ...guard.params]);
+  push("reactionTagOpts",
+    "DELETE FROM gc_reaction_tag_opts WHERE tag_id IN (SELECT id FROM gc_server_reaction_tags WHERE server_id = ?) " +
+      "AND " + guard.sql,
+    [serverId, ...guard.params]);
+  push("reactionTags",
+    "DELETE FROM gc_server_reaction_tags WHERE server_id = ? AND " + guard.sql,
+    [serverId, ...guard.params]);
   push("servers",
     "DELETE FROM gc_servers WHERE id = ? AND " + OWNER_EXISTS_SQL,
     [serverId, ...guard.params]);
@@ -3006,6 +3064,43 @@ async function handleDeleteServerRoute(request, env, serverId) {
     }
 
     throw new HttpError(403, "You do not have permission to do that.");
+  }
+
+  // The bucket follows the D1 verdict: the doomed-ids pre-read IS the purge
+  // list (the dead `doomedAttachmentIds` list wired, no second attachment
+  // read), swept MINUS the post-batch survivors — an attachment still
+  // referenced by a cross-server expression row or still pointed at by
+  // another server's icon keeps its bytes (the NOT EXISTS survivor law, the
+  // same honesty the sibling arms post-batch). The survivor read failing is
+  // diagnosed best-effort and skips ONLY the ride, never the verdict.
+  try {
+    const survivors = new Set();
+    if (expressionAttachmentIds.length > 0) {
+      const idList = expressionAttachmentIds.map(() => "?").join(", ");
+      const survivorRows = ((await env.GOOBER_DB.prepare(
+        "SELECT attachment_id FROM gc_emoji WHERE attachment_id IN (" + idList + ") " +
+          "UNION SELECT attachment_id FROM gc_stickers WHERE attachment_id IN (" + idList + ") " +
+          "UNION SELECT attachment_id FROM gc_sounds WHERE attachment_id IN (" + idList + ")",
+      ).bind(...expressionAttachmentIds, ...expressionAttachmentIds, ...expressionAttachmentIds)
+        .all()).results) || [];
+      for (const row of survivorRows) survivors.add(Number(row.attachment_id));
+    }
+    if (iconMediaId !== null) {
+      const iconSurvivorRows = ((await env.GOOBER_DB.prepare(
+        "SELECT icon_media_id FROM gc_servers WHERE icon_media_id = ?",
+      ).bind(iconMediaId).all()).results) || [];
+      if (iconSurvivorRows.length > 0) survivors.add(iconMediaId);
+    }
+    for (const attachmentId of doomedAttachmentIds) {
+      if (!survivors.has(attachmentId)) {
+        scheduleAttachmentObjectDelete(env, ctx, attachmentId);
+      }
+    }
+  } catch (error) {
+    // The ride itself is best-effort; the lost sweep surfaces for the desk.
+    console.error("Attachment object sweep read failed:", errorName(error), {
+      serverId: Number(serverId),
+    });
   }
 
   return json({ ok: true, deleted });
@@ -3378,10 +3473,10 @@ async function handleListOverwritesRoute(request, env, serverId, channelId) {
 }
 
 export async function handleServerRoutes(request, env, url, path, method, ctx) {
-  // ctx (the worker's execution context) completes the dispatch loop's handler
-  // signature; these routes schedule no background work today.
+  // ctx (the worker's execution context) threads into the purge rides: the
+  // channel/server purges' doomed attachments' R2 objects ride the caller's
+  // waitUntil (media.mjs's scheduleAttachmentObjectDelete).
   void url;
-  void ctx;
 
   if (path === "/api/servers" && method === "POST") {
     return handleCreateServerRoute(request, env);
@@ -3402,7 +3497,7 @@ export async function handleServerRoutes(request, env, url, path, method, ctx) {
     ? path.match(/^\/api\/servers\/(0|[1-9][0-9]*)$/)
     : null;
   if (serverDeleteMatch) {
-    return handleDeleteServerRoute(request, env, Number(serverDeleteMatch[1]));
+    return handleDeleteServerRoute(request, env, Number(serverDeleteMatch[1]), ctx);
   }
 
   const channelsMatch = method === "POST"
@@ -3556,7 +3651,7 @@ export async function handleServerRoutes(request, env, url, path, method, ctx) {
           request, env, Number(channelPatchMatch[1]), Number(channelPatchMatch[2]),
         )
       : handleDeleteChannelRoute(
-          request, env, Number(channelPatchMatch[1]), Number(channelPatchMatch[2]),
+          request, env, Number(channelPatchMatch[1]), Number(channelPatchMatch[2]), ctx,
         );
   }
 

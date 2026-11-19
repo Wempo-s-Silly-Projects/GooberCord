@@ -224,12 +224,12 @@ test("PATCH rename with nothing else still counts as a change; an empty body 400
 test("DELETE carries the SAME guard on EVERY statement of the batch (a doomed delete strips nothing)", () => {
   // Structural pin: the message DELETE's discipline (each statement carries
   // the same tier guard so an unauthorized caller strips nothing even in a
-  // pre-clean statement) holds in the channel batch too — all three
+  // pre-clean statement) holds in the channel batch too — all four
   // statements interpolate the ONE guard helper, not a bespoke pair.
   assert.match(ROUTE_SOURCE, /function channelManageGuard\(serverId, actorId\)/);
   const routeHead = ROUTE_SOURCE.slice(ROUTE_SOURCE.indexOf("async function handleDeleteChannelRoute"));
   const guardUses = routeHead.slice(0, routeHead.indexOf("async function", 10)).match(/guard\.sql/g);
-  assert.equal((guardUses || []).length, 3, "every batch statement interpolates the shared guard");
+  assert.equal((guardUses || []).length, 4, "every batch statement interpolates the shared guard");
 });
 
 const deleteFixtureDb = (options = {}) =>
@@ -261,14 +261,17 @@ test("DELETE /api/servers/:sid/channels/:cid runs chunks → attachments → cha
 
   const batch = db.calls.find((call) => call.call === "batch");
   assert.ok(batch, "the delete is one batch");
-  assert.equal(batch.statements.length, 3);
+  // Four statements since lane-r2-sweep: the doomed gc_bookmarks sweep rides
+  // third, behind the SAME guard (its shape is pinned in
+  // tests/r2-sweep-servers.test.mjs).
+  assert.equal(batch.statements.length, 4);
   assert.ok(CHUNKS_DELETE_TEST(batch.statements[0].sql), "chunks die FIRST");
   assert.ok(ATTACHMENTS_DELETE_TEST(batch.statements[1].sql), "attachments die BEFORE the channel");
-  assert.ok(CHANNEL_DELETE_TEST(batch.statements[2].sql));
+  assert.ok(CHANNEL_DELETE_TEST(batch.statements[3].sql));
 
   // The final DELETE carries ALL the authority: ownership OR the
   // MANAGE_CHANNELS per-bit EXISTS, with the server channel rider.
-  const channel = batch.statements[2].sql;
+  const channel = batch.statements[3].sql;
   assert.match(channel, /server_id IS NOT NULL/);
   assert.match(channel, /OR \(EXISTS \(SELECT 1 FROM gc_member_roles gbm1 JOIN gc_roles gbr1/);
   assert.match(channel, /\(gbr1\.permissions & 1\) <> 0/);
@@ -276,7 +279,7 @@ test("DELETE /api/servers/:sid/channels/:cid runs chunks → attachments → cha
   // Every statement bound the channel id first (the pre-clean's scope).
   assert.equal(batch.statements[0].bound[0], CHANNEL_ID);
   assert.equal(batch.statements[1].bound[0], CHANNEL_ID);
-  assert.equal(batch.statements[2].bound[0], CHANNEL_ID);
+  assert.equal(batch.statements[3].bound[0], CHANNEL_ID);
 
   // NO category → NO emptied-folder cleanup. (Statements only — the batch
   // record's shape carries `statements`, not a `sql`.)

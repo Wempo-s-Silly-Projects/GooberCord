@@ -56,6 +56,7 @@ import { serverBoostTier } from "./boost-level.mjs";
 import {
   insertStandaloneAttachment,
   readMultipartWithImage,
+  scheduleAttachmentObjectDelete,
 } from "./media.mjs";
 import { expressionPayloadRow } from "./emoji.mjs";
 
@@ -380,7 +381,7 @@ async function handleRenameSoundRoute(request, env, serverId, soundId) {
 // survived. Post-row-delete the sibling NOT EXISTS reads decide honestly:
 // shared → the bytes survive with the sibling; sole referencer → the bytes
 // leave with the row.
-async function handleDeleteSoundRoute(request, env, serverId, soundId) {
+async function handleDeleteSoundRoute(request, env, serverId, soundId, ctx) {
   const session = await requireUser(request, env);
   await rateLimit(request, env, "write", "soundboard:" + session.user.id);
   const actorId = Number(session.user.id);
@@ -435,6 +436,13 @@ async function handleDeleteSoundRoute(request, env, serverId, soundId) {
   if (Number(results[0]?.meta?.changes) !== 1) {
     throw new HttpError(403, "You do not have permission to do that.");
   }
+  // The bucket follows the D1 verdict: the third statement's own guard (sole
+  // referencer AND standalone) already decided the attachment row died — its
+  // object dies with it, best-effort, through the caller's waitUntil. A
+  // surviving sibling keeps the bytes.
+  if (Number(results[2]?.meta?.changes) === 1) {
+    scheduleAttachmentObjectDelete(env, ctx, Number(target.attachment_id));
+  }
   return json({ ok: true });
 }
 
@@ -442,7 +450,8 @@ async function handleDeleteSoundRoute(request, env, serverId, soundId) {
 
 export async function handleSoundboardRoutes(request, env, url, path, method, ctx) {
   void url;
-  void ctx;
+  // ctx threads into the DELETE ride: the doomed attachment's R2 object rides
+  // the caller's waitUntil (media.mjs's scheduleAttachmentObjectDelete).
 
   const listMatch = (method === "GET" || method === "POST")
     ? path.match(/^\/api\/servers\/([1-9][0-9]*)\/sounds$/)
@@ -459,7 +468,7 @@ export async function handleSoundboardRoutes(request, env, url, path, method, ct
   if (itemMatch) {
     return method === "PATCH"
       ? handleRenameSoundRoute(request, env, Number(itemMatch[1]), itemMatch[2])
-      : handleDeleteSoundRoute(request, env, Number(itemMatch[1]), itemMatch[2]);
+      : handleDeleteSoundRoute(request, env, Number(itemMatch[1]), itemMatch[2], ctx);
   }
   return undefined;
 }
