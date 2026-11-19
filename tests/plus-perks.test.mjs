@@ -342,6 +342,35 @@ test("PATCH /api/me/cosmetics is plus-gated BEFORE validation, with the pinned c
   assert.equal(db.calls.some((call) => COSMETICS_UPDATE_TEST(call.sql)), false);
 });
 
+// FIX (haywire-4 auth): the filed contract says clearing stays always-legal —
+// a LAPSED term must still be able to clear its own banner/flair; only a
+// non-null SET re-arms the perk gate.
+test("PATCH /api/me/cosmetics: a lapsed term can still CLEAR banner/flair", async () => {
+  const db = fakeDb([
+    sessionRoute,
+    termRoute(NOW - 1),
+    NO_OWNERSHIP_ROUTE,
+    { test: COSMETICS_ROWR_TEST, first: async () => null },
+  ]);
+  const response = await dispatch(
+    authed("PATCH", "/api/me/cosmetics", { banner: null, flair: null }),
+    envWithLimiters({ GOOBER_DB: db }),
+  );
+  assert.equal(response.status, 200, "clearing rides no perk gate");
+  const update = db.calls.find((call) => COSMETICS_UPDATE_TEST(call.sql));
+  assert.match(update.sql, /SET banner_color = NULL, flair_text = NULL/);
+  // A MIXED patch stays gated: clear one, equip the other → the perk refusal.
+  const mixed = await dispatch(
+    authed("PATCH", "/api/me/cosmetics", { banner: null, flair: "#1a2b3c" }),
+    envWithLimiters({ GOOBER_DB: fakeDb([sessionRoute, termRoute(NOW - 1), NO_OWNERSHIP_ROUTE]) }),
+  );
+  assert.equal(mixed.status, 403);
+  assert.equal(
+    (await bodyOf(mixed)).error,
+    "Those are Goober+ perks. Get Goober+ in the coin shop to use them.",
+  );
+});
+
 test("PATCH /api/me/cosmetics writes only the present fields and echoes the stored row", async () => {
   const db = fakeDb([
     sessionRoute,

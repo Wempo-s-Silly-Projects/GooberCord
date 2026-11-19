@@ -836,6 +836,116 @@ test("POST /api/admin/reset-password re-issues a password through the relay (own
   assert.equal(refused.status, 403, "members cannot re-issue passwords");
 });
 
+// Recording limiter: pins WHICH bucket a route rides and its actor key.
+function recordingLimiter() {
+  const keys = [];
+  const limiter = {
+    limit: async ({ key }) => {
+      keys.push(key);
+      return { success: true, key };
+    },
+  };
+  return { keys, limiter };
+}
+
+// Owner-tier signed-in env: stored 'admin' is the OWNER tier (publicRole).
+// The victim is user 42; the victim session DELETE is recorded for pins.
+async function ownerSignedInEnv(userId = 1) {
+  const token = randomToken();
+  const csrf = randomToken(24);
+  const row = {
+    token_hash: await sha256Hex(token),
+    user_id: userId,
+    csrf_token: csrf,
+    expires_at: nowSeconds() + 3600,
+    username: "wempos",
+    role: "admin",
+    bio: "",
+    avatar_status: null,
+    avatar_mime: null,
+    avatar_updated_at: null,
+    avatar_version: null,
+    totp_enabled: 0,
+  };
+  const db = fakeDb([
+    { test: SESSION_READ_TEST, first: async () => row },
+    { test: LOGIN_USER_SELECT_TEST, first: async () => userRow({ id: 42, username: "victim" }) },
+    {
+      test: (sql) => sql.includes("DELETE FROM sessions WHERE user_id = ? AND token_hash <> ?"),
+      run: () => ({ meta: { changes: 2 } }),
+    },
+  ]);
+  return { env: envWithLimiters({ GOOBER_DB: db, RELAY_TOKEN: "r".repeat(64) }), token, csrf, db };
+}
+
+// FIX (haywire-4 auth, HIGH): a reset that revokes nothing lets a stolen
+// session ride out its full 30-day TTL. The victim's other sessions must
+// die, with the acting owner's own token spared so the admin isn't logged
+// out mid-operation.
+test("POST /api/admin/reset-password revokes the victim's other sessions, keeping the owner's own", async () => {
+  const { env, token, csrf, db } = await ownerSignedInEnv();
+  stubRelayFetch(async () => new Response(JSON.stringify({ changed: true, user: { id: 42 } }), { status: 200 }));
+  const response = await dispatch(
+    postJson("/api/admin/reset-password", { username: "victim", password: "reset-pass-123" }, {
+      Cookie: "goober_session=" + token,
+      "X-CSRF-Token": csrf,
+    }),
+    env,
+  );
+  assert.equal(response.status, 200);
+  const revoke = db.calls.find((call) =>
+    call.sql.includes("DELETE FROM sessions WHERE user_id = ? AND token_hash <> ?"));
+  assert.ok(revoke, "the reset must revoke the victim's sessions");
+  assert.deepEqual(
+    revoke.bound,
+    [42, await sha256Hex(token)],
+    "the victim id is bound and the acting owner's token hash is spared",
+  );
+});
+
+// FIX (haywire-4 auth, LOW): the admin surface was unlimited.
+test("POST /api/admin/reset-password rides the write-bucket limiter (admin key family)", async () => {
+  const { env, token, csrf } = await ownerSignedInEnv();
+  const write = recordingLimiter();
+  env.GC_WRITE_RATE_LIMITER = write.limiter;
+  stubRelayFetch(async () => new Response(JSON.stringify({ changed: true, user: { id: 42 } }), { status: 200 }));
+  const response = await dispatch(
+    postJson("/api/admin/reset-password", { username: "victim", password: "reset-pass-123" }, {
+      Cookie: "goober_session=" + token,
+      "X-CSRF-Token": csrf,
+    }),
+    env,
+  );
+  assert.equal(response.status, 200);
+  // The vendored limiter hashes the identity (scope + ":" + actor) — the pin
+  // covers BOTH the write bucket and the admin-key actor.
+  assert.deepEqual(write.keys, [await sha256Hex("write:admin-reset:1")]);
+});
+
+// FIX (haywire-4 auth, LOW): the profile PATCH was unlimited.
+test("PATCH /api/profile rides the write-bucket limiter", async () => {
+  const { env, token, csrf } = await signedInEnv();
+  const write = recordingLimiter();
+  env.GC_WRITE_RATE_LIMITER = write.limiter;
+  const response = await dispatch(
+    new Request(ORIGIN + "/api/profile", {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+        Origin: ORIGIN,
+        Cookie: "goober_session=" + token,
+        "X-CSRF-Token": csrf,
+      },
+      body: JSON.stringify({ accentColor: "#abc" }),
+    }),
+    env,
+  );
+  assert.equal(response.status, 200);
+  // Same identity hash contract: the write bucket keyed with the member id.
+  assert.deepEqual(write.keys, [await sha256Hex("write:profile:7")],
+    "the write bucket is keyed with the member id");
+});
+
 test("login fails closed when the Forum network-ban relay is unavailable", async () => {
   const db = fakeDb([noNetworkBan]);
   const response = await dispatch(
