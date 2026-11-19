@@ -209,8 +209,10 @@ test("the staff queue carries the desk's additive nav link (nodes.push idiom, no
 // uncommitted handback has no committed range to fingerprint.
 test("diff scope: the frozen paths stay untouched across LANE_BASE..LANE_TIP", () => {
   const LANE_BASE = "587e5b8";
-  const LANE_TIP = "LANE_TIP"; // placeholder — the lead retargets to the wave feat tip at commit time
-  const tip = LANE_TIP === "LANE_TIP" ? LANE_BASE : LANE_TIP;
+  // retargeted by the lead 2026-11-19 — the wave-9 freeze-pin lesson,
+  // eighth instance: the pin fingerprints the wave own committed range.
+  const LANE_TIP = "c7fb209";
+  const tip = LANE_TIP;
   let touched;
   try {
     touched = execFileSync("git", [
