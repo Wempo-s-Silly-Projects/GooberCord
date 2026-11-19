@@ -54,16 +54,21 @@ const CAPSULES_MINE_SQL =
     "WHERE author_id = ? AND server_id = ? ORDER BY reveal_at ASC";
 
 // The author read: the delete route's pre-check and the reveal gate's author
-// arm. No body column — the letter stays sealed even from its writer.
+// arm. No body column — the letter stays sealed even from its writer. The
+// URL's server_id rides the WHERE too: a capsule answers only through its
+// OWN server's URL namespace (a member of two servers cannot address their
+// server-A capsule through a server-B URL).
 const CAPSULE_AUTHOR_READ_SQL =
   "SELECT id, author_id, channel_id, reveal_at FROM gc_time_capsules " +
-    "WHERE id = ? AND author_id = ? LIMIT 1";
+    "WHERE id = ? AND server_id = ? AND author_id = ? LIMIT 1";
 
-// The reveal gate's non-author arm: the unfiltered by-id read, still with NO
-// body column — it only classifies (pre-reveal 404 / self-seal 404 / channel
-// VIEW gate). The body rides the post-reveal read alone.
+// The reveal gate's non-author arm: the by-id read scoped to the URL's
+// server namespace, still with NO body column — it only classifies
+// (pre-reveal 404 / self-seal 404 / channel VIEW gate). The body rides the
+// post-reveal read alone.
 const CAPSULE_VIEW_READ_SQL =
-  "SELECT id, author_id, channel_id, reveal_at FROM gc_time_capsules WHERE id = ? LIMIT 1";
+  "SELECT id, author_id, channel_id, reveal_at FROM gc_time_capsules " +
+    "WHERE id = ? AND server_id = ? LIMIT 1";
 
 // THE body read — the one statement whose result carries the letter's text.
 // Every caller reached it through a gate arm (the author read, or the
@@ -71,11 +76,12 @@ const CAPSULE_VIEW_READ_SQL =
 const CAPSULE_BODY_READ_SQL = "SELECT body FROM gc_time_capsules WHERE id = ? LIMIT 1";
 
 // The delete: hard row delete, the GDPR shape. The statement's own WHERE
-// carries all three seats — author, id, and the deletable-until-reveal arm —
-// so a raced reveal between the pre-check and this run answers changes 0
-// (the caller re-classifies as locked, never half-deletes).
+// carries all four seats — id, the URL's server namespace, author, and the
+// deletable-until-reveal arm — so a raced reveal between the pre-check and
+// this run answers changes 0 (the caller re-classifies as locked, never
+// half-deletes), and a foreign-server URL never matches at all.
 const CAPSULE_DELETE_SQL =
-  "DELETE FROM gc_time_capsules WHERE id = ? AND author_id = ? AND reveal_at > ?";
+  "DELETE FROM gc_time_capsules WHERE id = ? AND server_id = ? AND author_id = ? AND reveal_at > ?";
 
 // The create: ONE guarded statement (the coins-claim idiom) — the author's
 // OPEN-capsule cap rides the INSERT's own WHERE arm, so a racing burst can
@@ -134,6 +140,10 @@ async function handleCapsuleCreateRoute(request, env, serverId, clock) {
   const payload = await readJson(request);
   const rawBody = payload && typeof payload.body === "string" ? payload.body : "";
   const text = rawBody.trim();
+  // The constant seats 2000 while migration 0052's CHECK backstop still
+  // allows 4000 (schema_backstop_4000_vs_route_2000, c16 audit LOW-4): the
+  // schema is the wider envelope, the stricter cap lives in the constant
+  // only — no value change.
   if (text.length < 1 || text.length > GC_CAPSULE_BODY_MAX) {
     throw new HttpError(400, "Your letter needs between 1 and 2000 characters.");
   }
@@ -186,7 +196,7 @@ async function handleCapsuleDeleteRoute(request, env, serverId, capsuleId, clock
   await rateLimit(request, env, "write", "capsule:delete:" + serverId + ":" + userId);
   const now = clock();
   const row = await env.GOOBER_DB.prepare(CAPSULE_AUTHOR_READ_SQL)
-    .bind(capsuleId, userId).first();
+    .bind(capsuleId, serverId, userId).first();
   if (!row) throw new HttpError(404, "This capsule does not exist or you cannot view it.");
   if (Number(row.reveal_at) <= now) {
     // The route's classification; the DELETE statement's own reveal_at > ?
@@ -194,7 +204,7 @@ async function handleCapsuleDeleteRoute(request, env, serverId, capsuleId, clock
     throw new HttpError(409, "Your letter has been revealed — it stays where it was posted.");
   }
   const result = await env.GOOBER_DB.prepare(CAPSULE_DELETE_SQL)
-    .bind(capsuleId, userId, now).run();
+    .bind(capsuleId, serverId, userId, now).run();
   if (Number(result.meta?.changes) !== 1) {
     // The pre-reveal check raced its reveal into the past (or the row moved
     // between the reads): the same locked answer either way.
@@ -208,7 +218,7 @@ async function handleCapsuleRevealRoute(request, env, serverId, capsuleId, clock
   await rateLimit(request, env, "read", "capsule:reveal:" + serverId + ":" + userId);
   const now = clock();
   const authorArm = await env.GOOBER_DB.prepare(CAPSULE_AUTHOR_READ_SQL)
-    .bind(capsuleId, userId).first();
+    .bind(capsuleId, serverId, userId).first();
   if (authorArm) {
     // The author: pre-postmark the SEALED shape only (the letter is read at
     // the postmark, not before — even from its writer); post-postmark, the
@@ -224,7 +234,7 @@ async function handleCapsuleRevealRoute(request, env, serverId, capsuleId, clock
   // and a self-seal NEVER leaves its author. A revealed channel letter
   // rides the target channel's own VIEW gate.
   const row = await env.GOOBER_DB.prepare(CAPSULE_VIEW_READ_SQL)
-    .bind(capsuleId).first();
+    .bind(capsuleId, serverId).first();
   if (!row || Number(row.reveal_at) > now ||
     row.channel_id === null || row.channel_id === undefined) {
     throw new HttpError(404, "This capsule does not exist or it has not been revealed yet.");

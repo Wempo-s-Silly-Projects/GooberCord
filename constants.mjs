@@ -541,6 +541,11 @@ export const GC_SEARCH_TERM_MAX = 100;
 // letter's four caps. One schedule, one reveal, ZERO timers — every number
 // here is a cap or a schedule bound, nothing else. GC-shaped caps (no
 // Discord parity source; house-sized against the message body family).
+// The body cap's provenance seat (c16 audit LOW-4):
+// schema_backstop_4000_vs_route_2000 — migration 0052's CHECK backstop on
+// gc_time_capsules.body still allows 4000; this constant seats the
+// stricter route cap at 2000. The schema is the wider envelope; the cap
+// lives here only. No value change.
 export const GC_CAPSULE_BODY_MAX = 2000;
 export const GC_CAPSULE_MIN_AHEAD_SECONDS = 300;
 export const GC_CAPSULE_MAX_AHEAD_SECONDS = 2592000;

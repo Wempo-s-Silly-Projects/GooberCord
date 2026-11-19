@@ -72,6 +72,16 @@ const BOOKMARK_LIST_SQL =
   "SELECT id, message_id, saved_at FROM gc_bookmarks WHERE owner_user_id = ? " +
     "ORDER BY saved_at DESC, id DESC LIMIT " + GC_BOOKMARKS_LIST_MAX;
 
+// The "more" probe: the D1-cheapest over-extension signal — one indexed
+// scan bounded by OFFSET + GC_BOOKMARKS_LIST_MAX + 1 entries and ONE row
+// shipped. A COUNT behind the same WHERE would scan the whole owner index
+// span (unbounded in N); re-reading the list with LIMIT + 1 would ship 101
+// rows (and re-touch the capped statement's byte-exact LIMIT shape). The
+// probe adds a boolean seat to the answer; the list shape stays additive.
+const BOOKMARKS_LIST_PROBE_SQL =
+  "SELECT 1 AS one FROM gc_bookmarks WHERE owner_user_id = ? " +
+    "ORDER BY saved_at DESC, id DESC LIMIT 1 OFFSET " + GC_BOOKMARKS_LIST_MAX;
+
 // The statement-gated delete: ownership lives INSIDE the WHERE — a wrong
 // owner (or an absent id) answers changes-0, classified to the shared
 // unknown-bookmark 404, never a 403.
@@ -121,12 +131,17 @@ async function handleBookmarkListRoute(request, env) {
 
   const rows = (await env.GOOBER_DB.prepare(BOOKMARK_LIST_SQL)
     .bind(userId).all()).results || [];
+  // The additive "more" seat: a member's 101st+ row is no longer dropped
+  // silently — the probe answers whether rows exist past the cap.
+  const overCap = await env.GOOBER_DB.prepare(BOOKMARKS_LIST_PROBE_SQL)
+    .bind(userId).first();
   return json({
     bookmarks: rows.map((row) => ({
       id: Number(row.id),
       messageId: Number(row.message_id),
       savedAt: Number(row.saved_at),
     })),
+    truncated: Boolean(overCap),
   });
 }
 
