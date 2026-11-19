@@ -19,7 +19,7 @@
 // The on* contract: the one element builder lowercases the event name once —
 // "onClick" attaches "click", "onKeyDown" attaches "keydown" — and the
 // lowercase spelling rides along unchanged. Every camelCase h() caller
-// (ui/shell.js's pills and tiles, pins.js, ui/chat.js, ...) is dead without
+// (ui/shell.js's pills and tiles, ui/chat.js, ...) is dead without
 // this: DOM event types are case-sensitive and a user's click dispatches
 // "click", never "Click".
 import test from "node:test";

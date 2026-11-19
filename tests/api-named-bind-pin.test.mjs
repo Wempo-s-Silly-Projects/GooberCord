@@ -25,15 +25,25 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readdirSync, readFileSync } from "node:fs";
-import { join, dirname } from "node:path";
+import { join, dirname, relative } from "node:path";
 
 const API_DIR = join(dirname(new URL(import.meta.url).pathname), "..", "api");
 
+// api/core/*.mjs rides the same law as the flat route files (code-review,
+// wave-22 follow-up: the flat readdir missed the 12-module core subtree).
+function walkMjs(dir) {
+  const entries = readdirSync(dir, { withFileTypes: true });
+  return [
+    ...entries.filter((entry) => entry.isFile() && entry.name.endsWith(".mjs")).map((entry) => join(dir, entry.name)),
+    ...entries.filter((entry) => entry.isDirectory() && entry.name !== "vendor").flatMap((entry) => walkMjs(join(dir, entry.name))),
+  ];
+}
+
 test("no api module binds through the named-bind object form (.bind({)", () => {
-  const modules = readdirSync(API_DIR).filter((name) => name.endsWith(".mjs")).sort();
+  const modules = walkMjs(API_DIR).sort();
   for (const file of modules) {
-    const source = readFileSync(join(API_DIR, file), "utf8");
+    const source = readFileSync(file, "utf8");
     assert.doesNotMatch(source, /\.bind\(\{/,
-      file + " carries the named-bind object form — name the receiver and bind to it instead");
+      relative(API_DIR, file) + " carries the named-bind object form — name the receiver and bind to it instead");
   }
 });
