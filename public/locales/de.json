@@ -551,5 +551,14 @@
   "gc.anniversary.save": "Speichern",
   "gc.anniversary.clear": "Löschen",
   "gc.anniversary.current": "Gespeichert: Monat {{month}}, Tag {{day}}.",
-  "gc.anniversary.empty": "In dieser Sitzung ist noch kein Jahrestag gespeichert. Sobald du einen speicherst, erscheinen Monat und Tag hier."
+  "gc.anniversary.empty": "In dieser Sitzung ist noch kein Jahrestag gespeichert. Sobald du einen speicherst, erscheinen Monat und Tag hier.",
+  "gc.filterdesk.heading": "Wortfilter",
+  "gc.filterdesk.stateEntries": "{{total}} gefilterte Einträge",
+  "gc.filterdesk.stateSource": "Quelle der Liste: {{source}}",
+  "gc.filterdesk.stateUpdated": "Liste zuletzt aktualisiert: {{at}}",
+  "gc.filterdesk.stateNeverUpdated": "Der Schreibtisch hat die Liste noch nicht aktualisiert.",
+  "gc.filterdesk.entryLabel": "Einen Eintrag hinzufügen",
+  "gc.filterdesk.entryHelp": "Ein Wort oder Ausdruck, den der Filter blockieren soll. Duplikate werden übersprungen.",
+  "gc.filterdesk.submit": "Eintrag hinzufügen",
+  "gc.filterdesk.result": "{{added}} hinzugefügt — {{skipped}} bereits vorhandene übersprungen. Die Liste enthält jetzt {{total}} Einträge."
 }

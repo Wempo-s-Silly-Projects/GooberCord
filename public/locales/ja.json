@@ -551,5 +551,14 @@
   "gc.anniversary.save": "保存",
   "gc.anniversary.clear": "クリア",
   "gc.anniversary.current": "保存済み:{{month}}月 {{day}}日。",
-  "gc.anniversary.empty": "このセッションではまだ記念日が保存されていません。保存すると、月と日がここに表示されます。"
+  "gc.anniversary.empty": "このセッションではまだ記念日が保存されていません。保存すると、月と日がここに表示されます。",
+  "gc.filterdesk.heading": "単語フィルター",
+  "gc.filterdesk.stateEntries": "フィルター対象 {{total}} 件",
+  "gc.filterdesk.stateSource": "リストの取得元: {{source}}",
+  "gc.filterdesk.stateUpdated": "リストの最終更新: {{at}}",
+  "gc.filterdesk.stateNeverUpdated": "デスクはまだリストを更新していません。",
+  "gc.filterdesk.entryLabel": "エントリーを 1 件追加",
+  "gc.filterdesk.entryHelp": "フィルターにブロックさせたい語句を 1 つ入力します。重複はスキップされます。",
+  "gc.filterdesk.submit": "エントリーを追加",
+  "gc.filterdesk.result": "{{added}} 件追加 — 既存のため {{skipped}} 件スキップ。リストは現在 {{total}} 件です。"
 }

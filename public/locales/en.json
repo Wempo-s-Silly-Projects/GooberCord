@@ -551,5 +551,14 @@
   "gc.anniversary.save": "Save",
   "gc.anniversary.clear": "Clear",
   "gc.anniversary.current": "Saved: month {{month}}, day {{day}}.",
-  "gc.anniversary.empty": "No anniversary is saved in this session yet. Once you save one, its month and day appear here."
+  "gc.anniversary.empty": "No anniversary is saved in this session yet. Once you save one, its month and day appear here.",
+  "gc.filterdesk.heading": "Word filter",
+  "gc.filterdesk.stateEntries": "{{total}} filtered entries",
+  "gc.filterdesk.stateSource": "List source: {{source}}",
+  "gc.filterdesk.stateUpdated": "List last updated: {{at}}",
+  "gc.filterdesk.stateNeverUpdated": "The desk has not updated the list yet.",
+  "gc.filterdesk.entryLabel": "Add one entry",
+  "gc.filterdesk.entryHelp": "One word or phrase the filter should block. Duplicates are skipped.",
+  "gc.filterdesk.submit": "Add entry",
+  "gc.filterdesk.result": "Added {{added}} — skipped {{skipped}} already on the list. The list now holds {{total}} entries."
 }

@@ -560,5 +560,14 @@
   "gc.anniversary.save": "Salvar",
   "gc.anniversary.clear": "Limpar",
   "gc.anniversary.current": "Salvo: mês {{month}}, dia {{day}}.",
-  "gc.anniversary.empty": "Nenhum aniversário está salvo nesta sessão ainda. Depois de salvar o seu, o mês e o dia aparecem aqui."
+  "gc.anniversary.empty": "Nenhum aniversário está salvo nesta sessão ainda. Depois de salvar o seu, o mês e o dia aparecem aqui.",
+  "gc.filterdesk.heading": "Filtro de palavras",
+  "gc.filterdesk.stateEntries": "{{total}} entradas filtradas",
+  "gc.filterdesk.stateSource": "Origem da lista: {{source}}",
+  "gc.filterdesk.stateUpdated": "Última atualização da lista: {{at}}",
+  "gc.filterdesk.stateNeverUpdated": "A mesa ainda não atualizou a lista.",
+  "gc.filterdesk.entryLabel": "Adicionar uma entrada",
+  "gc.filterdesk.entryHelp": "Uma palavra ou frase que o filtro deva bloquear. Duplicados são ignorados.",
+  "gc.filterdesk.submit": "Adicionar entrada",
+  "gc.filterdesk.result": "{{added}} adicionadas — {{skipped}} já existentes ignoradas. A lista agora tem {{total}} entradas."
 }

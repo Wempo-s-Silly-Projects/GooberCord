@@ -479,6 +479,10 @@ export function renderStaffQueue(route, mount) {
       h("div", { class: "pane-body" }, body))));
     return;
   }
+  // Wave-16: the filter desk's additive nav link — the queue page is the
+  // platform-staff door the desk rides (no neighbor refactored).
+  body.append(h("nav", { class: "manage-nav" },
+    h("a", { href: "/admin-filter", text: t("gc.filterdesk.heading") })));
   api("/api/admin/attachments").then(({ attachments }) => {
     if (attachments.length === 0) {
       body.append(h("p", { class: "empty-state", text: t("gc.mod.queue.empty") }));

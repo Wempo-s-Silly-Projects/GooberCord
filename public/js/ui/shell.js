@@ -54,6 +54,7 @@ import { renderBookmarksPanel } from "./bookmarks.js";
 import { renderCapsulesPanel } from "./capsules.js";
 import { renderReactionTagsPanel } from "./reaction-tags.js";
 import { renderAnniversaryPanel } from "./anniversary.js";
+import { renderFilterDesk } from "./filterdesk.js";
 
 // The bookmarks panel: its route registers here (the shell owns the nav
 // entry AND its door; main.js's route table stays untouched).
@@ -70,6 +71,10 @@ router.addRoute("/s/:serverId/tags", "server-tags", renderReactionTagsPanel);
 // The anniversary seat: the member's self-scoped page rides the same
 // shell-owned wire (the wave-15 slate; main.js's route table stays untouched).
 router.addRoute("/anniversary", "anniversary", renderAnniversaryPanel);
+
+// The staff filter desk: the platform-staff page rides the same shell-owned
+// wire (the wave-16 slate; main.js's route table stays untouched).
+router.addRoute("/admin-filter", "staff-filter", renderFilterDesk);
 
 // AGPL §13's source-offer rides the shell's user footer: every signed-in
 // screen carries the quiet anchor next to sign-out, pointing at the repo.

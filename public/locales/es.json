@@ -552,5 +552,14 @@
   "gc.anniversary.save": "Guardar",
   "gc.anniversary.clear": "Borrar",
   "gc.anniversary.current": "Guardado: mes {{month}}, día {{day}}.",
-  "gc.anniversary.empty": "Todavía no hay ningún aniversario guardado en esta sesión. Cuando guardes uno, su mes y día aparecerán aquí."
+  "gc.anniversary.empty": "Todavía no hay ningún aniversario guardado en esta sesión. Cuando guardes uno, su mes y día aparecerán aquí.",
+  "gc.filterdesk.heading": "Filtro de palabras",
+  "gc.filterdesk.stateEntries": "{{total}} entradas filtradas",
+  "gc.filterdesk.stateSource": "Origen de la lista: {{source}}",
+  "gc.filterdesk.stateUpdated": "Última actualización de la lista: {{at}}",
+  "gc.filterdesk.stateNeverUpdated": "El escritorio aún no ha actualizado la lista.",
+  "gc.filterdesk.entryLabel": "Añadir una entrada",
+  "gc.filterdesk.entryHelp": "Una palabra o frase que el filtro deba bloquear. Los duplicados se omiten.",
+  "gc.filterdesk.submit": "Añadir entrada",
+  "gc.filterdesk.result": "{{added}} añadidas — se omitieron {{skipped}} ya presentes. La lista ahora tiene {{total}} entradas."
 }

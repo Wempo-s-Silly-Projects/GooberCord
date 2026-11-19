@@ -565,5 +565,14 @@
   "gc.anniversary.save": "حفظ",
   "gc.anniversary.clear": "مسح",
   "gc.anniversary.current": "محفوظ: الشهر {{month}}، اليوم {{day}}.",
-  "gc.anniversary.empty": "لا يوجد ذكرى محفوظة في هذه الجلسة بعد. بعد الحفظ، يظهر الشهر واليوم هنا."
+  "gc.anniversary.empty": "لا يوجد ذكرى محفوظة في هذه الجلسة بعد. بعد الحفظ، يظهر الشهر واليوم هنا.",
+  "gc.filterdesk.heading": "مرشح الكلمات",
+  "gc.filterdesk.stateEntries": "{{total}} من القيم المروّضة",
+  "gc.filterdesk.stateSource": "مصدر القائمة: {{source}}",
+  "gc.filterdesk.stateUpdated": "آخر تحديث للقائمة: {{at}}",
+  "gc.filterdesk.stateNeverUpdated": "لم يحدّث المكتب القائمة بعد.",
+  "gc.filterdesk.entryLabel": "إضافة قيمة واحدة",
+  "gc.filterdesk.entryHelp": "كلمة أو عبارة واحدة يجب على المرشح حظرها. يُتخطى ما يتكرر.",
+  "gc.filterdesk.submit": "إضافة القيمة",
+  "gc.filterdesk.result": "أُضيفت {{added}} — وتخطي {{skipped}} موجودة مسبقًا. تحوي القائمة الآن {{total}} من القيم."
 }

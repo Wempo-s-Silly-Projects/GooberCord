@@ -560,5 +560,14 @@
   "gc.anniversary.save": "Enregistrer",
   "gc.anniversary.clear": "Effacer",
   "gc.anniversary.current": "Enregistré : mois {{month}}, jour {{day}}.",
-  "gc.anniversary.empty": "Aucun anniversaire n'est encore enregistré dans cette session. Une fois le vôtre enregistré, son mois et son jour s'affichent ici."
+  "gc.anniversary.empty": "Aucun anniversaire n'est encore enregistré dans cette session. Une fois le vôtre enregistré, son mois et son jour s'affichent ici.",
+  "gc.filterdesk.heading": "Filtre de mots",
+  "gc.filterdesk.stateEntries": "{{total}} entrées filtrées",
+  "gc.filterdesk.stateSource": "Source de la liste : {{source}}",
+  "gc.filterdesk.stateUpdated": "Dernière mise à jour de la liste : {{at}}",
+  "gc.filterdesk.stateNeverUpdated": "Le bureau n'a pas encore mis la liste à jour.",
+  "gc.filterdesk.entryLabel": "Ajouter une entrée",
+  "gc.filterdesk.entryHelp": "Un mot ou une expression que le filtre doit bloquer. Les doublons sont ignorés.",
+  "gc.filterdesk.submit": "Ajouter l'entrée",
+  "gc.filterdesk.result": "{{added}} ajoutées — {{skipped}} déjà présentes ignorées. La liste compte désormais {{total}} entrées."
 }
