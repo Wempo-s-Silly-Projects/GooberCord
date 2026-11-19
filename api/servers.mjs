@@ -191,7 +191,6 @@ const BOOST_INSERT_SQL =
 // Exported for api/server-mod.mjs (the kick/ban/prune fan-out re-derives
 // the same counter — one definition, never a second recount that drifts).
 export const BOOST_RECOUNT_SQL =
-export const BOOST_RECOUNT_SQL =
   "UPDATE gc_servers SET boosts = (SELECT COUNT(*) FROM gc_server_boosts WHERE server_id = ?) " +
     "WHERE id = ?";
 
