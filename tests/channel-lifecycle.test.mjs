@@ -39,6 +39,9 @@ const CHANNEL_ID = 12;
 const USER_ID = 7;
 
 const ROUTE_SOURCE = readFileSync(new URL("../api/servers.mjs", import.meta.url), "utf8");
+// T-R25-SPLIT-SERVERS-2: the channel family rides api/server-channels.mjs
+// (the wave-25 second seam) — its source pins read the seam module.
+const CHANNELS_SEAM_SOURCE = readFileSync(new URL("../api/server-channels.mjs", import.meta.url), "utf8");
 
 // --- scaffolding -----------------------------------------------------------------
 
@@ -226,8 +229,8 @@ test("DELETE carries the SAME guard on EVERY statement of the batch (a doomed de
   // the same tier guard so an unauthorized caller strips nothing even in a
   // pre-clean statement) holds in the channel batch too — all four
   // statements interpolate the ONE guard helper, not a bespoke pair.
-  assert.match(ROUTE_SOURCE, /function channelManageGuard\(serverId, actorId\)/);
-  const routeHead = ROUTE_SOURCE.slice(ROUTE_SOURCE.indexOf("async function handleDeleteChannelRoute"));
+  assert.match(CHANNELS_SEAM_SOURCE, /function channelManageGuard\(serverId, actorId\)/);
+  const routeHead = CHANNELS_SEAM_SOURCE.slice(CHANNELS_SEAM_SOURCE.indexOf("async function handleDeleteChannelRoute"));
   const guardUses = routeHead.slice(0, routeHead.indexOf("async function", 10)).match(/guard\.sql/g);
   assert.equal((guardUses || []).length, 4, "every batch statement interpolates the shared guard");
 });
