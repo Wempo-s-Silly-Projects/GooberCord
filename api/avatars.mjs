@@ -30,6 +30,30 @@
 import { readSession } from "./core/auth.mjs";
 import { HttpError } from "./core/http.mjs";
 import { blobToUint8Array, imageResponse } from "./core/images.mjs";
+import { GC_AVATAR_OBJECT_PREFIX } from "../constants.mjs";
+
+// R2-first serving (the shared wempos-forum-r2 bucket, binding GC_MEDIA): the
+// forum's avatar lifecycle already writes approved bytes at avatars/<id> (all
+// 26 users byte-verified 2026-11-18), so this route answers the same object
+// first and keeps the D1 avatar_data column as the serving fallback — a row
+// whose object has not landed (or whose bytes the verifier cannot bless)
+// serves exactly as before. The pending lane stays D1-only here: pending
+// bytes are this route's read of the shared table's pending columns, gated to
+// the owner plus staff and uncacheable. Nothing in this module ever writes
+// the users columns — the lifecycle stays forum-side.
+async function serveAvatarObject(env, userId, row) {
+  if (!env.GC_MEDIA) return null;
+  let object = null;
+  try {
+    object = await env.GC_MEDIA.get(GC_AVATAR_OBJECT_PREFIX + userId);
+  } catch {
+    return null;
+  }
+  if (!object || typeof object.arrayBuffer !== "function") return null;
+  const bytes = new Uint8Array(await object.arrayBuffer());
+  if (bytes.length === 0) return null;
+  return imageResponse(bytes, row.avatar_mime, "public, max-age=3600");
+}
 
 export async function handleAvatarRoutes(request, env, url, path, method) {
   const avatarMatch = path.match(/^\/api\/avatars\/([0-9]+)$/);
@@ -53,6 +77,10 @@ export async function handleAvatarRoutes(request, env, url, path, method) {
     }
   }
 
+  if (row.avatar_mime) {
+    const mirrored = await serveAvatarObject(env, userId, row);
+    if (mirrored) return mirrored;
+  }
   if (row.avatar_mime && row.avatar_data) {
     const response = imageResponse(blobToUint8Array(row.avatar_data), row.avatar_mime, "public, max-age=3600");
     if (response) return response;

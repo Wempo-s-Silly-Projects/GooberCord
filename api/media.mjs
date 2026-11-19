@@ -36,6 +36,7 @@ import { nowSeconds } from "./core/crypto.mjs";
 import { HttpError, json, rateLimit, readLimitedBody } from "./core/http.mjs";
 import {
   ATTACHMENT_CHUNK_BYTES,
+  GC_ATTACHMENT_OBJECT_PREFIX,
   GC_SOUND_INTAKE_MIMES,
   MAX_ATTACHMENT_BYTES,
   MAX_ATTACHMENT_REQUEST_BYTES,
@@ -61,6 +62,43 @@ const TOO_LARGE_ERROR = tooLargeError(MAX_ATTACHMENT_BYTES);
 const ONLY_IMAGES_ERROR = "Only JPEG, PNG, WebP, and GIF images can be attached.";
 const UNREADABLE_ERROR =
   "That image could not be read. Try re-saving it and uploading again.";
+
+// --- R2 rides (the shared wempos-forum-r2 bucket, binding GC_MEDIA) --------------
+//
+// The D1 tables stay the serving fallback and the row ledger; the bucket is a
+// byte mirror written best-effort. Every helper is a no-op without the
+// binding (local dev runs byte-identically to the D1-only old code), and the
+// rides never fail a route: intake/reject schedule through ctx.waitUntil and
+// swallow their own R2 errors.
+
+const attachmentObjectKey = (attachmentId) => GC_ATTACHMENT_OBJECT_PREFIX + attachmentId;
+
+// The isolate's execution context (routes receive it last; tests may pass a
+// stub). A ctx without waitUntil (or none at all) runs the task inline
+// detached — its errors are caught either way, never an unhandled rejection.
+function scheduleBackgroundTask(ctx, task) {
+  const safe = task.catch(() => {});
+  if (ctx && typeof ctx.waitUntil === "function") {
+    ctx.waitUntil(safe);
+    return;
+  }
+  void safe;
+}
+
+// Best-effort byte mirror after the D1 commit: the object lands at
+// gc-attachments/<id> only once the row and its chunk set exist, so serving
+// can always fall back to D1 for any attachment whose put did not land.
+export function scheduleAttachmentObjectPut(env, ctx, attachmentId, bytes) {
+  if (!env.GC_MEDIA) return;
+  scheduleBackgroundTask(ctx, env.GC_MEDIA.put(attachmentObjectKey(attachmentId), bytes));
+}
+
+// One R2 delete per doomed id, riding the caller's changes==1 verdict — the
+// D1 row lifecycle stays the gate; the bucket follows it, never leads.
+export function scheduleAttachmentObjectDelete(env, ctx, attachmentId) {
+  if (!env.GC_MEDIA) return;
+  scheduleBackgroundTask(ctx, env.GC_MEDIA.delete(attachmentObjectKey(attachmentId)));
+}
 
 // --- multipart parsing -----------------------------------------------------------
 
@@ -205,7 +243,7 @@ export function standaloneAttachmentStatements(env, uploaderId, prepared, now) {
 // The standalone upload: one batch, { attachment } result. No idempotency key
 // exists here — a double-POST makes two pending rows, each reviewed on its
 // own (the queue shows the uploader/size/creation second either way).
-export async function createAttachment(env, uploaderId, fileBytes) {
+export async function createAttachment(env, uploaderId, fileBytes, ctx = null) {
   const prepared = prepareAttachmentBytes(fileBytes);
   const now = nowSeconds();
   const results = await env.GOOBER_DB.batch(
@@ -215,6 +253,9 @@ export async function createAttachment(env, uploaderId, fileBytes) {
   if (!Number.isInteger(id) || id < 1) {
     throw new HttpError(500, "That image could not be stored. Please try again.");
   }
+  // The byte mirror rides AFTER the commit, best-effort: a put that fails (or
+  // never had a binding) leaves the chunks as the serving fallback.
+  scheduleAttachmentObjectPut(env, ctx, id, prepared.bytes);
   return {
     id,
     status: "pending",
@@ -364,6 +405,46 @@ async function streamChunkedAttachment(env, row) {
   });
 }
 
+// The assembled path's egress verdict, shared by the D1 chunk set and the R2
+// mirror: imageResponse re-verifies the mime against the bytes and fails safe
+// as null — a mismatched or empty set is the shared 404, never a best-guess.
+// The soundboard's audio rows ride the SAME path with their own egress
+// verifier (the image sniff cannot read audio magic; audioResponse fails
+// safe identically). An image-mime claim answered by the image verifier
+// first, an audio-mime claim by the audio one: each row's bytes must carry
+// their own row's mime, both verifiers answering null otherwise. The W-B0
+// tighten (NIT-6): the serving audio family narrows to the intake's admitted
+// pair (GC_SOUND_INTAKE_MIMES — one source for both sides). No legacy
+// WAV/FLAC rows exist (remote queried 2026-11-17, zero audio rows of any
+// kind), so a stale exotic claim is the shared 404 — never a sniff-blessed
+// stranger to the intake.
+function attachmentEgressResponse(bytes, mime, cache) {
+  const admittedAudio = GC_SOUND_INTAKE_MIMES.includes(String(mime || ""));
+  return imageResponse(bytes, mime, cache) ??
+    (admittedAudio ? audioResponse(bytes, mime, cache) : null);
+}
+
+// R2-first serving: when the binding exists, an object at
+// gc-attachments/<id> answers the row's own egress verifier with its own
+// cache verdict — approved rows stay publicly immutable, pending rows stay
+// private. A miss (or a bucket error, or a body the verifier cannot bless)
+// answers null and the route falls back to the D1 chunk set — the mirror is
+// an optimization, never a serving gate.
+async function serveAttachmentObject(env, row) {
+  if (!env.GC_MEDIA) return null;
+  let object = null;
+  try {
+    object = await env.GC_MEDIA.get(attachmentObjectKey(row.id));
+  } catch {
+    return null;
+  }
+  if (!object || typeof object.arrayBuffer !== "function") return null;
+  const bytes = new Uint8Array(await object.arrayBuffer());
+  if (bytes.length === 0) return null;
+  const cache = row.status === "approved" ? "public, max-age=31536000, immutable" : "private, max-age=300";
+  return attachmentEgressResponse(bytes, row.mime, cache);
+}
+
 async function handleAttachmentServingRoute(request, env, attachmentId) {
   const row = await env.GOOBER_DB.prepare(
     "SELECT id, uploader_id, status, mime, size_bytes FROM gc_attachments WHERE id = ? LIMIT 1",
@@ -384,30 +465,20 @@ async function handleAttachmentServingRoute(request, env, attachmentId) {
   }
 
   // The small lanes' proven set (every row the single-buffer intakes bore,
-  // up to 20 MiB) assembles in memory; a LARGE lane row streams paged above.
+  // up to 20 MiB) answers R2-first (the byte mirror written best-effort at
+  // intake) and assembles from the D1 chunk set as the fallback; a LARGE lane
+  // row streams paged above (D1-only — every large row was born there).
   if (Number(row.size_bytes) > MAX_ATTACHMENT_BYTES) {
     const streamed = await streamChunkedAttachment(env, row);
     if (!streamed) throw new HttpError(404, "Attachment not found.");
     return streamed;
   }
+  const mirrored = await serveAttachmentObject(env, row);
+  if (mirrored) return mirrored;
   const bytes = await assembledChunkBytes(env, row.id);
   if (bytes !== null) {
     const cache = row.status === "approved" ? "public, max-age=31536000, immutable" : "private, max-age=300";
-    // imageResponse re-verifies the mime against the bytes and fails safe as
-    // null — a mismatched or empty set is the shared 404, never a best-guess.
-    // The soundboard's audio rows ride the SAME path with their own egress
-    // verifier (the image sniff cannot read audio magic; audioResponse fails
-    // safe identically). An image-mime claim answered by the image verifier
-    // first, an audio-mime claim by the audio one: each row's bytes must
-    // carry their own row's mime, both verifiers answering null otherwise.
-    // The W-B0 tighten (NIT-6): the serving audio family narrows to the
-    // intake's admitted pair (GC_SOUND_INTAKE_MIMES — one source for both
-    // sides). No legacy WAV/FLAC rows exist (remote queried 2026-11-17, zero
-    // audio rows of any kind), so a stale exotic claim is the shared 404 —
-    // never a sniff-blessed stranger to the intake.
-    const admittedAudio = GC_SOUND_INTAKE_MIMES.includes(String(row.mime || ""));
-    const response = imageResponse(bytes, row.mime, cache) ??
-      (admittedAudio ? audioResponse(bytes, row.mime, cache) : null);
+    const response = attachmentEgressResponse(bytes, row.mime, cache);
     if (!response) throw new HttpError(404, "Attachment not found.");
     return response;
   }
@@ -417,13 +488,13 @@ async function handleAttachmentServingRoute(request, env, attachmentId) {
   throw new HttpError(404, "Attachment not found.");
 }
 
-async function handleUploadAttachmentRoute(request, env) {
+async function handleUploadAttachmentRoute(request, env, ctx) {
   const session = await requireUser(request, env);
   await rateLimit(request, env, "upload", "user:" + session.user.id);
   const files = (await readMultipartWithImage(request)).files;
   if (files.length !== 1) throw new HttpError(400, "Attach exactly one image.");
 
-  const attachment = await createAttachment(env, Number(session.user.id), files[0]);
+  const attachment = await createAttachment(env, Number(session.user.id), files[0], ctx);
   return json({ attachment: { id: attachment.id, status: attachment.status } }, 201);
 }
 
@@ -449,7 +520,7 @@ async function handlePendingQueueRoute(request, env) {
   });
 }
 
-async function handleAttachmentModerationRoute(request, env, attachmentId, action) {
+async function handleAttachmentModerationRoute(request, env, attachmentId, action, ctx) {
   const session = await requireStaff(request, env);
   const reviewerId = Number(session.user.id);
   const now = nowSeconds();
@@ -481,17 +552,21 @@ async function handleAttachmentModerationRoute(request, env, attachmentId, actio
   if (Number(results[1]?.meta?.changes) !== 1) {
     throw new HttpError(404, "Attachment not found.");
   }
+  // The bucket follows the D1 verdict: exactly one doomed id's object dies
+  // with it, best-effort, after the batch committed.
+  scheduleAttachmentObjectDelete(env, ctx, attachmentId);
   return json({ rejected: true, id: attachmentId });
 }
 
 export async function handleMediaRoutes(request, env, url, path, method, ctx) {
   // ctx (the worker's execution context) completes the dispatch loop's
-  // handler signature; these routes schedule no background work today.
-  void ctx;
+  // handler signature; these routes schedule background work only through
+  // it (the R2 mirror's put and delete rides). Callers without a ctx (tests,
+  // callers that never schedule) run the rides inline-detached, error-caught.
   void url;
 
   if (method === "POST" && path === "/api/attachments") {
-    return handleUploadAttachmentRoute(request, env);
+    return handleUploadAttachmentRoute(request, env, ctx);
   }
 
   const servingMatch = (method === "GET")
@@ -510,7 +585,7 @@ export async function handleMediaRoutes(request, env, url, path, method, ctx) {
     : null;
   if (moderationMatch) {
     return handleAttachmentModerationRoute(
-      request, env, Number(moderationMatch[1]), moderationMatch[2],
+      request, env, Number(moderationMatch[1]), moderationMatch[2], ctx,
     );
   }
 
