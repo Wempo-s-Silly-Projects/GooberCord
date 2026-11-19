@@ -208,6 +208,20 @@ test("the composer: Enter sends, Shift+Enter breaks the line, drafts ride sessio
   assert.match(CHAT, /maxlength: String\(limit\)/, "the well seats its own bound");
 });
 
+test("the three Enter gates refuse a mid-composition Enter (IME guard, wave-22)", () => {
+  const guarded = CHAT.match(/event\.preventDefault\(\);\s*if \(event\.isComposing \|\| event\.keyCode === 229\) return;/g)?.length ?? 0;
+  assert.equal(guarded, 3,
+    "each Enter site (the edit seat, the send well, the GIF search) guards isComposing or keyCode 229 right after its preventDefault — a half-converted IME Enter must never submit, edit, or search");
+});
+
+test("the IME guard sits inside each Enter gate; a plain Enter still rides its act", () => {
+  const shifted = (CHAT.match(/key === "Enter" && !event\.shiftKey\) \{\s*event\.preventDefault\(\);\s*if \(event\.isComposing \|\| event\.keyCode === 229\) return;/g) ?? []).length;
+  assert.equal(shifted, 2, "the edit seat and the send well keep their Shift+Enter gate and ride the guard inside it");
+  assert.match(CHAT,
+    /key === "Enter"\) \{ \/\/ Enter searches, not sends\s*event\.preventDefault\(\);\s*if \(event\.isComposing \|\| event\.keyCode === 229\) return;/,
+    "the GIF search keeps its Enter-searches gate and rides the guard inside it");
+});
+
 test("the meter appears only past the reveal seat (Rethink 8), tier-aware", () => {
   assert.equal(chat.UI_METER_REVEAL_AT, 1800);
   assert.match(CHAT, /well\.value\.length > UI_METER_REVEAL_AT/);

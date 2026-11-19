@@ -63,5 +63,5 @@ test("chat.js never touches the roster: namespace (members.js owns it)", () => {
 test("members.js keeps the roster: envelope (shape {members,...}) alone", () => {
   assert.match(MEMBERS, /const rosterKey = \(serverId\) => `roster:\$\{serverId\}`;/);
   assert.match(MEMBERS, /store\.set\(\{ \[rosterKey\(serverId\)\]: payload \}\);/);
-  assert.match(MEMBERS, /\.\.\.payload\.members/);
+  assert.match(MEMBERS, /payload\.members\.toSorted\(/, "the roster seat sorts a COPY (toSorted) — the envelope's array never mutates");
 });

@@ -93,5 +93,5 @@ function appendChildren(node, children) {
 // route redraw; the container is emptied, not disposed, so listeners the
 // router itself owns (the global link intercept) never detach.
 export function clear(node) {
-  while (node.firstChild) node.removeChild(node.firstChild);
+  node.replaceChildren();
 }

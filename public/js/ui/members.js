@@ -91,7 +91,7 @@ export function renderRosterBody(pane, serverId) {
   }
   const staff = staffViewing(payload);
   const cardUrl = (id) => `/s/${serverId}/member/${id}`;
-  const members = [...payload.members].sort((a, b) => b.topPosition - a.topPosition);
+  const members = payload.members.toSorted((a, b) => b.topPosition - a.topPosition);
   if (members.length <= 1) {
     pane.append(h("p", {
       class: "empty-state",

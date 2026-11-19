@@ -101,7 +101,7 @@ export async function loadHistory(channelId, after = null, limit = 50) {
   // History reads id DESC; the column renders ASC after the merge.
   const list = after
     ? [...fresh, ...prior.list] // an older page PREPENDS
-    : [...fresh].sort((a, b) => a.id - b.id); // a tail read replaces the seat
+    : fresh.toSorted((a, b) => a.id - b.id); // a tail read replaces the seat
   store.set({
     [messagesKey(channelId)]: {
       list,
@@ -604,7 +604,7 @@ function laneRefresh(column, channelId) {
   const inventory = store.get(expressionsKey(channelIdOf()));
   const membersRoster = store.get(`presence:${channelId}`) || [];
   column.replaceChildren(); // nodes rebuild from h()
-  const list = [...lane.list].sort((a, b) => (a.id ?? 1e15) - (b.id ?? 1e15));
+  const list = lane.list.toSorted((a, b) => (a.id ?? 1e15) - (b.id ?? 1e15));
   let previous = null;
   for (const message of list) {
     const row = messageRow(message, previous, { me, inventory, roster: membersRoster, channelId });
@@ -817,6 +817,7 @@ function editInline(message, context) {
     }
     if (event.key === "Enter" && !event.shiftKey) {
       event.preventDefault();
+      if (event.isComposing || event.keyCode === 229) return; // an IME mid-composition Enter (or Safari's confirming 229) never submits, edits, or searches
       try {
         const payload = await editMessage(message.id, box.value);
         dropAndAdopt(context.channelId, payload.message);
@@ -1046,6 +1047,7 @@ function buildComposer(channelId, channel, column) {
   well.addEventListener("keydown", (event) => {
     if (event.key === "Enter" && !event.shiftKey) {
       event.preventDefault();
+      if (event.isComposing || event.keyCode === 229) return; // an IME mid-composition Enter (or Safari's confirming 229) never submits, edits, or searches
       doSend();
     }
   });
@@ -1239,6 +1241,7 @@ function gifRider(well, errorLine) {
   seat.addEventListener("keydown", (event) => {
     if (event.key === "Enter") { // Enter searches, not sends
       event.preventDefault();
+      if (event.isComposing || event.keyCode === 229) return; // an IME mid-composition Enter (or Safari's confirming 229) never submits, edits, or searches
       position = null;
       load(true);
     }
