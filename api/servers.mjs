@@ -2947,12 +2947,17 @@ async function handleLeaveServerRoute(request, env, serverId) {
     );
   }
 
-  // ONE batch, kick's shape: the member row AND the row's RBAC assignments
-  // leave together, both statements carrying the same guard arms — the
-  // caller's own row, the membership arm, the owner-refusal NOT-EXISTS arm.
-  // Assignments (gc_member_roles carries no membership FK) survive a bare
-  // member-row delete, so a single-statement leave would re-arm them on
-  // rejoin; the pair-delete keeps rejoin clean.
+  // ONE batch, kick's shape: the member row, the row's RBAC assignments, and
+  // the departing booster's gc_server_boosts row leave together, each
+  // statement carrying the same guard arms — the caller's own row, the
+  // membership arm, the owner-refusal NOT-EXISTS arm. Assignments
+  // (gc_member_roles carries no membership FK) survive a bare member-row
+  // delete, so a single-statement leave would re-arm them on rejoin; and the
+  // boost row (no FK/trigger ties it to membership either) would keep
+  // counting toward the boost level — the caps a departed booster grants —
+  // unless it strips in the same breath. The recount rides LAST, in-batch
+  // (the boost routes' idiom): the count derives from the stripped rows, so
+  // no post-batch failure can leave a stale gc_servers.boosts.
   const results = await env.GOOBER_DB.batch([
     env.GOOBER_DB.prepare(
       "DELETE FROM gc_server_members WHERE server_id = ? AND user_id = ? " +
@@ -2964,6 +2969,12 @@ async function handleLeaveServerRoute(request, env, serverId) {
         "AND EXISTS (SELECT 1 FROM gc_server_members WHERE server_id = ? AND user_id = ?) " +
         "AND NOT " + OWNER_EXISTS_SQL,
     ).bind(serverId, userId, serverId, userId, serverId, userId),
+    env.GOOBER_DB.prepare(
+      "DELETE FROM gc_server_boosts WHERE server_id = ? AND user_id = ? " +
+        "AND EXISTS (SELECT 1 FROM gc_server_members WHERE server_id = ? AND user_id = ?) " +
+        "AND NOT " + OWNER_EXISTS_SQL,
+    ).bind(serverId, userId, serverId, userId, serverId, userId),
+    env.GOOBER_DB.prepare(BOOST_RECOUNT_SQL).bind(serverId, serverId),
   ]);
   const deletedChanges = Number(results[0]?.meta?.changes) || 0;
 
@@ -2983,11 +2994,6 @@ async function handleLeaveServerRoute(request, env, serverId) {
     }
     throw new HttpError(404, "That server does not exist or you are not in it.");
   }
-
-  // The recount the boost routes run: a departing booster's gc_server_boosts
-  // row must stop counting toward the level immediately, or the departed
-  // booster keeps granting emoji-slot/upload caps until some future boost.
-  await env.GOOBER_DB.prepare(BOOST_RECOUNT_SQL).bind(serverId, serverId).run();
 
   return json({ left: true, serverId }, 200);
 }

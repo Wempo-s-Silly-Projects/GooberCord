@@ -24,8 +24,9 @@
 // GO-HAYWIRE cycle-7 pins: the transfer batch promotes FIRST and swaps the
 // server-row owner LAST behind a promote-landed rider (a refused promote
 // never lets the swap land); both write walls key (serverId + ":" + userId);
-// leave strips gc_member_roles in the same batch (kick's shape); a
-// successful leave trips the boost recount; and by DESIGN leave keeps
+// leave strips gc_member_roles AND the departing booster's gc_server_boosts
+// row in the same batch, with the recount riding in-batch after the strip
+// (the boost routes' idiom); and by DESIGN leave keeps
 // gc_read_state — read state stays history-kept, matching kick.
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -200,6 +201,8 @@ test("unknown server subpaths still fall through to the worker's handler loop", 
 
 const MEMBER_DELETE_TEST = (sql) => sql.startsWith("DELETE FROM gc_server_members");
 const ROLES_DELETE_TEST = (sql) => sql.startsWith("DELETE FROM gc_member_roles");
+const LEAVE_BOOST_DELETE_TEST = (sql) => sql.startsWith("DELETE FROM gc_server_boosts");
+const RECOUNT_TEST = (sql) => sql.startsWith("UPDATE gc_servers SET boosts");
 
 async function dispatchLeave(memberRoleFn, deleteChanges = 1) {
   return dispatchPost(
@@ -207,23 +210,26 @@ async function dispatchLeave(memberRoleFn, deleteChanges = 1) {
       { test: MEMBERSHIP_ROW_TEST, first: memberRoleFn },
       { test: MEMBER_DELETE_TEST, run: async () => ({ meta: { changes: deleteChanges } }) },
       { test: ROLES_DELETE_TEST, run: async () => ({ meta: { changes: deleteChanges } }) },
+      { test: LEAVE_BOOST_DELETE_TEST, run: async () => ({ meta: { changes: deleteChanges } }) },
+      { test: RECOUNT_TEST, run: async () => ({ meta: { changes: 1 } }) },
     ],
     "/api/servers/" + SERVER_ID + "/leave",
     {},
   );
 }
 
-test("a plain member leaves in ONE guarded batch — self member row + role assignments, owner-refusal arm", async () => {
+test("a plain member leaves in ONE guarded batch — member row + role assignments + boost strip + recount", async () => {
   const { response, db } = await dispatchLeave(async () => ({ role: "member" }), 1);
   assert.equal(response.status, 200);
   assert.deepEqual(await bodyOf(response), { left: true, serverId: SERVER_ID });
 
-  // ONE write: the guarded batch, never a read-then-write gate.
+  // ONE write: the guarded batch, never a read-then-write gate, never a
+  // standalone recount.
   const writes = db.calls.filter((call) => call.call === "run" || call.call === "batch");
-  assert.deepEqual(writes.length, 2); // the batch + the boost recount run
+  assert.deepEqual(writes.length, 1);
   const batch = db.calls.find((call) => call.call === "batch");
   assert.ok(batch);
-  assert.deepEqual(batch.statements.length, 2);
+  assert.deepEqual(batch.statements.length, 4);
 
   // Statement 0: the member row's guarded DELETE. In-statement arms: the
   // caller's own row is the target, the membership EXISTS arm bound with the
@@ -260,27 +266,87 @@ test("a plain member leaves in ONE guarded batch — self member row + role assi
     /AND NOT EXISTS \(SELECT 1 FROM gc_server_members \w+ WHERE \w+\.server_id = \? AND \w+\.user_id = \? AND \w+\.role = 'owner'\)/,
   );
   assert.deepEqual(rolesDelete.bound, [SERVER_ID, USER_ID, SERVER_ID, USER_ID, SERVER_ID, USER_ID]);
-});
 
-test("a successful leave trips the boost recount so a booster's departure drops the caps", async () => {
-  const { db } = await dispatchLeave(async () => ({ role: "member" }), 1);
-  const recounts = db.calls.filter((call) =>
-    (call.call === "run" || call.call === "batch") && call.sql.includes("UPDATE gc_servers SET boosts"),
+  // Statement 2: the boost strip — the departing booster's gc_server_boosts
+  // row leaves in the same batch (no FK/trigger strips it on the member-row
+  // delete), with the SAME guard arms so a refused leave strips nothing.
+  const boostDelete = batch.statements[2];
+  assert.match(
+    boostDelete.sql,
+    /^DELETE FROM gc_server_boosts WHERE server_id = \? AND user_id = \?/,
   );
-  assert.deepEqual(recounts.length, 1);
-  assert.deepEqual(recounts[0].bound, [SERVER_ID, SERVER_ID]);
-  // The recount runs AFTER the leave batch landed (route-side await).
-  const batchIndex = db.calls.findIndex((call) => call.call === "batch");
-  assert.ok(batchIndex >= 0);
-  assert.ok(db.calls.indexOf(recounts[0]) > batchIndex);
+  assert.match(
+    boostDelete.sql,
+    /AND EXISTS \(SELECT 1 FROM gc_server_members WHERE server_id = \? AND user_id = \?\)/,
+  );
+  assert.match(
+    boostDelete.sql,
+    /AND NOT EXISTS \(SELECT 1 FROM gc_server_members \w+ WHERE \w+\.server_id = \? AND \w+\.user_id = \? AND \w+\.role = 'owner'\)/,
+  );
+  assert.deepEqual(boostDelete.bound, [SERVER_ID, USER_ID, SERVER_ID, USER_ID, SERVER_ID, USER_ID]);
+
+  // Statement 3: the recount rides IN-batch after the strip (the boost
+  // routes' idiom) — a post-batch failure can never leave a stale count.
+  const recount = batch.statements[3];
+  assert.match(recount.sql, /^UPDATE gc_servers SET boosts =/);
+  assert.deepEqual(recount.bound, [SERVER_ID, SERVER_ID]);
 });
 
-test("a refused leave never trips the boost recount", async () => {
-  const { db } = await dispatchLeave(async () => ({ role: "member" }), 0);
-  assert.deepEqual(
-    db.calls.filter((call) =>
-      (call.call === "run" || call.call === "batch") && call.sql.includes("UPDATE gc_servers SET boosts"),
+test("a departing booster's count drops — the strip leads the in-batch recount, the row is gone", async () => {
+  // Simulated gc_server_boosts: the leaver holds the server's only boost row;
+  // the fakeDb runs the batch's statements in order, so the recount only
+  // answers 0 if the strip fired first.
+  let boostRows = [USER_ID];
+  let recountDerived = null;
+  const { token, csrf, row } = await sessionFixtures();
+  const db = fakeDb([
+    { test: SESSION_READ_TEST, first: async () => row },
+    { test: MEMBERSHIP_ROW_TEST, first: async () => ({ role: "member" }) },
+    { test: MEMBER_DELETE_TEST, run: async () => ({ meta: { changes: 1 } }) },
+    { test: ROLES_DELETE_TEST, run: async () => ({ meta: { changes: 1 } }) },
+    {
+      test: LEAVE_BOOST_DELETE_TEST,
+      run: async () => {
+        boostRows = boostRows.filter((id) => id !== USER_ID);
+        return { meta: { changes: 1 } };
+      },
+    },
+    {
+      test: RECOUNT_TEST,
+      run: async () => {
+        recountDerived = boostRows.length;
+        return { meta: { changes: 1 } };
+      },
+    },
+  ]);
+  const env = envWithRecordingLimiters(db);
+  const response = await dispatchHandler(
+    postJson(
+      "/api/servers/" + SERVER_ID + "/leave",
+      {},
+      { Cookie: "goober_session=" + token, "X-CSRF-Token": csrf },
     ),
+    env,
+  );
+  assert.equal(response.status, 200);
+  // The departed booster's row is gone and is NOT counted: the recount
+  // derived its value after the strip.
+  assert.deepEqual(boostRows, []);
+  assert.equal(recountDerived, 0);
+  // No post-batch standalone recount: the count moves in-batch or never.
+  assert.deepEqual(
+    db.calls.filter((call) => call.call === "run" && RECOUNT_TEST(call.sql)),
+    [],
+  );
+});
+
+test("a refused leave strips nothing — the guards hold on all three strips, the batch still recounts truthfully", async () => {
+  const { db, response } = await dispatchLeave(async () => ({ role: "member" }), 0);
+  assert.equal(response.status, 404);
+  // One no-op batch; the recount is ONLY ever in-batch.
+  assert.deepEqual(db.calls.filter((call) => call.call === "batch").length, 1);
+  assert.deepEqual(
+    db.calls.filter((call) => call.call === "run" && RECOUNT_TEST(call.sql)),
     [],
   );
 });
@@ -320,7 +386,7 @@ test("a race-refused leave changes nothing and answers 404 — one batch, no dou
   assert.equal(response.status, 404);
   const batches = db.calls.filter((call) => call.call === "batch");
   assert.deepEqual(batches.length, 1);
-  assert.deepEqual(batches[0].statements.length, 2);
+  assert.deepEqual(batches[0].statements.length, 4);
 });
 
 test("leave rides the write wall keyed to server + caller, before the table work", async () => {
