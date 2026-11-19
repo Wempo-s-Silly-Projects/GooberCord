@@ -442,6 +442,12 @@ export const GC_SOUND_NAME_PATTERN = /^[A-Za-z0-9_]{2,32}$/;
 // docs/parity-limits.md: Pins per channel 250 (verified 2026-11-17).
 export const GC_PINS_MAX_PER_CHANNEL = 250;
 
+// The pins read's bind budget: a full-cap page's grouped IN-list reads fan
+// out in fixed-size id chunks — one chunk's binds are the chunk's ids plus
+// the attachment gate's uploader bind (at most 91), under D1's 100-bind
+// per-query limit for any page the cap allows.
+export const PINS_READ_BIND_CHUNK = 90;
+
 // Super reactions (the plus-gated tier on the existing reaction stack): the
 // set of unicode emoji that mark a reaction as "super". A non-plus member's
 // ADD is refused at the reaction route; the SET itself is plain data (a

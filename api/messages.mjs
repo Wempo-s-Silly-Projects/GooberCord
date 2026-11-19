@@ -47,6 +47,7 @@ import {
   GC_PINS_MAX_PER_CHANNEL,
   GC_PLUS_MESSAGE_MAX,
   MAX_ATTACHMENT_BYTES,
+  PINS_READ_BIND_CHUNK,
   RULES_GATE_MESSAGE,
 } from "../constants.mjs";
 import { applyWordFilter } from "./filter.mjs";
@@ -1533,16 +1534,22 @@ async function handleChannelPinsRoute(request, env, channelId) {
   ).bind(nowSeconds(), channelId).all()).results || [];
 
   // Attachments and reactions ride the SAME grouped reads the history page
-  // uses (one read each for the whole payload, never per-row).
+  // uses (one read each for the whole payload, never per-row) — fanned out
+  // into fixed-size id chunks so no statement's bind list crosses D1's
+  // 100-bind per-query limit on a near-cap page. A message's rows all land
+  // in one chunk (the chunk is a partition of the id list), so per-message
+  // grouping and ordering come out exactly as the single read produced them.
   const messageIds = page.map((row) => Number(row.id));
   const attachmentIdsByMessage = new Map();
   const reactionGroupsByMessage = new Map();
-  if (messageIds.length) {
+  for (let start = 0; start < messageIds.length; start += PINS_READ_BIND_CHUNK) {
+    const chunk = messageIds.slice(start, start + PINS_READ_BIND_CHUNK);
+    const placeholders = chunk.map(() => "?").join(",");
     const attachments = (await env.GOOBER_DB.prepare(
       "SELECT id, message_id FROM gc_attachments " +
         "WHERE " + ATTACHMENT_GATE_SQL + " AND message_id IN (" +
-        messageIds.map(() => "?").join(",") + ") ORDER BY id",
-    ).bind(userId, ...messageIds).all()).results || [];
+        placeholders + ") ORDER BY id",
+    ).bind(userId, ...chunk).all()).results || [];
     for (const row of attachments) {
       const list = attachmentIdsByMessage.get(Number(row.message_id)) || [];
       list.push(Number(row.id));
@@ -1551,9 +1558,9 @@ async function handleChannelPinsRoute(request, env, channelId) {
     const reactions = (await env.GOOBER_DB.prepare(
       "SELECT r.message_id AS message_id, r.emoji AS emoji, r.user_id AS user_id, u.username AS username, r.fx_burst AS fx_burst " +
         "FROM gc_message_reactions r JOIN users u ON u.id = r.user_id " +
-        "WHERE r.message_id IN (" + messageIds.map(() => "?").join(",") + ") " +
+        "WHERE r.message_id IN (" + placeholders + ") " +
         "ORDER BY r.created_at, r.user_id",
-    ).bind(...messageIds).all()).results || [];
+    ).bind(...chunk).all()).results || [];
     groupReactionRows(reactions, reactionGroupsByMessage);
   }
 
