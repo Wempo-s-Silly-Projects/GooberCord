@@ -25,7 +25,7 @@ SERVER / CHANNEL CAPS
 | Channel name length          | 2–100 |                                        |
 | Pins per channel             | 250   | raised 50→250 Aug 4 2025 patch (discord.com/blog/discord-patch-notes-august-4-2025); the dedicated "Pin Messages" permission citation: discord-api-docs PR #7766 (merged Aug 20 2025) + the Sept 3 2025 patch notes |
 | Members per server           | 25    | (million)                              |
-| Invite codes per server      | 1000  | API 1000 (30016) — GC: GC_INVITES_MAX_PER_SERVER 1000 (0028: invite INSERT's COUNT guard, rows stay counted — revoked codes hold the rail) |
+| Invite codes per server      | ~999  | API 1000 (30016) — GC: GC_INVITES_MAX_PER_SERVER 1000 (0028: invite INSERT's COUNT guard, rows stay counted — revoked codes hold the rail) |
 | Threads                      | 1000 members/thread; auto-archive 1h/24h/3d(default)/7d; don't count vs 500 | docs.discord.com/developers/topics/threads — NO THREAD SURFACE YET: bindings deferred to the feature lane (registered 2026-11-17, parity-P0 row 5) |
 | Forum channels               | thread-only; posts need only SEND; 5 tags ≤20ch; exactly 1 pinned post | support / Forum-Channels-FAQ |
 | Stage channels               | 10k viewers audio-only; video 50 base /150 L2 /300 L3; 5 cameras; 1 screen | support / Stage-Channels-FAQ |
@@ -85,7 +85,7 @@ MESSAGES / SOCIAL
 | Friends                          | 1000  | GC MAX_FRIENDS was 500 → 1000  |
 | Pins per channel                 | 250 (30010-style copy) | GC_PINS_MAX_PER_CHANNEL (0026) |
 | Read markers (POST ack)          | last-read advances, self-only, forward-only, ≤ thread's latest | gc_conversation_members.last_read_message_id (0026: route + tail auto-advance; gc_read_state dropped, zero consumers) |
-| Group DM members                 | 10    | 0028: MAX_GROUP_INVITES 9 invites + self (conversations.mjs roster cap = 10, both the create list and the add-member gate). DEFERRAL REGISTERED 2026-11-17: the members-manage routes (POST :id/members, DELETE :id/members/:uid) are worker halves with ZERO client mounts — a client feature-lane item, not parity drift; the caps are live server-side regardless (source: docs.discord.com/developers/resources/channel, verified 2026-11-17) |
+| Group DM members                 | 10    | 0028: MAX_GROUP_INVITES 9 invites + self (conversations.mjs roster cap = 10, both the create list and the add-member gate) |
 | Servers joinable                 | 100 free / 200 "Nitro"→friend-passes tier | 0028: GC_SERVERS_JOIN_MAX_FREE / GC_SERVERS_JOIN_MAX_PLUS (COUNT guard inside BOTH join INSERTs; tier keyed on an active gc_plus_state row — the plusActiveExpr shape) |
 
 NAMING RULES (unchanged): this table maps Discord's tiers to Goober terms —

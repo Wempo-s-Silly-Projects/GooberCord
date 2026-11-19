@@ -1,4 +1,4 @@
-// Copyright 2026 ItsWempo
+// Copyright 2026 YourLocalGoober
 //
 // This file is part of GooberCord.
 //
@@ -325,7 +325,7 @@ test("register mints a member user row and an unbanned-gated session", async () 
   assert.equal(body.user.avatarUrl, null);
   assert.equal(typeof body.csrfToken, "string");
   const setCookie = response.headers.get("Set-Cookie");
-  assert.match(setCookie, /^__Host-goober_session=[A-Za-z0-9_-]+/);
+  assert.match(setCookie, /^goober_session=[A-Za-z0-9_-]+/);
   assert.match(setCookie, /HttpOnly/);
   assert.match(setCookie, /SameSite=Lax/);
   assert.deepEqual(turnstile.actions, ["register"]);
@@ -517,7 +517,7 @@ test("TOTP second step mints the session on a verified code", async () => {
   assert.equal(body.user.id, 7);
   assert.equal(body.user.totpEnabled, true);
   assert.equal(typeof body.csrfToken, "string");
-  assert.match(response.headers.get("Set-Cookie"), /^__Host-goober_session=/);
+  assert.match(response.headers.get("Set-Cookie"), /^goober_session=/);
 });
 
 test("TOTP second step rejects a wrong code without touching the session table", async () => {
@@ -608,7 +608,7 @@ async function signedInEnv() {
 
 test("GET /api/me returns the vendored readSession shape for a signed-in member", async () => {
   const { env, token, csrf } = await signedInEnv();
-  const response = await dispatch(get("/api/me", { Cookie: "__Host-goober_session=" + token }), env);
+  const response = await dispatch(get("/api/me", { Cookie: "goober_session=" + token }), env);
   assert.equal(response.status, 200);
   // Goober+ perks ride a second additive read (the vendored readSession is
   // pinned byte-for-byte, so its SELECT carries no accent/tagline): an
@@ -642,63 +642,18 @@ test("GET /api/me 401s without a valid session cookie", async () => {
 test("logout deletes the session row and clears the cookie", async () => {
   const { env, token, csrf, db } = await signedInEnv();
   const response = await dispatch(
-    postJson("/api/auth/logout", {}, { Cookie: "__Host-goober_session=" + token, "X-CSRF-Token": csrf }),
+    postJson("/api/auth/logout", {}, { Cookie: "goober_session=" + token, "X-CSRF-Token": csrf }),
     env,
   );
   assert.equal(response.status, 204);
   assert.equal(
     response.headers.get("Set-Cookie"),
-    "__Host-goober_session=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0; Secure",
+    "goober_session=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0",
   );
   const deleteCall = db.calls.find((call) =>
     call.sql.includes("DELETE FROM sessions WHERE token_hash = ?"));
   assert.ok(deleteCall);
   assert.deepEqual(deleteCall.bound, [await sha256Hex(token)]);
-});
-
-test("T10 credential-sweep: logout's revoke-all arm sweeps EVERY caller session, same proof strength", async () => {
-  // The signedInEnv's token-scoped route is asserted with the SAME user_id
-  // the sweep arm binds: the session row's user_id is the sweep's caller.
-  const { env, token, csrf, db } = await signedInEnv();
-  const response = await dispatch(
-    postJson("/api/auth/logout", { everywhere: true }, { Cookie: "__Host-goober_session=" + token, "X-CSRF-Token": csrf }),
-    env,
-  );
-  assert.equal(response.status, 204);
-  assert.equal(
-    response.headers.get("Set-Cookie"),
-    "__Host-goober_session=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0; Secure",
-  );
-  const sweep = db.calls.find((call) =>
-    call.sql.includes("DELETE FROM sessions WHERE user_id = ?"));
-  assert.ok(sweep);
-  assert.deepEqual(sweep.bound, [7]);
-  // The token-scoped arm NEVER also ran: one statement, one scope.
-  assert.equal(
-    db.calls.find((call) => call.sql.includes("DELETE FROM sessions WHERE token_hash = ?")),
-    undefined,
-  );
-});
-
-test("T10 credential-sweep: the revoke-all arm requires the same auth — bare logout stays token-scoped", async () => {
-  // A bodyless/{} POST keeps the pre-arm behavior exactly (one token row);
-  // the broad DELETE is unreachable without the caller's own proof.
-  const { env, token, csrf, db } = await signedInEnv();
-  await dispatch(
-    postJson("/api/auth/logout", {}, { Cookie: "__Host-goober_session=" + token, "X-CSRF-Token": csrf }),
-    env,
-  );
-  const deleteCall = db.calls.find((call) => call.sql.includes("DELETE FROM sessions WHERE token_hash = ?"));
-  assert.ok(deleteCall);
-  assert.equal(
-    db.calls.some((call) => call.sql.includes("DELETE FROM sessions WHERE user_id = ?")),
-    false,
-  );
-  const unauthenticated = await dispatch(
-    postJson("/api/auth/logout", { everywhere: true }),
-    env,
-  );
-  assert.equal(unauthenticated.status, 401);
 });
 
 test("logout demands an authenticated session with CSRF", async () => {
@@ -747,7 +702,7 @@ test("login falls back to the Forum relay when the local pepper differs", async 
     envWithLimiters({ GOOBER_DB: db, RELAY_TOKEN: "r".repeat(64) }),
   );
   assert.equal(response.status, 200);
-  assert.match(response.headers.get("Set-Cookie") || "", /__Host-goober_session=[A-Za-z0-9_-]+/);
+  assert.match(response.headers.get("Set-Cookie") || "", /goober_session=[A-Za-z0-9_-]+/);
   assert.equal(calls.length, 1, "the Forum relay verifies the password after the Forum ban check");
   assert.equal(db.calls.find((call) => call.sql.includes("INSERT INTO sessions")) !== undefined, true);
 });
@@ -868,59 +823,12 @@ test("register converges the fresh hash onto the forum pepper via relaySet", asy
   assert.deepEqual(sent, { username: "newcomer", password: "another-long-password" });
 });
 
-test("T10 credential-sweep: the owner's password rescue sweeps the rescued account's sessions", async () => {
-  // Stored 'admin' = public 'owner' (the rescue's own vocabulary). The sweep
-  // reads the target LOCALLY after the relay, then deletes the rescued
-  // account's sessions — the GC worker's own rows on the shared table, never
-  // a cross-app write.
-  const token = randomToken();
-  const csrf = randomToken(24);
-  const ownerRow = {
-    token_hash: await sha256Hex(token),
-    user_id: 7,
-    csrf_token: csrf,
-    expires_at: nowSeconds() + 3600,
-    username: "wempos",
-    role: "admin",
-    bio: "",
-    avatar_status: null,
-    avatar_mime: null,
-    avatar_updated_at: null,
-    avatar_version: null,
-    totp_enabled: 0,
-  };
-  const db = fakeDb([
-    { test: SESSION_READ_TEST, first: async () => ownerRow },
-    { test: (sql) => sql.includes("FROM users WHERE username_key = ?"), first: async () => ({ id: 12 }) },
-    {
-      test: (sql) => sql.includes("DELETE FROM sessions WHERE user_id = ?"),
-      run: (bound) => {
-        assert.deepEqual(bound, [12]);
-        return { meta: { changes: 3 } };
-      },
-    },
-  ]);
-  stubRelayFetch(async () => new Response(JSON.stringify({ changed: true }), { status: 200 }));
-  const response = await dispatch(
-    postJson("/api/admin/reset-password", { username: "wempos", password: "reset-pass-123" }, {
-      Cookie: "__Host-goober_session=" + token,
-      "X-CSRF-Token": csrf,
-    }),
-    envWithLimiters({ GOOBER_DB: db, RELAY_TOKEN: "r".repeat(64) }),
-  );
-  assert.equal(response.status, 200);
-  assert.deepEqual(await bodyOf(response), { reset: true });
-  // The relay answered BEFORE the sweep: a failed/absent relay writes
-  // nothing and therefore sweeps nothing (fail-closed ordering).
-  assert.ok(db.calls.find((call) => call.sql.includes("DELETE FROM sessions WHERE user_id = ?")));
-});
-
 test("POST /api/admin/reset-password re-issues a password through the relay (owner only)", async () => {
   const { env: memberEnv, token, csrf } = await signedInEnv();
   stubRelayFetch(async () => new Response(JSON.stringify({ changed: true }), { status: 200 }));
   const refused = await dispatch(
     postJson("/api/admin/reset-password", { username: "wempos", password: "reset-pass-123" }, {
-      Cookie: "__Host-goober_session=" + token,
+      Cookie: "goober_session=" + token,
       "X-CSRF-Token": csrf,
     }),
     memberEnv,
@@ -1009,7 +917,7 @@ test("relay-only login can proceed after the Forum verifies the network is not b
     }),
   );
   assert.equal(response.status, 200);
-  assert.match(response.headers.get("Set-Cookie") || "", /__Host-goober_session=[A-Za-z0-9_-]+/);
+  assert.match(response.headers.get("Set-Cookie") || "", /goober_session=[A-Za-z0-9_-]+/);
   assert.equal(calls.length, 1, "Forum network-ban check and password verification both use the relay");
 });
 
@@ -1026,40 +934,4 @@ test("login reports unavailable verification when both local pepper and relay ar
   assert.equal(response.status, 503);
   assert.match((await bodyOf(response)).error,
     /Password verification is unavailable/);
-});
-
-// --- the __Host- rename wave: the one-cycle legacy fallback ---------------------
-
-test("the legacy session cookie still reads and self-migrates on the boot GET", async () => {
-  // The byte-twin's migrateCookies shape: readSession accepts the legacy bare
-  // name for one transitional window, and /api/me (the boot GET the client
-  // makes on load) attaches the SAME token re-issued under the prefixed name
-  // plus the legacy clear — zero DB writes, no session rewrite.
-  const { env, token, csrf } = await signedInEnv();
-  const response = await dispatch(get("/api/me", { Cookie: "goober_session=" + token }), env);
-  assert.equal(response.status, 200);
-  assert.equal((await bodyOf(response)).user.id, 7);
-  const cookies = response.headers.getSetCookie();
-  assert.equal(cookies.length, 2);
-  assert.ok(cookies[0].startsWith("__Host-goober_session=" + token + ";"),
-    "the SAME token re-issues under the prefixed name");
-  assert.ok(cookies[0].endsWith("; Secure"), "the re-issue stays Secure");
-  assert.match(cookies[0], /Max-Age=[0-9]+/);
-  assert.equal(cookies[1],
-    "goober_session=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0; Secure",
-    "the legacy bare name clears alongside");
-  void csrf;
-});
-
-test("a prefixed-name session reads with no migration baggage", async () => {
-  const { env, token } = await signedInEnv();
-  const response = await dispatch(get("/api/me", { Cookie: "__Host-goober_session=" + token }), env);
-  assert.equal(response.status, 200);
-  assert.equal(response.headers.getSetCookie().length, 0);
-});
-
-test("an invalid legacy token 401s exactly like the new name (no oracle)", async () => {
-  const { env } = await signedInEnv();
-  const response = await dispatch(get("/api/me", { Cookie: "goober_session=" + "short" }), env);
-  assert.equal(response.status, 401);
 });

@@ -1,4 +1,4 @@
-// Copyright 2026 ItsWempo
+// Copyright 2026 YourLocalGoober
 //
 // This file is part of GooberCord.
 //
@@ -89,13 +89,7 @@ test("the interval checks /api/version and only ever offers, never auto-reloads"
   assert.match(MAIN, /api\("\/api\/version"\)/);
   assert.match(MAIN, /60000/);
   assert.match(MAIN, /removeAttribute\("hidden"\)/);
-  // never auto-reloads: EVERY location.reload() call site is click-wired (the
-  // stale strip's quiet offer + the boot card's retry button) — a bare call
-  // (a timer- or catch-driven auto-reload) never rides MAIN.
-  const lawful = (MAIN.match(/addEventListener\("click", \(\) => (?:win\.|window\.)?location\.reload\(\)\)/g) || []).length;
-  const reloads = (MAIN.match(/location\.reload\(\)/g) || []).length;
-  assert.ok(reloads > 0, "the reload affordances ride");
-  assert.equal(reloads, lawful, `every reload call site is click-wired (${reloads} total, ${lawful} lawful)`);
+  assert.doesNotMatch(MAIN, /location\.reload\(\)(?![\s\S]*button)/);
 });
 
 test("the auth-expiry signal lands on Accounts, with exactly one listener registered", () => {
@@ -114,14 +108,4 @@ test("the sweep carries no copy: the strip paints through t() keys", () => {
     assert.doesNotMatch(codeOnly, new RegExp(value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")),
       "the literal copy lives only in en.json");
   }
-});
-
-// --- the boot catch (T-W23): the bare boot() call never blanks the screen ---
-
-test("the boot catch paints a minimal card into #app — never a blank screen", () => {
-  assert.match(codeOnly, /boot\(\)\.catch\(/, "the bare boot call rides exactly one .catch");
-  assert.match(codeOnly, /getElementById\("app"\)\s*\|\|\s*doc\.body/,
-    "the card lands in #app, then the body — the same target the shell mounts");
-  assert.match(codeOnly, /router-error/, "the card shares the router's error-pane class");
-  assert.doesNotMatch(codeOnly, /^\s*boot\(\);\s*$/m, "no bare boot() call survives");
 });

@@ -1,4 +1,4 @@
-// Copyright 2026 ItsWempo
+// Copyright 2026 YourLocalGoober
 //
 // This file is part of GooberCord.
 //
@@ -132,7 +132,7 @@ function authed(method, path, body) {
     headers: {
       "Content-Type": "application/json",
       Origin: ORIGIN,
-      Cookie: "__Host-goober_session=" + SESSION_TOKEN,
+      Cookie: "goober_session=" + SESSION_TOKEN,
       "X-CSRF-Token": SESSION_ROW.csrf_token,
     },
     body: body === undefined ? undefined : JSON.stringify(body),

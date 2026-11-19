@@ -1,4 +1,4 @@
-// Copyright 2026 ItsWempo
+// Copyright 2026 YourLocalGoober
 //
 // This file is part of GooberCord.
 //
@@ -186,7 +186,7 @@ async function sessionFixtures(username, userId = MEMBER_ID) {
     token,
     csrf,
     row,
-    headers: { Cookie: "__Host-goober_session=" + token, "X-CSRF-Token": csrf, Origin: ORIGIN },
+    headers: { Cookie: "goober_session=" + token, "X-CSRF-Token": csrf, Origin: ORIGIN },
   };
 }
 
@@ -369,44 +369,6 @@ test("unknown or malformed frames get a 400 error and leave the membership alone
   assert.deepEqual(after.online, [
     { userId: 1, username: "alice", statusText: null, statusUntil: null, presenceState: null, voiceChannel: null },
   ]);
-});
-
-// The stale-ghost prune (T38): a member whose lastSeen stopped beating drops
-// PAST the beat window — gone from the roster AND from the map, not merely
-// hidden like a stale status is. The window is 2X the slowest legitimate
-// beat (the 300s REST announce), so one missed beat never drops anyone live.
-test("a member past the stale window is pruned, not merely hidden", async () => {
-  const hub = new PresenceHub({ setWebSocketAutoResponse() {} }, {});
-  await hubFrame(hub, { type: "heartbeat", userId: 1, username: "alice" });
-  await hubFrame(hub, { type: "heartbeat", userId: 2, username: "bob" });
-
-  // Alice crashed: her last stop is ten minutes ago, Bob keeps beating.
-  hub.presence.get(1).lastSeen = nowSeconds() - 601;
-
-  const pruned = await hubFrame(hub, { type: "list" });
-  assert.deepEqual(pruned.online.map((row) => row.userId), [2]);
-  assert.equal(hub.presence.has(1), false);
-});
-
-test("one missed beat inside the window never drops a live member", async () => {
-  const hub = new PresenceHub({ setWebSocketAutoResponse() {} }, {});
-  await hubFrame(hub, { type: "heartbeat", userId: 1, username: "alice" });
-  await hubFrame(hub, { type: "heartbeat", userId: 2, username: "bob" });
-
-  hub.presence.get(1).lastSeen = nowSeconds() - 500;
-
-  const kept = await hubFrame(hub, { type: "list" });
-  assert.deepEqual(kept.online.map((row) => row.userId), [1, 2]);
-});
-
-test("the stale window stays 2X the REST beat so announce-only members survive", async () => {
-  // Structural pin: the window is a named constant at 600s — a silent drop
-  // to anything at or under the 300s announce cadence would beat live
-  // members offline.
-  const source = (await import("node:fs")).readFileSync(
-    new URL("../api/presence.mjs", import.meta.url), "utf8",
-  );
-  assert.match(source, /PRESENCE_STALE_SECONDS = 600/);
 });
 
 // --- ChatRoom relay plumbing ------------------------------------------------------

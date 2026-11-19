@@ -1,4 +1,4 @@
-// Copyright 2026 ItsWempo
+// Copyright 2026 YourLocalGoober
 //
 // This file is part of GooberCord.
 //
@@ -16,12 +16,10 @@
 // GNU Affero General Public License along with this program.  If not,
 // see <https://www.gnu.org/licenses/>
 
-// The LARGE-FILE upload lane — D1 staging since 2026-11-17 (owner ruling
-// then: "no park, and no r2" — REVIVED 2026-11-18 by the T100 order: the
-// committed bytes now ALSO stream into R2, the GC_MEDIA binding, best-effort
-// with D1 staying the serving fallback; the part contract below is
-// unchanged). The lane streams a large upload through D1 using the proven
-// chunk machinery's pre-commit half —
+// The LARGE-FILE upload lane — D1-ONLY since 2026-11-17 (owner ruling: "no
+// park, and no r2"). The object-store design is gone: no binding check, no
+// bucket, no key families, no serving fallback. The lane streams a large
+// upload through D1 using the proven chunk machinery's pre-commit half —
 // each part request slices its ≤1 MiB body into GC_UPLOAD_PART_CHUNKS
 // 64,000-byte rows in the gc_upload_parts staging table (migration 0025,
 // the same row shape gc_attachment_chunks carries, keyed by the client-held
@@ -42,7 +40,6 @@ import { nowSeconds, randomToken } from "./core/crypto.mjs";
 import { HttpError, json, rateLimit, readLimitedBody } from "./core/http.mjs";
 import { blobToUint8Array, sniffImageMime } from "./core/images.mjs";
 import { attachmentCapBytes } from "./plus.mjs";
-import { exportAttachmentObjectStreamed } from "./media.mjs";
 import {
   ATTACHMENT_CHUNK_BYTES,
   GC_UPLOAD_LANE_MAX_BYTES,
@@ -50,7 +47,6 @@ import {
   GC_UPLOAD_PART_CHUNKS,
   GC_UPLOAD_PART_REQUEST_BYTES,
   GC_UPLOAD_PARTS_MAX,
-  GC_STAGING_ROWS_MAX_PER_USER,
   MAX_ATTACHMENT_BYTES,
 } from "../constants.mjs";
 
@@ -199,22 +195,6 @@ export const STAGING_CLEAR_SQL = "DELETE FROM gc_upload_parts WHERE upload_id = 
 
 const UPLOAD_ID_RE = /^[A-Za-z0-9_-]{12}$/;
 
-// The staging flush (T10 F3): ONE self-healing DELETE rides every part
-// intake's batch, keeping the caller's gc_upload_parts staging bounded at
-// the table's only write point (see constants.mjs
-// GC_STAGING_ROWS_MAX_PER_USER — the two-lane bound). The kept window is the
-// subselect's ORDER (created_at desc, then seq desc), so zero extra reads:
-// the statement is itself the count. A lane the flush consumes surfaces at
-// COMMIT as a failed aggregate verification and a client re-upload — never a
-// silent truncation.
-function stagingFlushStatement(env, uploaderId) {
-  return env.GOOBER_DB.prepare(
-    "DELETE FROM gc_upload_parts WHERE uploader_id = ? AND (upload_id, seq) NOT IN (" +
-      "SELECT upload_id, seq FROM gc_upload_parts WHERE uploader_id = ? " +
-      "ORDER BY created_at DESC, seq DESC LIMIT " + GC_STAGING_ROWS_MAX_PER_USER + ")",
-  ).bind(uploaderId, uploaderId);
-}
-
 export async function handleUploadChunkRoute(request, env) {
   const session = await requireUser(request, env);
   // The READ bucket carries the per-part flow: the UPLOAD limiter's own shape
@@ -253,12 +233,8 @@ export async function handleUploadChunkRoute(request, env) {
     ).bind(uploadId, uploaderId).first();
     if (!marker) throw new HttpError(404, UPLOAD_UNKNOWN_ERROR);
     // OR REPLACE: a retried part re-lands its slice honestly (the commit
-    // re-verifies the whole set from the aggregate either way). The flush
-    // rides the SAME batch, ahead of the part's rows.
-    await env.GOOBER_DB.batch([
-      stagingFlushStatement(env, uploaderId),
-      ...partChunkStatements(env, uploadId, uploaderId, seq, chunk, now),
-    ]);
+    // re-verifies the whole set from the aggregate either way).
+    await env.GOOBER_DB.batch(partChunkStatements(env, uploadId, uploaderId, seq, chunk, now));
     return json({ ok: true });
   }
 
@@ -271,34 +247,19 @@ export async function handleUploadChunkRoute(request, env) {
     throw new HttpError(400, "That file size is not a large upload.");
   }
   const uploadId = randomToken(12).replace(/[^A-Za-z0-9_-]/g, "").slice(0, 12);
-  // The flush opens the batch here too — a fresh uploadId is the natural
-  // hygiene point (the abandoned lane's rows are the accretion being bounded).
-  await env.GOOBER_DB.batch([
-    stagingFlushStatement(env, uploaderId),
-    ...partChunkStatements(env, uploadId, uploaderId, 0, chunk, now),
-  ]);
+  await env.GOOBER_DB.batch(partChunkStatements(env, uploadId, uploaderId, 0, chunk, now));
   // NO gc_attachments row exists yet — the row is born at COMMIT with the
   // sniffed mime and the verified size.
   return json({ uploadId }, 201);
 }
 
-export async function handleCommitUploadRoute(request, env, uploadId, ctx) {
+export async function handleCommitUploadRoute(request, env, uploadId) {
   const session = await requireUser(request, env);
   await rateLimit(request, env, "upload", "uploads-commit:" + session.user.id);
   if (!UPLOAD_ID_RE.test(String(uploadId || ""))) {
     throw new HttpError(404, UPLOAD_UNKNOWN_ERROR);
   }
   const uploaderId = Number(session.user.id);
-
-  // The tier gate re-check (T10 F2-LOW rider): the intake route's gate and
-  // the commit's are ONE invariant, asserted at BOTH write points — a member
-  // whose term lapses between the last part and the commit cannot downgrade
-  // their staging into a born row. A grace member rides the FREE pair (the
-  // strict predicate), exactly like the intake.
-  const caps = await attachmentCapBytes(env, uploaderId, nowSeconds());
-  if (caps.tier !== "plus" || caps.fileBytes <= MAX_ATTACHMENT_BYTES) {
-    throw new HttpError(403, UPLOAD_TIER_ERROR);
-  }
 
   const body = await readJsonCommit(request);
   const size = Number(body.size);
@@ -360,12 +321,6 @@ export async function handleCommitUploadRoute(request, env, uploadId, ctx) {
       "AND mime = ? AND size_bytes = ? AND created_at = ? ORDER BY id DESC LIMIT 1",
   ).bind(uploaderId, mime, size, now).first();
   const attachmentId = Number(row.id);
-  // The object copy (T100): the verified chunk set streams page-by-page into
-  // the GC_MEDIA object at the derived key — the isolate never holds more
-  // than one serving page. Best-effort: a missed put leaves the complete D1
-  // copy in charge (the orphan-sweep repair lane back-fills); the part
-  // contract above is UNCHANGED.
-  await exportAttachmentObjectStreamed(env, ctx, attachmentId, size);
   return json({ attachment: { id: attachmentId, status: "pending" } }, 201);
 }
 
@@ -397,6 +352,7 @@ export async function handleAbandonUploadRoute(request, env, uploadId) {
 
 export async function handleUploadRoutes(request, env, url, path, method, ctx) {
   void url;
+  void ctx;
 
   if (method === "POST" && path === "/api/uploads/chunks") {
     return handleUploadChunkRoute(request, env);
@@ -406,7 +362,7 @@ export async function handleUploadRoutes(request, env, url, path, method, ctx) {
     ? path.match(/^\/api\/uploads\/([A-Za-z0-9_-]{12})\/commit$/)
     : null;
   if (commitMatch) {
-    return handleCommitUploadRoute(request, env, commitMatch[1], ctx);
+    return handleCommitUploadRoute(request, env, commitMatch[1]);
   }
 
   const abandonMatch = method === "DELETE"

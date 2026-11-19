@@ -1,4 +1,4 @@
-// Copyright 2026 ItsWempo
+// Copyright 2026 YourLocalGoober
 //
 // This file is part of GooberCord.
 //
@@ -107,7 +107,7 @@ export function matchRosterMentions(text, members) {
 // statements ride the same batch as the message, so either both land or
 // neither does (the send's own atomicity).
 import { GC_MENTIONS_MAX_PER_MESSAGE, GC_MENTIONS_PAGE_DEFAULT, GC_MENTIONS_PAGE_MAX } from "../constants.mjs";
-import { requireSignedInRead, requireUser } from "./core/auth.mjs";
+import { requireUser } from "./core/auth.mjs";
 import { HttpError, json, rateLimit } from "./core/http.mjs";
 
 // The roster reads a send's mention resolve needs. ONLY a body carrying an
@@ -174,11 +174,7 @@ const MENTION_LIST_SQL =
       "WHERE fcm.channel_id = c.id AND fcm.user_id = ?)))";
 
 async function handleListMentionsRoute(request, env, url) {
-  // A browser's same-origin GET fetch carries no Origin header (Firefox and
-  // the fetch spec both omit it on non-CORS GETs), so the CSRF wall's
-  // assertSameOrigin 403'd the inbox on every real page load — the read
-  // rides the signed-in read gate; the DELETE below keeps the full wall.
-  const session = await requireSignedInRead(request, env);
+  const session = await requireUser(request, env);
   const userId = Number(session.user.id);
   await rateLimit(request, env, "read", "user:" + userId);
 

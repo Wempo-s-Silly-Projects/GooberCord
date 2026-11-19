@@ -1,0 +1,25 @@
+- generic [ref=e4]:
+  - generic [ref=e5]:
+    - button "Switch to dark theme" [ref=e6]
+    - button "Switch to Discord skin" [ref=e13]
+  - heading "GooberCord" [level=1] [ref=e19]
+  - paragraph [ref=e21]: Chat for Wempo's silly projects.
+  - list "What GooberCord has" [ref=e22]:
+    - listitem [ref=e23]: Live chat
+    - listitem [ref=e24]: Same forum account
+    - listitem [ref=e25]: DMs & group chats
+  - generic [ref=e26]:
+    - heading "Welcome back" [level=2] [ref=e27]
+    - generic [ref=e28]:
+      - generic [ref=e29]:
+        - generic [ref=e30]: Username
+        - textbox "Username" [ref=e31]
+      - generic [ref=e32]:
+        - generic [ref=e33]: Password
+        - textbox "Password" [ref=e34]
+      - alert
+      - button "Sign in" [ref=e35] [cursor=pointer]
+      - paragraph [ref=e36]:
+        - text: New here?
+        - button "Create an account" [ref=e37] [cursor=pointer]
+    - status

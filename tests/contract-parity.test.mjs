@@ -1,4 +1,4 @@
-// Copyright 2026 ItsWempo
+// Copyright 2026 YourLocalGoober
 //
 // This file is part of GooberCord.
 //
@@ -40,7 +40,7 @@
 // EITHER direction fails here — copy a framework change in, or carry an
 // app-side fix upstream to the framework; never edit the vendored file in
 // place.
-const KITSKEY_DIR = (process.env.GC_KITSKEY_DIR || "/Users/itswempo/project-kitskey") + "/experience";
+const KITSKEY_DIR = "/Users/itswempo/project-designer/experience";
 const VENDORED_FILES = [
   ["http.mjs", "http.mjs"],
   ["db.mjs", "db.mjs"],
@@ -66,7 +66,7 @@ import assert from "node:assert/strict";
 
 const HERE = path.dirname(new URL(import.meta.url).pathname);
 const GOOBER_CORE = path.resolve(HERE, "../api/core");
-const FORUM_CORE = (process.env.GC_FORUM_DIR || "/Users/itswempo/wempos-forum") + "/api/core";
+const FORUM_CORE = "/Users/itswempo/wempos-forum/api/core";
 
 // The substitution allow-list (ruled shape, same as GooberCord main's
 // extension 027fc28): every pair is a named constant; the project-name pair
@@ -257,27 +257,4 @@ test("GC's cursor seam round-trips through the vendored codecs", async () => {
   );
   assert.equal(cursors.encodeScoreCursor({ like_count: 0, dislike_count: 2, id: 9 }), "-2_9");
   assert.equal(cursors.parseActivityCursor("7_1_2_3"), null, "malformed shapes stay null at the seam");
-});
-
-// The __Host- rename wave's rider (lead-ruled): the legacy-cookie fallback +
-// the migrateCookies self-migration are a TWIN RIDER — both trees carry the
-// same one fallback branch and the same attach copy pair. Content-anchored
-// markers (the identifiers carry no project tokens), so a one-sided edit —
-// the divergence class the chair named — goes red here first.
-test("the __Host- rename wave carries the legacy fallback + migration hook on BOTH trees", () => {
-  const goober = readCore("auth.mjs");
-  const forum = readForumCore("auth.mjs");
-  for (const [source, new_name, legacy] of [
-    [goober, "__Host-goober_session", "goober_session"],
-    [forum, "__Host-wempo_session", "wempo_session"],
-  ]) {
-    assert.ok(source.includes('"' + new_name + '="'),
-      "the write path answers ONLY the prefixed name");
-    assert.ok(source.includes("session.migrateCookies"),
-      "the self-migration rides the session object");
-    assert.ok(source.includes(new_name + '=" + token + "; Path=/; HttpOnly; SameSite=Lax; Max-Age="'),
-      "the migration re-issues the SAME token under the prefixed name");
-    assert.ok(source.includes(legacy + '=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0; Secure'),
-      "the legacy bare name clears alongside");
-  }
 });

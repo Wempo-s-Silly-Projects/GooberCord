@@ -1,4 +1,4 @@
-// Copyright 2026 ItsWempo
+// Copyright 2026 YourLocalGoober
 //
 // This file is part of GooberCord.
 //
@@ -53,8 +53,6 @@ import {
 import { SERVER_PERMISSIONS, holdsRolesBitsSql, holdsRolesBitsParams, parseMergedMask, roleMaskColumnSql } from "./permissions.mjs";
 import { serverBoostTier } from "./boost-level.mjs";
 import {
-  deleteAttachmentObject,
-  exportAttachmentObject,
   readMultipartWithImage,
   standaloneAttachmentStatements,
 } from "./media.mjs";
@@ -169,7 +167,7 @@ export function prepareSoundAttachment(fileBytes) {
   return { mime, bytes: fileBytes };
 }
 
-async function createSoundAttachment(env, uploaderId, fileBytes, ctx) {
+async function createSoundAttachment(env, uploaderId, fileBytes) {
   const prepared = prepareSoundAttachment(fileBytes);
   const now = nowSeconds();
   const results = await env.GOOBER_DB.batch(
@@ -179,11 +177,6 @@ async function createSoundAttachment(env, uploaderId, fileBytes, ctx) {
   if (!Number.isInteger(id) || id < 1) {
     throw new HttpError(500, "That sound could not be stored. Please try again.");
   }
-  // The object copy (the T-R2-WIPE intake put): the sound's bytes land at
-  // gc-attachments/<id> once the batch resolved the id — the SAME idiom the
-  // landed media.mjs createAttachment put rides (best-effort; the complete
-  // D1 copy above stays the serving fallback on a put miss).
-  await exportAttachmentObject(env, ctx, id, prepared.bytes);
   return { id, status: "pending", mime: prepared.mime, sizeBytes: prepared.bytes.length };
 }
 
@@ -210,7 +203,7 @@ async function handleListSoundsRoute(request, env, serverId) {
   });
 }
 
-async function handleCreateSoundRoute(request, env, serverId, ctx) {
+async function handleCreateSoundRoute(request, env, serverId) {
   const session = await requireUser(request, env);
   await rateLimit(request, env, "write", "soundboard:" + session.user.id);
   const actorId = Number(session.user.id);
@@ -253,7 +246,7 @@ async function handleCreateSoundRoute(request, env, serverId, ctx) {
   const cap = (await serverBoostTier(env, Number(serverId))).caps.soundboard;
 
   if (attachmentId === null) {
-    attachmentId = Number((await createSoundAttachment(env, actorId, files[0], ctx)).id);
+    attachmentId = Number((await createSoundAttachment(env, actorId, files[0])).id);
   } else {
     // The JSON branch's own-asset read: the sound's asset must BE audio — a
     // member's own uploaded IMAGE can never ride the board as a sound.
@@ -381,7 +374,7 @@ async function handleRenameSoundRoute(request, env, serverId, soundId) {
 // survived. Post-row-delete the sibling NOT EXISTS reads decide honestly:
 // shared → the bytes survive with the sibling; sole referencer → the bytes
 // leave with the row.
-async function handleDeleteSoundRoute(request, env, serverId, soundId, ctx) {
+async function handleDeleteSoundRoute(request, env, serverId, soundId) {
   const session = await requireUser(request, env);
   await rateLimit(request, env, "write", "soundboard:" + session.user.id);
   const actorId = Number(session.user.id);
@@ -436,16 +429,6 @@ async function handleDeleteSoundRoute(request, env, serverId, soundId, ctx) {
   if (Number(results[0]?.meta?.changes) !== 1) {
     throw new HttpError(403, "You do not have permission to do that.");
   }
-  // The object's bytes die with the D1 rows (the T-R2-WIPE ride): gated on
-  // the attachment statement's own changes verdict — statement 3's shared-
-  // asset NOT EXISTS arms decide whether this sound's asset was a sole
-  // referencer, so ONLY a changes==1 there means the chunk rows left and
-  // the object purges (the emoji lane's exact ride shape; the batch's own
-  // parity, not a new error policy). Best-effort — a missed delete leaves a
-  // garbage-collectable orphan, never a dangling reference.
-  if (Number(results[2]?.meta?.changes) === 1) {
-    await deleteAttachmentObject(env, ctx, Number(target.attachment_id));
-  }
   return json({ ok: true });
 }
 
@@ -453,9 +436,7 @@ async function handleDeleteSoundRoute(request, env, serverId, soundId, ctx) {
 
 export async function handleSoundboardRoutes(request, env, url, path, method, ctx) {
   void url;
-  // ctx (the worker's execution context) carries the background-work lane —
-  // the create route's intake put and the delete route's object delete
-  // schedule through it.
+  void ctx;
 
   const listMatch = (method === "GET" || method === "POST")
     ? path.match(/^\/api\/servers\/([1-9][0-9]*)\/sounds$/)
@@ -463,7 +444,7 @@ export async function handleSoundboardRoutes(request, env, url, path, method, ct
   if (listMatch) {
     return method === "GET"
       ? handleListSoundsRoute(request, env, Number(listMatch[1]))
-      : handleCreateSoundRoute(request, env, Number(listMatch[1]), ctx);
+      : handleCreateSoundRoute(request, env, Number(listMatch[1]));
   }
 
   const itemMatch = (method === "PATCH" || method === "DELETE")
@@ -472,7 +453,7 @@ export async function handleSoundboardRoutes(request, env, url, path, method, ct
   if (itemMatch) {
     return method === "PATCH"
       ? handleRenameSoundRoute(request, env, Number(itemMatch[1]), itemMatch[2])
-      : handleDeleteSoundRoute(request, env, Number(itemMatch[1]), itemMatch[2], ctx);
+      : handleDeleteSoundRoute(request, env, Number(itemMatch[1]), itemMatch[2]);
   }
   return undefined;
 }

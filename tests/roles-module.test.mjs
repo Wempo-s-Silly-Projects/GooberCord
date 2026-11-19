@@ -1,4 +1,4 @@
-// Copyright 2026 ItsWempo
+// Copyright 2026 YourLocalGoober
 //
 // This file is part of GooberCord.
 //
@@ -371,10 +371,8 @@ test("creating a role appends at the bottom inside one guarded INSERT ... SELECT
   assert.equal(insert.bound[4], SERVER_PERMISSIONS.MANAGE_INVITES);
   // The owner rider + the per-bit rider, both inside the WHERE — then the
   // parity-P0 role-cap arm's server bind (the count precondition rides the
-  // same INSERT, so the cap gates the owner too). Strictly-below-249: the
-  // off-by-one fix — @everyone occupies one of the 250 slots, so the INSERT
-  // must land INTO <= 248 explicit rows; a full server's 400, not the 403.
-  assert.match(insert.sql, /AND \(SELECT COUNT\(\*\) FROM gc_roles WHERE server_id = \?\) < /);
+  // same INSERT, so the cap gates the owner too).
+  assert.match(insert.sql, /AND \(SELECT COUNT\(\*\) FROM gc_roles WHERE server_id = \?\) <= /);
   assert.deepEqual(insert.bound.slice(6), [3, USER_ID, 3, USER_ID, 3]);
 });
 

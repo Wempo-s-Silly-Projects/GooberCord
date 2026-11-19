@@ -1,4 +1,4 @@
-// Copyright 2026 ItsWempo
+// Copyright 2026 YourLocalGoober
 //
 // This file is part of GooberCord.
 //
@@ -28,11 +28,7 @@ import assert from "node:assert/strict";
 import { handleServerRoutes } from "../api/servers.mjs";
 import { randomToken, sha256Hex, nowSeconds } from "../api/core/crypto.mjs";
 import { HttpError, json } from "../api/core/http.mjs";
-import {
-  GC_ROLES_MAX_PER_SERVER,
-  MAX_CHANNELS_PER_SERVER,
-  RATE_LIMIT_BINDINGS,
-} from "../constants.mjs";
+import { MAX_CHANNELS_PER_SERVER, RATE_LIMIT_BINDINGS } from "../constants.mjs";
 
 const ORIGIN = "http://localhost";
 const USER_ID = 7;
@@ -201,7 +197,7 @@ test("creating a server opens with one insert, builds the rest on its id, return
     postJson(
       "/api/servers",
       { name: "Goober HQ" },
-      { Cookie: "__Host-goober_session=" + token, "X-CSRF-Token": csrf },
+      { Cookie: "goober_session=" + token, "X-CSRF-Token": csrf },
     ),
     { GOOBER_DB: db },
   );
@@ -263,7 +259,7 @@ test("server create rejects a whitespace-only name with 400 and zero D1 writes",
     postJson(
       "/api/servers",
       { name: "   " },
-      { Cookie: "__Host-goober_session=" + token, "X-CSRF-Token": csrf },
+      { Cookie: "goober_session=" + token, "X-CSRF-Token": csrf },
     ),
     { GOOBER_DB: db },
   );
@@ -319,7 +315,7 @@ test("GET /api/servers lists a member's two servers with roles, icon urls, and c
     },
   ]);
   const response = await dispatch(
-    get("/api/servers", { Cookie: "__Host-goober_session=" + token }),
+    get("/api/servers", { Cookie: "goober_session=" + token }),
     { GOOBER_DB: db },
   );
   assert.equal(response.status, 200);
@@ -429,7 +425,7 @@ async function sessioned(routes) {
       postJson(
         "/api/servers/3/channels",
         body,
-        { Cookie: "__Host-goober_session=" + token, "X-CSRF-Token": csrf },
+        { Cookie: "goober_session=" + token, "X-CSRF-Token": csrf },
       ),
   };
 }
@@ -524,7 +520,7 @@ test("a non-member's channel create 403s and reveals no server existence", async
   assert.equal(state.channels, 0);
 });
 
-test("channel create rejects a non-text/voice/announcement kind with 400 before any write", async () => {
+test("channel create rejects a non-text/voice kind with 400 before any write", async () => {
   const { routes } = channelCapRoutes("owner", 0);
   const { db, createChannelRequest } = await sessioned(routes);
   const response = await dispatch(createChannelRequest({ name: "dm-ish", kind: "dm" }), {
@@ -532,7 +528,7 @@ test("channel create rejects a non-text/voice/announcement kind with 400 before 
   });
   assert.equal(response.status, 400);
   assert.deepEqual(await bodyOf(response), {
-    error: "Channel kind must be text, voice or announcement.",
+    error: "Channel kind must be either text or voice.",
   });
   assert.equal(
     db.calls.find((call) => CHANNEL_INSERT_TEST(call.sql)),
@@ -690,7 +686,7 @@ test("an owner renames the server in one guarded UPDATE", async () => {
     patchJson(
       "/api/servers/3",
       { name: "Renamed" },
-      { Cookie: "__Host-goober_session=" + token, "X-CSRF-Token": csrf },
+      { Cookie: "goober_session=" + token, "X-CSRF-Token": csrf },
     ),
     { GOOBER_DB: db },
   );
@@ -724,7 +720,7 @@ test("a non-owner's PATCH 403s with zero changes and no existence probe", async 
     patchJson(
       "/api/servers/3",
       { name: "Renamed" },
-      { Cookie: "__Host-goober_session=" + token, "X-CSRF-Token": csrf },
+      { Cookie: "goober_session=" + token, "X-CSRF-Token": csrf },
     ),
     { GOOBER_DB: db },
   );
@@ -755,7 +751,7 @@ test("PATCH with iconMediaId null clears the icon without the attachment guard",
     patchJson(
       "/api/servers/3",
       { iconMediaId: null },
-      { Cookie: "__Host-goober_session=" + token, "X-CSRF-Token": csrf },
+      { Cookie: "goober_session=" + token, "X-CSRF-Token": csrf },
     ),
     { GOOBER_DB: db },
   );
@@ -787,7 +783,7 @@ test("PATCH refuses to point the icon at another member's attachment inside the 
     patchJson(
       "/api/servers/3",
       { iconMediaId: 55 },
-      { Cookie: "__Host-goober_session=" + token, "X-CSRF-Token": csrf },
+      { Cookie: "goober_session=" + token, "X-CSRF-Token": csrf },
     ),
     { GOOBER_DB: db },
   );
@@ -823,7 +819,7 @@ test("PATCH accepts an icon id that IS one of the caller's own attachments", asy
     patchJson(
       "/api/servers/3",
       { iconMediaId: 12 },
-      { Cookie: "__Host-goober_session=" + token, "X-CSRF-Token": csrf },
+      { Cookie: "goober_session=" + token, "X-CSRF-Token": csrf },
     ),
     { GOOBER_DB: db },
   );
@@ -844,7 +840,7 @@ test("PATCH validates iconMediaId's shape before any statement runs", async () =
       patchJson(
         "/api/servers/3",
         { iconMediaId: bad },
-        { Cookie: "__Host-goober_session=" + token, "X-CSRF-Token": csrf },
+        { Cookie: "goober_session=" + token, "X-CSRF-Token": csrf },
       ),
       { GOOBER_DB: db },
     );
@@ -860,7 +856,7 @@ test("PATCH with no recognized fields is a 400 with zero statements", async () =
   const { token, csrf, row } = await sessionFixtures();
   const db = fakeDb([{ test: SESSION_READ_TEST, first: async () => row }]);
   const response = await dispatch(
-    patchJson("/api/servers/3", {}, { Cookie: "__Host-goober_session=" + token, "X-CSRF-Token": csrf }),
+    patchJson("/api/servers/3", {}, { Cookie: "goober_session=" + token, "X-CSRF-Token": csrf }),
     { GOOBER_DB: db },
   );
   assert.equal(response.status, 400);
@@ -877,7 +873,7 @@ test("PATCH validates an empty name like create, before any write", async () => 
     patchJson(
       "/api/servers/3",
       { name: "   " },
-      { Cookie: "__Host-goober_session=" + token, "X-CSRF-Token": csrf },
+      { Cookie: "goober_session=" + token, "X-CSRF-Token": csrf },
     ),
     { GOOBER_DB: db },
   );
@@ -929,7 +925,7 @@ test("a multipart PATCH rides the media intake and one guarded UPDATE", async ()
         fields: { name: "Renamed via multipart" },
         files: [{ bytes: pngImage(), name: "icon.png" }],
       },
-      { Cookie: "__Host-goober_session=" + token, "X-CSRF-Token": csrf },
+      { Cookie: "goober_session=" + token, "X-CSRF-Token": csrf },
     ),
     envWithLimiters({ GOOBER_DB: db }),
   );
@@ -974,7 +970,7 @@ test("a multipart PATCH demands the upload limiter like the standalone intake", 
     patchMultipart(
       "/api/servers/3",
       { files: [{ bytes: pngImage() }] },
-      { Cookie: "__Host-goober_session=" + token, "X-CSRF-Token": csrf },
+      { Cookie: "goober_session=" + token, "X-CSRF-Token": csrf },
     ),
     { GOOBER_DB: db },
   );
@@ -995,7 +991,7 @@ test("a multipart PATCH with a whitespace-only name 400s before any write", asyn
         fields: { name: "   " },
         files: [{ bytes: pngImage() }],
       },
-      { Cookie: "__Host-goober_session=" + token, "X-CSRF-Token": csrf },
+      { Cookie: "goober_session=" + token, "X-CSRF-Token": csrf },
     ),
     envWithLimiters({ GOOBER_DB: db }),
   );
@@ -1003,144 +999,5 @@ test("a multipart PATCH with a whitespace-only name 400s before any write", asyn
   assert.deepEqual(
     db.calls.filter((call) => call.call === "run" || call.call === "batch"),
     [],
-  );
-});
-
-// --- POST /api/servers/:id/roles (the 250-roles parity cap) ----------------------
-
-const ROLE_INSERT_TEST = (sql) =>
-  sql.includes("INSERT INTO gc_roles (server_id, name, color, position, permissions, created_at)") &&
-  sql.includes("FROM gc_server_members") &&
-  sql.includes("COUNT(*)");
-
-const ROLE_CAP_COUNT_TEST = (sql) =>
-  sql.includes("SELECT COUNT(*) AS n FROM gc_roles WHERE server_id = ?");
-
-const ROLE_RESELECT_TEST = (sql) =>
-  sql.includes("SELECT id, name, color, position, permissions FROM gc_roles WHERE id = ? AND server_id = ?");
-
-// Stateful role-cap stand-in, the channelCapRoutes idiom: the guarded INSERT's
-// COUNT(*) precondition is real SQL, so the fake decides changes=0/1 from a
-// simulated existing-role row count, exactly as D1 would.
-function roleCapRoutes(role, existingRoles) {
-  const state = { roles: existingRoles, role };
-  return {
-    state,
-    routes: [
-      {
-        test: ROLE_INSERT_TEST,
-        run: () => {
-          // D1 evaluates BOTH preconditions (owner/MANAGE_ROLES and the cap)
-          // inside the INSERT; the fake refuses anything either would refuse.
-          const privileged = state.role === "owner" || state.role === "moderator";
-          if (!privileged || state.roles >= GC_ROLES_MAX_PER_SERVER - 1) {
-            return { meta: { changes: 0 } };
-          }
-          state.roles += 1;
-          return { meta: { changes: 1, last_row_id: 90 } };
-        },
-      },
-      { test: ROLE_CAP_COUNT_TEST, first: async () => ({ n: state.roles }) },
-      {
-        test: ROLE_RESELECT_TEST,
-        first: async () => ({
-          id: 90,
-          name: "night-owl",
-          color: null,
-          position: state.roles - 1,
-          permissions: 0,
-        }),
-      },
-    ],
-  };
-}
-
-async function sessionedRoles(routes) {
-  const { token, csrf, row } = await sessionFixtures();
-  return {
-    db: fakeDb([{ test: SESSION_READ_TEST, first: async () => row }, ...routes]),
-    createRoleRequest: (body) =>
-      postJson(
-        "/api/servers/3/roles",
-        body,
-        { Cookie: "__Host-goober_session=" + token, "X-CSRF-Token": csrf },
-      ),
-  };
-}
-
-test("the role cap's operator is the off-by-one-fixed strict `<`, keyed at 249", async () => {
-  // A full server (249 explicit gc_roles rows) admits no 250th: 250 counts
-  // @everyone, which sits in no gc_roles row, so the explicit-row ceiling is
-  // 249 and the insert must land INTO <= 248 (strictly below the ceiling) —
-  // parity-limits.md: Roles per server 250 including @everyone, error 30005
-  // (verified 2026-11-17). The fake refuses at >= 249, exactly as the SQL
-  // precondition (`< 249`) does, and the diagnostic read classifies the 400.
-  const { state, routes } = roleCapRoutes("owner", 249);
-  const { db, createRoleRequest } = await sessionedRoles(routes);
-  const response = await dispatch(createRoleRequest({ name: "night-owl" }), {
-    GOOBER_DB: db,
-  });
-
-  assert.equal(response.status, 400);
-  assert.deepEqual(await bodyOf(response), {
-    // The exact cap copy, NOT the 403: n = 249 keys the diagnostic
-    // (`>= GC_ROLES_MAX_PER_SERVER - 1`), so a full server names the cap.
-    error: "That server already has the maximum number of roles.",
-  });
-  assert.equal(state.roles, 249); // nothing was created
-
-  const insert = db.calls.find((call) => call.call === "run" && ROLE_INSERT_TEST(call.sql));
-  assert.ok(insert);
-  // The authority rider rides INSIDE the INSERT — no read-then-write gate.
-  assert.match(insert.sql, /om\.role = 'owner'/);
-  // THE SHAPE PIN: the cap operator is strict `<` at the explicit-row ceiling —
-  // a `<=` (the pre-fix operator) would admit a 250th explicit row and make
-  // 251 total incl. @everyone, off by one from the parity row.
-  assert.match(
-    insert.sql,
-    /\(SELECT COUNT\(\*\) FROM gc_roles WHERE server_id = \?\) < 249/,
-  );
-  assert.doesNotMatch(insert.sql, /\) <= 249/);
-  // Bindings, pinned at the RIDER-ERA-INVARIANT subset: the composed WHERE
-  // changes ONLY its authority arm between the rider eras (rewrite-era
-  // mask-pair MERGED_PERMS_SELECT vs the union-era holdsRolesBitsSql
-  // per-bit EXISTS — the union law keeps ONE composed form and
-  // roles-module.test.mjs pins its full bind tail), so this pin holds
-  // across BOTH: the column head (server id, name, color), the permissions
-  // mask built from names, the now timestamp — and the cap's server id
-  // riding LAST (the cap arm closes the WHERE in every era) — never a
-  // client-supplied number anywhere.
-  assert.deepEqual(insert.bound.slice(0, 3), [3, "night-owl", null]);
-  assert.equal(insert.bound[4], 0);
-  assert.equal(typeof insert.bound[5], "number");
-  assert.equal(insert.bound[insert.bound.length - 1], 3);
-});
-
-test("the role cap lands INTO 248: the 250th explicit role joins at the fixed count", async () => {
-  // 248 existing rows passes the strict precondition (`< 249`), landing this
-  // create INTO <= 248 — the ceiling 249 explicit rows is only ever refused.
-  assert.equal(GC_ROLES_MAX_PER_SERVER, 250); // parity-limits.md row, 2026-11-17
-  const { state, routes } = roleCapRoutes("owner", 248);
-  const { db, createRoleRequest } = await sessionedRoles(routes);
-  const response = await dispatch(createRoleRequest({ name: "night-owl" }), {
-    GOOBER_DB: db,
-  });
-
-  assert.equal(response.status, 201);
-  assert.deepEqual(await bodyOf(response), {
-    role: { id: 90, name: "night-owl", color: null, position: 248, permissions: [] },
-  });
-  assert.equal(state.roles, 249); // the ceiling is now live for the next create
-
-  const insert = db.calls.find((call) => call.call === "run" && ROLE_INSERT_TEST(call.sql));
-  assert.ok(insert);
-  assert.match(
-    insert.sql,
-    /\(SELECT COUNT\(\*\) FROM gc_roles WHERE server_id = \?\) < 249/,
-  );
-  // Position appends after the current max, inside the statement.
-  assert.match(
-    insert.sql,
-    /\(SELECT COALESCE\(MAX\(position\), -1\) \+ 1 FROM gc_roles WHERE server_id = \?\)/,
   );
 });

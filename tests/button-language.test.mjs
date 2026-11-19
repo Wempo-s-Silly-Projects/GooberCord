@@ -1,4 +1,4 @@
-// Copyright 2026 ItsWempo
+// Copyright 2026 YourLocalGoober
 //
 // This file is part of GooberCord.
 //
@@ -36,8 +36,7 @@ const stylesheet = path.join(here, "..", "public", "styles.css");
 // The forum repo is the sibling working copy checked out next to this one —
 // the same dependency the vendored-kit parity tests lean on.
 const forumStylesheet = path.join(
-  process.env.GC_FORUM_DIR || path.resolve(path.dirname(path.dirname(here)), "wempos-forum"),
-  "public", "styles.css",
+  path.dirname(path.dirname(here)), "wempos-forum", "public", "styles.css",
 );
 
 // firstRuleBlock(css, selector): the bytes of the FIRST line-anchored rule whose

@@ -1,4 +1,4 @@
-// Copyright 2026 ItsWempo
+// Copyright 2026 YourLocalGoober
 //
 // This file is part of GooberCord.
 //
@@ -67,7 +67,7 @@ async function sessionFixtures(role = "member") {
       avatar_version: null,
       totp_enabled: 0,
     },
-    headers: { Cookie: "__Host-goober_session=" + token, "X-CSRF-Token": csrf },
+    headers: { Cookie: "goober_session=" + token, "X-CSRF-Token": csrf },
   };
 }
 

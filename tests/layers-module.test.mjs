@@ -1,4 +1,4 @@
-// Copyright 2026 ItsWempo
+// Copyright 2026 YourLocalGoober
 //
 // This file is part of GooberCord.
 //
@@ -171,7 +171,7 @@ const LAYER_MASK_TEST = (sql) =>
 async function layersSessioned(method, path, body) {
   const { token, csrf, row } = await sessionFixtures();
   const call = (m = method, b = body) =>
-    request(m, path, b, { Cookie: "__Host-goober_session=" + token, "X-CSRF-Token": csrf });
+    request(m, path, b, { Cookie: "goober_session=" + token, "X-CSRF-Token": csrf });
   return { token, row, call };
 }
 
@@ -243,7 +243,7 @@ test("the owner's 50th category joins and the 51st past the cap 400s with the li
   const { token, csrf, row } = await sessionFixtures();
   const post = (body) =>
     request("POST", "/api/servers/3/categories", body,
-      { Cookie: "__Host-goober_session=" + token, "X-CSRF-Token": csrf });
+      { Cookie: "goober_session=" + token, "X-CSRF-Token": csrf });
   const makeDb = (routes) =>
     fakeDb([{ test: SESSION_READ_TEST, first: async () => row }, ...routes]);
 
@@ -311,7 +311,7 @@ test("GET categories is membership-gated and lists position-first", async () => 
   ]);
   const response = await dispatchHandler(
     handleServerRoutes,
-    request("GET", "/api/servers/3/categories", undefined, { Cookie: "__Host-goober_session=" + token }),
+    request("GET", "/api/servers/3/categories", undefined, { Cookie: "goober_session=" + token }),
     envWithLimiters(db),
   );
   assert.equal(response.status, 200);
@@ -330,7 +330,7 @@ test("GET categories is membership-gated and lists position-first", async () => 
   ]);
   const refused = await dispatchHandler(
     handleServerRoutes,
-    request("GET", "/api/servers/3/categories", undefined, { Cookie: "__Host-goober_session=" + token }),
+    request("GET", "/api/servers/3/categories", undefined, { Cookie: "goober_session=" + token }),
     envWithLimiters(memberless),
   );
   assert.equal(refused.status, 403);
@@ -786,7 +786,7 @@ test("GET overwrites lists the rows beside the roles and the viewer block", asyn
   ]);
   const response = await dispatchHandler(
     handleServerRoutes,
-    request("GET", "/api/servers/3/channels/90/overwrites", undefined, { Cookie: "__Host-goober_session=" + token }),
+    request("GET", "/api/servers/3/channels/90/overwrites", undefined, { Cookie: "goober_session=" + token }),
     envWithLimiters(db),
   );
   assert.equal(response.status, 200);
@@ -849,7 +849,7 @@ test("an overwrite-free server's list payload stays byte-identical (graceful def
   ]);
   const response = await dispatchHandler(
     handleServerRoutes,
-    request("GET", "/api/servers", undefined, { Cookie: "__Host-goober_session=" + token }),
+    request("GET", "/api/servers", undefined, { Cookie: "goober_session=" + token }),
     envWithLimiters(db),
   );
   assert.equal(response.status, 200);
@@ -873,7 +873,7 @@ test("an overlaid server's list carries categories, the layer columns, and effec
   const { token } = await sessionFixtures();
   const response = await dispatchHandler(
     handleServerRoutes,
-    request("GET", "/api/servers", undefined, { Cookie: "__Host-goober_session=" + token }),
+    request("GET", "/api/servers", undefined, { Cookie: "goober_session=" + token }),
     envWithLimiters(db),
   );
   assert.equal(response.status, 200);
@@ -898,7 +898,7 @@ test("an overlaid server's list carries categories, the layer columns, and effec
   // exactly the private/announcement shape the sidebar vanish rule rides.
   const again = await dispatchHandler(
     handleServerRoutes,
-    request("GET", "/api/servers", undefined, { Cookie: "__Host-goober_session=" + (await sessionFixtures()).token }),
+    request("GET", "/api/servers", undefined, { Cookie: "goober_session=" + (await sessionFixtures()).token }),
     envWithLimiters(await serverListDb({
       roleRows: [{ server_id: 3, id: 5, permissions: 0 }],
       overwrites: [
@@ -923,7 +923,7 @@ test("the owner's list carries the full mask; a plain member rides the walk", as
     const { token } = await sessionFixtures();
     const response = await dispatchHandler(
       handleServerRoutes,
-      request("GET", "/api/servers", undefined, { Cookie: "__Host-goober_session=" + token }),
+      request("GET", "/api/servers", undefined, { Cookie: "goober_session=" + token }),
       envWithLimiters(db),
     );
     const channel = (await bodyOf(response)).servers[0].channels[0];
@@ -948,7 +948,7 @@ async function messageSession(method, path, body) {
     token,
     row,
     call: (m = method, b = body) =>
-      request(m, path, b, { Cookie: "__Host-goober_session=" + token, "X-CSRF-Token": csrf }),
+      request(m, path, b, { Cookie: "goober_session=" + token, "X-CSRF-Token": csrf }),
   };
 }
 
@@ -1204,7 +1204,7 @@ test("a CONNECT-denied voice viewer's upgrade refuses with the shared 403", asyn
     ]),
   };
   const response = await wsDispatch(
-    request("GET", "/api/ws?channel=90", undefined, { Cookie: "__Host-goober_session=" + token }),
+    request("GET", "/api/ws?channel=90", undefined, { Cookie: "goober_session=" + token }),
     env,
   );
   assert.equal(response.status, 403);
@@ -1221,7 +1221,7 @@ test("an SPEAK-denied voice viewer equally refuses at the door (out-of-scope enf
     ]),
   };
   const response = await wsDispatch(
-    request("GET", "/api/ws?channel=90", undefined, { Cookie: "__Host-goober_session=" + token }),
+    request("GET", "/api/ws?channel=90", undefined, { Cookie: "goober_session=" + token }),
     env,
   );
   assert.equal(response.status, 403);
@@ -1248,7 +1248,7 @@ test("an un-denied voice channel still forwards the upgrade to the channel DO", 
     },
   };
   const response = await wsDispatch(
-    request("GET", "/api/ws?channel=90", undefined, { Cookie: "__Host-goober_session=" + token }),
+    request("GET", "/api/ws?channel=90", undefined, { Cookie: "goober_session=" + token }),
     env,
   );
   assert.equal(response.status, 101);
@@ -1282,7 +1282,7 @@ test("a text channel's gate is the VIEW/SEND pair; the owner bypasses the chain"
       },
     };
     const response = await wsDispatch(
-      request("GET", "/api/ws?channel=90", undefined, { Cookie: "__Host-goober_session=" + token }),
+      request("GET", "/api/ws?channel=90", undefined, { Cookie: "goober_session=" + token }),
       env,
     );
     assert.equal(response.status, 101, kind + " / " + membershipRole);

@@ -1,4 +1,4 @@
-// Copyright 2026 ItsWempo
+// Copyright 2026 YourLocalGoober
 //
 // This file is part of GooberCord.
 //
@@ -243,28 +243,15 @@ async function handleCreateConversationRoute(request, env) {
   const channelId = Number(channelResult.meta.last_row_id);
 
   // ALL member inserts ride ONE batch, each bound to the literal channel id.
-  // The memberless-window guard: the channel row is already COMMITTED, so any
-  // member-batch failure (a D1 abort or a refused insert) must delete the
-  // stranded row — no compensating delete would leave a memberless channel
-  // on the shared DB, invisible to every member-join read but never cleaned.
-  const DELETE_STRANDED_CHANNEL_SQL =
-    "DELETE FROM gc_channels WHERE id = ? AND server_id IS NULL";
-  let memberResults;
-  try {
-    memberResults = await env.GOOBER_DB.batch(
-      members.map((member) =>
-        env.GOOBER_DB.prepare(
-          "INSERT INTO gc_conversation_members (channel_id, user_id, last_read_message_id) " +
-            "VALUES (?, ?, 0)",
-        ).bind(channelId, member.userId),
-      ),
-    );
-  } catch (batchError) {
-    await env.GOOBER_DB.prepare(DELETE_STRANDED_CHANNEL_SQL).bind(channelId).run();
-    throw batchError;
-  }
+  const memberResults = await env.GOOBER_DB.batch(
+    members.map((member) =>
+      env.GOOBER_DB.prepare(
+        "INSERT INTO gc_conversation_members (channel_id, user_id, last_read_message_id) " +
+          "VALUES (?, ?, 0)",
+      ).bind(channelId, member.userId),
+    ),
+  );
   if (memberResults.some((result) => Number(result?.meta?.changes) !== 1)) {
-    await env.GOOBER_DB.prepare(DELETE_STRANDED_CHANNEL_SQL).bind(channelId).run();
     throw new HttpError(500, "The conversation could not be created. Please try again.");
   }
 

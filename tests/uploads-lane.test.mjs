@@ -1,4 +1,4 @@
-// Copyright 2026 ItsWempo
+// Copyright 2026 YourLocalGoober
 //
 // This file is part of GooberCord.
 //
@@ -126,7 +126,7 @@ async function sessionFixtures(role = "member") {
     avatar_version: null,
     totp_enabled: 0,
   };
-  return { token, row, headers: { Cookie: "__Host-goober_session=" + token, "X-CSRF-Token": csrf } };
+  return { token, row, headers: { Cookie: "goober_session=" + token, "X-CSRF-Token": csrf } };
 }
 const sessionRoute = (row) => ({ test: SESSION_READ_TEST, first: async () => row });
 // attachmentCapBytes' read: a full-plus term by default here (the lane's rider).
@@ -226,14 +226,8 @@ test("the part intake: the first part slices into 16 staged chunk rows and NO ro
 
   const batch = db.calls.find((call) => call.call === "batch");
   assert.ok(batch);
-  // T10 F3: the staging flush LEADS the batch (one self-healing DELETE that
-  // bounds the caller's staging at the only write point), then the part's 16
-  // chunk rows.
-  assert.equal(batch.statements.length, GC_UPLOAD_PART_CHUNKS + 1, "the flush + exactly 16 chunk rows");
-  assert.match(batch.statements[0].sql, /DELETE FROM gc_upload_parts WHERE uploader_id = \? AND \(upload_id, seq\) NOT IN/);
-  assert.match(batch.statements[0].sql, /ORDER BY created_at DESC, seq DESC LIMIT 4096/);
-  assert.deepEqual(batch.statements[0].bound, [USER_ID, USER_ID]);
-  batch.statements.slice(1).forEach((statement, index) => {
+  assert.equal(batch.statements.length, GC_UPLOAD_PART_CHUNKS, "a full part is exactly 16 chunk rows");
+  batch.statements.forEach((statement, index) => {
     assert.match(statement.sql, /INSERT OR REPLACE INTO gc_upload_parts/);
     assert.equal(statement.bound[0], body.uploadId);
     assert.equal(statement.bound[1], USER_ID);
@@ -274,11 +268,9 @@ test("continuations require the SAME member's staged upload; a foreign id is the
     }),
     envWithLimiters({ GOOBER_DB: db }),
   )).status, 200);
-  // The continuation's slice starts at part 1's chunk grid (after the flush
-  // statement the T10 F3 cap leads every intake batch with).
+  // The continuation's slice starts at part 1's chunk grid.
   const secondBatch = db.calls.filter((call) => call.call === "batch")[1];
-  assert.match(secondBatch.statements[0].sql, /DELETE FROM gc_upload_parts/);
-  assert.equal(secondBatch.statements[1].bound[2], GC_UPLOAD_PART_CHUNKS, "part 1's rows start at chunk seq 16");
+  assert.equal(secondBatch.statements[0].bound[2], GC_UPLOAD_PART_CHUNKS, "part 1's rows start at chunk seq 16");
 
   // A foreign uploadId (never staged by anyone) 404s and writes nothing: the
   // ownership marker is the staging table's own first row.
@@ -343,7 +335,6 @@ test("the COMMIT verifies, sniffs from the staged first chunk, births the pendin
   // part-sized total).
   const commitDb = fakeDb([
     sessionRoute(fixture.row),
-    plusTierRoute("plus"),
     {
       test: STAGING_VERIFY_TEST,
       first: async () => ({ n: 6 * GC_UPLOAD_PART_CHUNKS, lo: 0, hi: 6 * GC_UPLOAD_PART_CHUNKS - 1, totalSize: LARGE_TOTAL, firstShort: null }),
@@ -409,7 +400,7 @@ function pngChunkHead() {
 
 test("the COMMIT's verification: a hole, a misplaced short row, a disputed sum, or a non-image never writes a row", async () => {
   const { row: sessionRows, headers } = await sessionFixtures();
-  const commitWith = (aggregate, head, tierRoute = plusTierRoute("plus")) =>
+  const commitWith = (aggregate, head) =>
     dispatchUploads(
       new Request(ORIGIN + "/api/uploads/BBBBBBBBBBBB/commit", {
         method: "POST",
@@ -418,19 +409,10 @@ test("the COMMIT's verification: a hole, a misplaced short row, a disputed sum, 
       }),
       envWithLimiters({ GOOBER_DB: fakeDb([
         sessionRoute(sessionRows),
-        tierRoute,
         { test: STAGING_VERIFY_TEST, first: aggregate ? async () => aggregate : null },
         { test: STAGING_HEAD_TEST, first: async () => ({ data: head ?? pngChunkHead() }) },
       ]) }),
     );
-
-  // The tier gate re-check (T10 F2-LOW rider): a lapsed term (a free or mini
-  // pair at commit time) refuses with the 403 and NEVER reaches the
-  // aggregate — the gate sits before every other read, so a downgraded
-  // member cannot convert their staging into a born row.
-  const downgraded = await commitWith({ n: 96, lo: 0, hi: 95, totalSize: LARGE_TOTAL, firstShort: null }, pngChunkHead(), plusTierRoute("mini"));
-  assert.equal(downgraded.status, 403);
-  assert.match(await downgraded.text(), /Large-file uploads are a full Goober\+ perk/);
 
   // A hole in the staged seq run: a short row rides at 48, not the tail
   // (n = 95 of the lawful 96 — the client can retry part 5).
@@ -468,7 +450,6 @@ test("a staged set that raced past the verify read: the folded arms answer 400 w
   const { row: sessionRows, headers } = await sessionFixtures();
   const db = fakeDb([
     sessionRoute(sessionRows),
-    plusTierRoute("plus"),
     { test: STAGING_VERIFY_TEST,
       first: async () => ({ n: 96, lo: 0, hi: 95, totalSize: LARGE_TOTAL, firstShort: null }) },
     { test: STAGING_HEAD_TEST, first: async () => ({ data: pngChunkHead() }) },
@@ -599,7 +580,7 @@ test("the status gate precedes every byte: an outsider on a pending row is the s
   const outsiderToken = randomToken();
   const outsiderRow = { ...sessionRows, token_hash: await sha256Hex(outsiderToken), user_id: 999 };
   const outsider = await dispatchMedia(
-    new Request(ORIGIN + "/api/attachments/" + LARGE_ROW_ID, { headers: { Cookie: "__Host-goober_session=" + outsiderToken } }),
+    new Request(ORIGIN + "/api/attachments/" + LARGE_ROW_ID, { headers: { Cookie: "goober_session=" + outsiderToken } }),
     envWithLimiters({ GOOBER_DB: fakeDb([
       { test: SESSION_READ_TEST, first: async () => outsiderRow },
       { test: ATTACHMENT_ROW_TEST, first: async () => pendingRow },

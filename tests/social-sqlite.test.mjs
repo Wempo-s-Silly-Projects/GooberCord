@@ -1,4 +1,4 @@
-// Copyright 2026 ItsWempo
+// Copyright 2026 YourLocalGoober
 //
 // This file is part of GooberCord.
 //
@@ -105,7 +105,7 @@ async function handle(request, env) {
 const SESSION_TOKEN = "g".repeat(40);
 
 function sessionHeaders() {
-  return { Cookie: "__Host-goober_session=" + SESSION_TOKEN };
+  return { Cookie: "goober_session=" + SESSION_TOKEN };
 }
 
 test("/api/friends executes against the applied schema and returns the three facets", async () => {

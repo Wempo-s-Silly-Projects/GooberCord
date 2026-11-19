@@ -1,4 +1,4 @@
-// Copyright 2026 ItsWempo
+// Copyright 2026 YourLocalGoober
 //
 // This file is part of GooberCord.
 //
@@ -98,7 +98,7 @@ async function sessionFixtures(role = "member") {
     avatar_version: null,
     totp_enabled: 0,
   };
-  return { token, row, headers: { Cookie: "__Host-goober_session=" + token, "X-CSRF-Token": csrf } };
+  return { token, row, headers: { Cookie: "goober_session=" + token, "X-CSRF-Token": csrf } };
 }
 const sessionRoute = (row) => ({ test: SESSION_READ_TEST, first: async () => row });
 
@@ -301,7 +301,7 @@ test("channel pins GET, wired fake: newest-first payload, the grouped reads, the
   const env = envWithLimiters({ GOOBER_DB: db });
   void readLayer;
   const response = await handleMessageRoutes(
-    new Request(ORIGIN + "/api/channels/3/pins", { headers: { Cookie: "__Host-goober_session=" + token } }),
+    new Request(ORIGIN + "/api/channels/3/pins", { headers: { Cookie: "goober_session=" + token } }),
     env,
     new URL(ORIGIN + "/api/channels/3/pins"),
     "/api/channels/3/pins",
@@ -443,7 +443,7 @@ test("the history tail acks: GET without a cursor advances the caller's marker t
       all: async () => ({ results: [] }) },
   ]);
   const response = await handleMessageRoutes(
-    new Request(ORIGIN + "/api/channels/5/messages", { headers: { Cookie: "__Host-goober_session=" + token } }),
+    new Request(ORIGIN + "/api/channels/5/messages", { headers: { Cookie: "goober_session=" + token } }),
     envWithLimiters({ GOOBER_DB: db }),
     new URL(ORIGIN + "/api/channels/5/messages"),
     "/api/channels/5/messages",
@@ -476,7 +476,7 @@ test("a cursor read (a history walk) never acks, and an empty tail acks nothing"
       all: async () => ({ results: [] }) },
   ]);
   const response = await handleMessageRoutes(
-    new Request(ORIGIN + "/api/channels/5/messages?after=20", { headers: { Cookie: "__Host-goober_session=" + token } }),
+    new Request(ORIGIN + "/api/channels/5/messages?after=20", { headers: { Cookie: "goober_session=" + token } }),
     envWithLimiters({ GOOBER_DB: db }),
     new URL(ORIGIN + "/api/channels/5/messages?after=20"),
     "/api/channels/5/messages",
@@ -497,7 +497,7 @@ test("a cursor read (a history walk) never acks, and an empty tail acks nothing"
       all: async () => ({ results: [] }) },
   ]);
   const emptyTail = await handleMessageRoutes(
-    new Request(ORIGIN + "/api/channels/5/messages", { headers: { Cookie: "__Host-goober_session=" + token } }),
+    new Request(ORIGIN + "/api/channels/5/messages", { headers: { Cookie: "goober_session=" + token } }),
     envWithLimiters({ GOOBER_DB: empty }),
     new URL(ORIGIN + "/api/channels/5/messages"),
     "/api/channels/5/messages",

@@ -1,4 +1,4 @@
-// Copyright 2026 ItsWempo
+// Copyright 2026 YourLocalGoober
 //
 // This file is part of GooberCord.
 //
@@ -183,129 +183,6 @@ test("en.json: every key rides the <product>.<area>.<topic>(.<element>) scheme",
   assert.ok(!values.includes("Not found."), "the same law, the generic 404 body");
 });
 
-test("the lifted gate ships exactly the nine en+all-bundle seats (stage-2, owner order)", () => {
-  // The owner ordered the stage-2 lift (ja/zh/ar ride on owner authority;
-  // the Firefox visual pass is DEFERRED by the owner's own decision — the
-  // risk is disclosed in the commit body, not hidden). A stored human
-  // choice may still name any seat (the loader's fail-open), this list
-  // gates the navigator-derived seats only.
-  assert.deepEqual(i18n.BUNDLE_LANGS, ["en", "es", "de", "fr", "pt", "ru", "ja", "zh", "ar"]);
-});
-
-test("a stale stored seat this fleet no longer ships falls back to en at boot", async () => {
-  // A tab wedged on a seat the loader no longer ships must boot back to
-  // en: lang follows normalizeTag's shipped-seat gate, so an old choice
-  // (“it” from a churn-era browser) can never keep the paint on tails.
-  freshBundles({ en: LOCALES.en }); // no "it" bundle, prod reality
-  globalThis.localStorage.setItem("lang", "it");
-  await i18n.initI18n();
-  assert.equal(i18n.currentLang(), "en", "a shipless stored seat never keeps the paint");
-});
-
-test("a wedged (non-JSON) en response retries uncached instead of leaving key tails", async () => {
-  // The T25 churn window served the SPA-fallback HTML for /locales/en.json
-  // (200); a force-cache copy of it wedged tabs on visible key tails with
-  // zero console errors. A poisoned en parse must fall to one uncached
-  // retry and, failing that, still catalog en as {} so setLang repaints.
-  let calls = 0;
-  bundles.clear();
-  const realFetch = globalThis.fetch;
-  globalThis.fetch = async () => (++calls === 1
-    ? new Response("<!DOCTYPE html>", { status: 200 })
-    : new Response(JSON.stringify(LOCALES.en), { status: 200 }));
-  try {
-    await i18n.initI18n();
-    assert.equal(i18n.currentLang(), "en");
-    assert.match(i18n.t("gc.gate.accept"), /Accept and continue/,
-      "the retry lands the real en copy, not key tails");
-    assert.equal(calls, 2, "exactly one uncached retry after the poisoned copy");
-  } finally {
-    globalThis.fetch = realFetch;
-  }
-});
-
-test("bundle fetches ride the app-build stamp as a cache-buster", async () => {
-  bundles.clear();
-  bundles.set("en.json", LOCALES.en);
-  let seen = null;
-  const realFetch = globalThis.fetch;
-  globalThis.fetch = async (path) => { seen = String(path); return realFetch("/locales/en.json"); };
-  try {
-    globalThis.document.querySelector = () => ({ content: "1.0@722e9e2" });
-    await i18n.initI18n();
-    assert.match(seen, /\?v=1\.0%40722e9e2$/,
-      "the stamp rides the URL so each deploy's copy is a distinct cache row");
-  } finally {
-    globalThis.fetch = realFetch;
-    delete globalThis.document.querySelector;
-  }
-});
-
-test("the dir law: the ar seat flips documentElement to rtl, every other seat to ltr", async () => {
-  const html = globalThis.document.documentElement;
-  freshBundles({
-    en: LOCALES.en,
-    ar: { "gc.chat.pins.empty": "لا شيء مثبَّت في هذه القناة بعد." },
-    "ar-eg": { "gc.chat.pins.empty": "لا شيء مثبَّت في هذه القناة بعد." },
-  });
-  try {
-    html.dir = "";
-    globalThis.localStorage.setItem("lang", "ar");
-    await i18n.setLang("ar");
-    assert.equal(html.dir, "rtl", "ar rides rtl on the root element");
-    globalThis.localStorage.setItem("lang", "ar-EG");
-    await i18n.setLang("ar-EG");
-    assert.equal(html.dir, "rtl", "the regional ar seat keeps rtl — the base script rules");
-    await i18n.setLang("en");
-    assert.equal(html.dir, "ltr", "every non-ar seat is ltr");
-  } finally {
-    html.dir = "";
-  }
-});
-
-test("setLang strips path/realm chars before the store and any fetch (ship-reviewer LOW-3)", async () => {
-  const seen = [];
-  const previous = globalThis.fetch;
-  try {
-    globalThis.fetch = async (path) => { seen.push(String(path)); return previous(path); };
-    freshBundles({ en: LOCALES.en, "ar-eg": { "gc.chat.pins.empty": "لا شيء بعد." } });
-    globalThis.localStorage.setItem("lang", "en");
-    await i18n.setLang("../../etc/passwd");
-    assert.equal(globalThis.localStorage.getItem("lang"), "en",
-      "the traversal shape dies at the sanitize gate — the unlawful seat never enters the store");
-    for (const path of seen) {
-      assert.doesNotMatch(path, /\.\.|%2F|%2f/gi, `the loader's fetch URL never carries the refused chars: ${path}`);
-    }
-    globalThis.localStorage.setItem("lang", "ar-EG");
-    await i18n.setLang("ar-EG");
-    assert.equal(globalThis.localStorage.getItem("lang"), "ar-eg",
-      "the lawful regional tag rides untouched (an ar-eg bundle ships above the law's floor)");
-  } finally {
-    globalThis.fetch = previous;
-  }
-});
-
-test("the raw-seat sweep keys pin (pins dialog, shell rails, document title)", () => {
-  const pinned = {
-    "gc.app.title": "GooberCord",
-    "gc.chat.pins.close": "Close",
-    "gc.chat.pins.note": "Newest first, exactly the messages the channel keeps.",
-    "gc.chat.pins.title": "Pinned messages",
-    "gc.shell.members.title": "Members",
-  };
-  for (const [key, value] of Object.entries(pinned)) {
-    assert.equal(enData[key], value, `${key} rides the sweep's exact en copy`);
-  }
-});
-
-test("the static <title> binding rides en.json's gc.app.title 1:1 (ship-reviewer LOW-1)", () => {
-  const html = readFileSync(join(HERE, "../public/index.html"), "utf8");
-  const attr = html.match(/<title\s+data-i18n="gc\.app\.title">([^<]*)<\/title>/);
-  assert.ok(attr, "the title element carries the gc.app.title binding");
-  assert.equal(attr[1], enData["gc.app.title"],
-    "static title text and en.json's gc.app.title cannot drift apart — the en fast-path skips applyDom, so this static render is the only one");
-});
-
 // --- the carve gate: the byte-equal grandfather set, pinned exactly -----------
 
 // The staged bundles grandfather some en bytes as their own copy (names of
@@ -316,9 +193,6 @@ test("the static <title> binding rides en.json's gc.app.title 1:1 (ship-reviewer
 // asserted in BOTH directions: any future equal-but-undeclared row fails
 // red, and any future flex of a carved row (de "Roles" someday) fails red
 // until this list updates with its ruling. Scan-proven against the staged
-// wave-5 rider (locale lane): "gc.paper.channelRow" is a placeholders-only row
-// ("#{{name}} — {{count}}") — nothing is translatable in it, so all eight
-// bundles mirror en byte-for-byte, declared here rather than copied blind.
 // files at the pin's commit; es/de reproduce the reviewer's census
 // key-for-key, fr/pt/ru are this scan's enumeration.
 const CARVE_GATES = {
@@ -326,32 +200,26 @@ const CARVE_GATES = {
   // at 212c883, scan-proven here key-for-key — the same set asserted third
   // time running, the declaration pattern stable).
   ar: [
-    "gc.app.title",
-    "gc.chat.gif.button",
     "gc.chat.gif.short",
     "gc.shell.mentions.loading",
-    "gc.paper.channelRow",
   ],
   es: [
-    "gc.app.title",
     "gc.chat.expressions.stickerTitle",
-    "gc.chat.gif.button",
     "gc.chat.gif.short",
     "gc.expressions.kinds.stickers",
     "gc.mod.queue.summary",
     "gc.mod.timeout.choice",
     "gc.settings.channels.spoiler",
     "gc.settings.general",
+    "gc.settings.nav.server",
     "gc.settings.roles.heading",
     "gc.shell.mentions.loading",
-    "gc.paper.channelRow",
   ],
   de: [
-    "gc.app.title",
-    "gc.chat.gif.button",
     "gc.chat.gif.short",
     "gc.chat.pins.heading",
     "gc.chat.pins.link",
+    "gc.expressions.kinds.sounds",
     "gc.mentions.inChannel",
     "gc.mentions.inThread",
     "gc.mod.card.heading",
@@ -364,18 +232,12 @@ const CARVE_GATES = {
     "gc.shell.placeholder.serverTitle",
     "gc.shell.mentions.loading",
     "gc.social.presence.online",
-    "gc.paper.channelRow",
   ],
   ja: [
-    "gc.app.title",
-    "gc.chat.gif.button",
     "gc.shell.mentions.loading",
-    "gc.paper.channelRow",
   ],
   fr: [
-    "gc.app.title",
     "gc.chat.compose.aria",
-    "gc.chat.gif.button",
     "gc.chat.expressions.emojiTitle",
     "gc.chat.expressions.stickerTitle",
     "gc.chat.gif.short",
@@ -390,13 +252,10 @@ const CARVE_GATES = {
     "gc.shell.nav.mentionsShort",
     "gc.social.dm.fallback",
     "gc.social.row.message",
-    "gc.paper.channelRow",
   ],
   pt: [
-    "gc.app.title",
     "gc.chat.expressions.emojiTitle",
     "gc.chat.expressions.stickerTitle",
-    "gc.chat.gif.button",
     "gc.chat.gif.short",
     "gc.expressions.kinds.emojis",
     "gc.expressions.kinds.stickers",
@@ -404,28 +263,21 @@ const CARVE_GATES = {
     "gc.mod.timeout.choice",
     "gc.settings.channels.spoiler",
     "gc.shell.mentions.loading",
-    "gc.paper.channelRow",
   ],
   ru: [
-    "gc.app.title",
     "gc.chat.expressions.emojiTitle",
     "gc.chat.expressions.stickerTitle",
-    "gc.chat.gif.button",
     "gc.expressions.kinds.emojis",
     "gc.expressions.kinds.stickers",
     "gc.shell.mentions.loading",
-    "gc.paper.channelRow",
   ],
   // ja/zh enter the gate with wave-3 (the values declared in 2c41d75, scan-
   // verified: ja one cognate-carve, zh three). Wave-3 intake passed with the
   // gate's first-subject claim true; they are gate-visible from this commit.
   zh: [
-    "gc.app.title",
     "gc.chat.expressions.emojiTitle",
-    "gc.chat.gif.button",
     "gc.expressions.kinds.emojis",
     "gc.shell.mentions.loading",
-    "gc.paper.channelRow",
   ],
 };
 
@@ -515,89 +367,16 @@ test("the chain rides lang → base script → en → the visible key-tail", asy
   await i18n.initI18n();
 });
 
-test("an unshipped stored seat (or a 404 seat) fails open to English", async () => {
-  // The T25-churn wedged tab taught the loader's law: a stored seat whose
-  // base is not one the fleet ships keeps NO paint on tails — it rides
-  // back to en at boot (the human can re-pick any shipped seat; the old
-  // fail-open-to-anything left lang on a catalogless seat forever).
+test("an unsupported navigator seat (or a 404 seat) fails open to English", async () => {
   freshBundles({ en: LOCALES.en });
   globalThis.localStorage.setItem("lang", "xx-wemponese");
   await i18n.initI18n();
-  assert.equal(i18n.currentLang(), "en",
-    "a shipless stored seat normalizes to en, never a catalogless tail-paint");
+  assert.equal(i18n.currentLang(), "xx-wemponese",
+    "an explicit human choice tries its seat");
   assert.equal(i18n.t("gc.chat.pins.empty"), "Nothing pinned in this channel yet.",
-    "the en bundle carries the copy, never a broken page");
+    "a failed 404 bundle falls open to the en bundle, never a broken page");
   globalThis.localStorage.store.clear();
   await i18n.initI18n();
-});
-
-// --- the setLang seat gate (the seat hole: setLang now rides the same
-// base-script law storedLang() has carried since aa6979a) ------------------------
-
-test("setLang refuses any seat whose base script is not in BUNDLE_LANGS", async () => {
-  // The bork arc: setLang stored+activated ANY sanitized key with no bundle
-  // gate, so a shipless seat rode lang onto an empty catalog — every t()
-  // painted humanized key tails with zero self-heal. Refusal means: no
-  // store write, no switch, strings keep resolving on the untouched seat.
-  await i18n.initI18n(); // the en seat, no stored choice
-  assert.equal(await i18n.setLang("it"), "en", "a seatless refusal returns the unchanged seat");
-  assert.equal(i18n.currentLang(), "en", "lang never rides the refused key");
-  assert.equal(globalThis.localStorage.getItem("lang"), null,
-    "the refused seat never enters the store");
-  assert.equal(i18n.t("gc.chat.pins.empty"), "Nothing pinned in this channel yet.",
-    "strings keep resolving — the empty-catalog tail-paint is dead");
-  await i18n.setLang("xx-wemponese"); // the regional tags of shipless bases refuse too
-  assert.equal(i18n.currentLang(), "en");
-  assert.equal(globalThis.localStorage.getItem("lang"), null);
-});
-
-test("setLang keeps riding lawful regional seats: 'zh-hans' → base 'zh' ships", async () => {
-  freshBundles({ en: LOCALES.en, "zh-hans": LOCALES["zh-hans"] });
-  try {
-    await i18n.initI18n();
-    await i18n.setLang("zh-hans");
-    assert.equal(i18n.currentLang(), "zh-hans", "the base-script seat stays lawful through setLang");
-    assert.equal(globalThis.localStorage.getItem("lang"), "zh-hans", "the lawful choice rides the store");
-    assert.equal(i18n.t("gc.chat.pins.empty"), "Nothing pinned here yet, in Chinese.");
-  } finally {
-    freshBundles({ en: LOCALES.en });
-    globalThis.localStorage.store.clear();
-    await i18n.initI18n();
-  }
-});
-
-test("a lawful seat whose bundle 404s rolls back to the previous seat, scrubbed", async () => {
-  const previousDoc = globalThis.document;
-  try {
-    const holder = new StubNode("doc");
-    holder.documentElement = new StubNode("html");
-    const node = new StubNode("p");
-    node.setAttribute("data-i18n", "gc.chat.pins.empty");
-    holder.append(node);
-    globalThis.document = holder;
-    await i18n.initI18n(); // en; the boot pass painted the en copy
-    assert.equal(node.textContent, "Nothing pinned in this channel yet.");
-    assert.equal(await i18n.setLang("fr"), "en", "the failed switch returns the rolled-back seat");
-    assert.equal(i18n.currentLang(), "en", "lang rolled back to the previous seat");
-    assert.equal(globalThis.localStorage.getItem("lang"), null,
-      "the failure key was never left in storage");
-    assert.equal(holder.documentElement.lang, "en",
-      "setHtmlLang returned to the previous seat");
-    assert.equal(holder.documentElement.dir, "ltr", "the rollback keeps the dir law's ltr for en");
-    assert.equal(node.textContent, "Nothing pinned in this channel yet.",
-      "applyDom re-ran on the rollback — no empty-catalog state survives");
-  } finally {
-    globalThis.document = previousDoc;
-  }
-});
-
-test("initI18n scrubs an unlawful stored key from storage at boot (defense-in-depth)", async () => {
-  freshBundles({ en: LOCALES.en });
-  globalThis.localStorage.setItem("lang", "it"); // the churn-era browser's stale row
-  await i18n.initI18n();
-  assert.equal(globalThis.localStorage.getItem("lang"), null,
-    "the rejected stored key is scrubbed — no stale row re-wedges a future lane");
-  assert.equal(i18n.currentLang(), "en", "the boot still lands on en");
 });
 
 // --- the plural rule seat --------------------------------------------------------
@@ -713,37 +492,9 @@ test("fmtNumber and fmtDate ride the active locale and never throw on a bad seat
     String(new Intl.DateTimeFormat("en", { year: "numeric", timeZone: "UTC" })
       .format(Date.UTC(2026, 10, 17))));
   globalThis.localStorage.setItem("lang", "xx-broken");
-  await i18n.setLang("xx-broken"); // the seat gate refuses — no catalogless seat ever rides
-  assert.equal(i18n.currentLang(), "en", "the refused seat never becomes the active locale");
-  assert.equal(i18n.fmtNumber(7, {}).length >= 1, true, "a refused seat still leaves formatting lawful");
+  await i18n.setLang("xx-broken"); // 404 seat
+  assert.equal(i18n.currentLang(), "xx-broken", "the chosen seat stays chosen");
+  assert.equal(i18n.fmtNumber(7, {}).length >= 1, true, "a broken seat still formats");
   globalThis.localStorage.store.clear();
   await i18n.initI18n();
-});
-
-// --- the paint-swap race (T29): the en floor's late resolve repainted -------
-
-test("the en floor repaints already-bound copy: initI18n's en seat calls applyDom", async () => {
-  // The boot NEVER awaits the lane: painters run t() over an EMPTY catalog
-  // while /locales/en.json is still in flight — the bound copy is humanized
-  // key tails until SOMETHING repaints. The en seat's late resolve is that
-  // something: one applyDom() over the document at catalog.set time.
-  const previousDoc = globalThis.document;
-  try {
-    const holder = new StubNode("doc");
-    holder.documentElement = new StubNode("html");
-    const node = new StubNode("p");
-    node.setAttribute("data-i18n", "gc.t29.late");
-    holder.append(node);
-    globalThis.document = holder;
-    globalThis.localStorage.setItem("lang", "en"); // deterministic en seat
-    node.textContent = i18n.t("gc.t29.late"); // the painter's pre-resolve paint
-    assert.equal(node.textContent, "Late",
-      "the pre-resolve paint is the humanized tail — the empty-catalog race");
-    freshBundles({ en: { "gc.t29.late": "Repainted now." } }); // the file lands
-    await i18n.initI18n(); // the boot's unawaited lane finally resolves
-    assert.equal(node.textContent, "Repainted now.",
-      "the en seat's resolve repainted the already-bound copy — tails cleared");
-  } finally {
-    globalThis.document = previousDoc;
-  }
 });

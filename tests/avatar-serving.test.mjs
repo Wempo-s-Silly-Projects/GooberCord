@@ -1,4 +1,4 @@
-// Copyright 2026 ItsWempo
+// Copyright 2026 YourLocalGoober
 //
 // This file is part of GooberCord.
 //
@@ -170,18 +170,18 @@ test("a pending-only avatar serves to its owner and to staff, no-store; others 4
     "a guest never sees a pending upload",
   );
 
-  const owner = await serve(env, "/api/avatars/8", { Cookie: "__Host-goober_session=" + ownerToken });
+  const owner = await serve(env, "/api/avatars/8", { Cookie: "goober_session=" + ownerToken });
   assert.equal(owner.status, 200);
   assert.equal(owner.headers.get("Cache-Control"), "no-store");
 
-  const staff = await serve(env, "/api/avatars/8", { Cookie: "__Host-goober_session=" + staffToken });
+  const staff = await serve(env, "/api/avatars/8", { Cookie: "goober_session=" + staffToken });
   assert.equal(staff.status, 200);
   assert.equal(staff.headers.get("Cache-Control"), "no-store");
 
   // A member who is neither the owner nor staff — even signed in — 404s.
   const otherToken = await addSession(9);
   await assert.rejects(
-    () => serve(env, "/api/avatars/8", { Cookie: "__Host-goober_session=" + otherToken }),
+    () => serve(env, "/api/avatars/8", { Cookie: "goober_session=" + otherToken }),
     (error) => error.status === 404,
   );
 });
@@ -196,7 +196,7 @@ test("a re-upload over an approved avatar serves the approved bytes publicly", a
   // The uploader themselves still lands on the pending candidate over the
   // approved one (the candidate is what reviews must see).
   const meToken = await addSession(9);
-  const me = await serve(env, "/api/avatars/9", { Cookie: "__Host-goober_session=" + meToken });
+  const me = await serve(env, "/api/avatars/9", { Cookie: "goober_session=" + meToken });
   assert.equal(me.status, 200);
   assert.equal(me.headers.get("Cache-Control"), "no-store");
 });

@@ -1,4 +1,4 @@
-// Copyright 2026 ItsWempo
+// Copyright 2026 YourLocalGoober
 //
 // This file is part of GooberCord.
 //
@@ -45,8 +45,6 @@
 import { requireSignedInRead, requireUser } from "./core/auth.mjs";
 import { nowSeconds, randomToken } from "./core/crypto.mjs";
 import { HttpError, json, rateLimit, readJson, requiredText } from "./core/http.mjs";
-import { handleConsumeBoostsRoute } from "./boost.mjs";
-import { handleApplyGroveRoute } from "./starter-grove.mjs";
 import {
   GC_CATEGORIES_MAX_PER_SERVER,
   GC_INVITES_MAX_PER_SERVER,
@@ -81,7 +79,7 @@ import {
 // upload (magic bytes, structural sanitizer, 64k chunks, pending moderation)
 // and the same multipart reader — no new storage SQL, no second gate to have
 // drifted away from the attachment one.
-import { createAttachment, deleteAttachmentObject, readMultipartWithImage } from "./media.mjs";
+import { createAttachment, readMultipartWithImage } from "./media.mjs";
 // The search's per-hit VIEW gate rides the shared layer machinery (one
 // boolean, never the throwing route gate — a denied hit is DROPPED, not a
 // page-kill).
@@ -115,7 +113,6 @@ import {
   normalizeUsernameForFilter,
 } from "./filter.mjs";
 import { ensureFilterWords, filterWords } from "./filterstore.mjs";
-import { recordJobProgress } from "./jobs.mjs";
 
 // gc_servers/gc_channels CHECK(length(trim(name)) BETWEEN 1 AND 100); the
 // route-side limit mirrors it so oversized names 400 instead of 500-ing on the
@@ -869,8 +866,8 @@ async function handleCreateChannelRoute(request, env, serverId) {
   const session = await requireUser(request, env);
   const body = await readJson(request);
 
-  if (body.kind !== "text" && body.kind !== "voice" && body.kind !== "announcement") {
-    throw new HttpError(400, "Channel kind must be text, voice or announcement.");
+  if (body.kind !== "text" && body.kind !== "voice") {
+    throw new HttpError(400, "Channel kind must be either text or voice.");
   }
 
   const name = requiredText(body.name, "channel name", CHANNEL_NAME_MAX);
@@ -992,10 +989,6 @@ export const INVITE_MAX_USES_MAX = 100;
 // The list is a mod-desk read, not a page: servers mint few invites; the cap
 // is a safety rail, newest first.
 export const INVITE_LIST_LIMIT = 500;
-// The join-honeypot field name (T32): the join render's hidden decoy input
-// carries this name, so the render and the drop read agree by import — never
-// by a re-typed string.
-export const JOIN_HONEYPOT_FIELD = "hp";
 
 // The ONE active predicate (0017) the join lookup, the join INSERT's guard and
 // the uses-bump's WHERE all share — a join racing an expiry or a use cap can
@@ -1118,22 +1111,11 @@ const INVITE_JOIN_INSERT_SQL =
     " AND (SELECT COUNT(*) FROM gc_server_members ijw WHERE ijw.user_id = ?) < " +
       "(CASE WHEN EXISTS (SELECT 1 FROM gc_plus_state ijp WHERE ijp.user_id = ? AND ijp.renews_until > ?)" +
       " THEN " + GC_SERVERS_JOIN_MAX_PLUS + " ELSE " + GC_SERVERS_JOIN_MAX_FREE + " END)";
+const INVITE_USES_BUMP_SQL =
+  "UPDATE gc_invites SET uses = uses + 1 WHERE code = ? AND " + INVITE_ACTIVE_SQL;
 
 const BANNED_JOIN_SQL =
   "SELECT 1 AS banned FROM gc_server_bans WHERE server_id = ? AND user_id = ? LIMIT 1";
-// The bump (T10 R1) rides the SAME batch as the membership INSERT — D1 batch
-// is one transaction, so a concurrent join serializes behind the first and
-// its own active-predicate EXISTS re-reads the bumped uses (the pre-batch
-// window between INSERT and a separate UPDATE let two joins both pass
-// `uses < max_uses`). The member-row EXISTS keeps the claim honest, and it is
-// scoped to joined_at = THIS request's seconds: a re-join's surviving member
-// row predates the request, so only a join that LANDED IN THIS BATCH moves
-// uses (a failed/re-join burns nothing). No stale-row collision is possible —
-// a departed member's row is deleted, never left for a same-second re-join
-// to match.
-const INVITE_USES_BUMP_SQL =
-  "UPDATE gc_invites SET uses = uses + 1 WHERE code = ? AND " + INVITE_ACTIVE_SQL +
-  " AND EXISTS (SELECT 1 FROM gc_server_members ium WHERE ium.server_id = ? AND ium.user_id = ? AND ium.joined_at = ?)";
 
 // The changes=0 classification the two join routes share: already a member is
 // the idempotent joined:false; a ban row answers the dedicated banned 403;
@@ -1161,23 +1143,6 @@ async function handleInviteJoinRoute(request, env, code) {
   const userId = Number(session.user.id);
   const now = nowSeconds();
 
-  // The raid bound (T30): every join attempt rides the write bucket keyed to
-  // the CALLER (not the code — one account can't storm joins across invites),
-  // ahead of the invite lookup, so a dead code burns the tick too. The seat
-  // that issued the session bounded the swarm's login; this bounds its joins.
-  await rateLimit(request, env, "write", "join:" + userId);
-
-  // The join honeypot (T32): a bot that paints forms fills the hidden decoy
-  // field too. A non-empty string under JOIN_HONEYPOT_FIELD is the drop
-  // signal — the SAME flat 404 an invalid code answers, ZERO db calls (the
-  // lookup never runs), zero writes — so the trap is fully invisible and the
-  // hit's only trace rides the limiter binding above. Empty string / number /
-  // absent body are the human's untouched placeholder, not a hit.
-  const body = (await request.json().catch(() => null)) || {};
-  if (typeof body[JOIN_HONEYPOT_FIELD] === "string" && body[JOIN_HONEYPOT_FIELD] !== "") {
-    throw new HttpError(404, "That invite is no longer valid.");
-  }
-
   const invite = await env.GOOBER_DB.prepare(INVITE_JOIN_SELECT_SQL)
     .bind(code, now).first();
 
@@ -1190,32 +1155,22 @@ async function handleInviteJoinRoute(request, env, code) {
 
   const serverId = Number(invite.server_id);
   // The guarded INSERT (an already-member re-join is idempotent — joined:false
-  // and the uses counter does NOT move; only a fresh join counts) and the uses
-  // bump ride ONE batch: the transaction serializes concurrent joins, and the
-  // bump's member-row EXISTS makes the claim conditional on the join landing.
-  // The active predicate's two now binds ride beside the code inside the
-  // INSERT's EXISTS.
-  const [join] = await env.GOOBER_DB.batch([
-    env.GOOBER_DB.prepare(INVITE_JOIN_INSERT_SQL)
-      .bind(
-        serverId, userId, now, code, now, now,
-        serverId, userId, serverId, userId,
-        userId, userId, now,
-      ),
-    env.GOOBER_DB.prepare(INVITE_USES_BUMP_SQL)
-      .bind(code, now, serverId, userId, now),
-  ]);
+  // and the uses counter does NOT move; only a fresh join counts). The active
+  // predicate's two now binds ride beside the code inside the EXISTS.
+  const join = await env.GOOBER_DB.prepare(INVITE_JOIN_INSERT_SQL)
+    .bind(
+      serverId, userId, now, code, now, now,
+      serverId, userId, serverId, userId,
+      userId, userId, now,
+    ).run();
   const joined = Number(join.meta?.changes) === 1;
 
-  if (!joined) {
+  if (joined) {
+    await env.GOOBER_DB.prepare(INVITE_USES_BUMP_SQL).bind(code, now).run();
+  } else {
     return classifyRefusedJoin(env, serverId, userId, "That invite is no longer valid.", true);
   }
 
-  // The Goober Jobs join rider (T86): a landed invite join is the 'join'
-  // chore. Best-effort — a jobs miss only delays the finish.
-  await recordJobProgress(env, serverId, "join", 1, now).catch(() => {
-    /* a jobs miss only delays the finish */
-  });
   return json({ joined, serverId });
 }
 
@@ -1352,11 +1307,6 @@ async function handleDiscoverJoinRoute(request, env, serverId) {
     return classifyRefusedJoin(env, serverId, userId, "That server is not open for discovery.", false);
   }
 
-  // The Goober Jobs join rider (T86): a landed discovery join is the
-  // 'join' chore. Best-effort — a jobs miss only delays the finish.
-  await recordJobProgress(env, serverId, "join", 1, now).catch(() => {
-    /* a jobs miss only delays the finish */
-  });
   return json({ joined: true, serverId });
 }
 
@@ -1484,17 +1434,13 @@ async function handleCreateRoleRoute(request, env, serverId) {
 
   // The authority rider inside the INSERT ... SELECT (owner OR MANAGE_ROLES);
   // the position appends after the current max INSIDE the statement, never a
-  // client-roundtripped number. The role cap rides the same WHERE as a count
-  // precondition mirroring the channel cap's shape — 250 counts @everyone,
-  // which sits in no gc_roles row, so the EXPLICIT-row ceiling is 249: the
-  // insert must land INTO ≤ 248 existing rows (strictly below the ceiling),
-  // and the diagnostic read below keys on the same 249.
+  // client-roundtripped number.
   const ROLE_INSERT_SQL =
     "INSERT INTO gc_roles (server_id, name, color, position, permissions, created_at) " +
       "SELECT ?, ?, ?, " +
       "(SELECT COALESCE(MAX(position), -1) + 1 FROM gc_roles WHERE server_id = ?), ?, ? " +
       "WHERE (" + OWNER_EXISTS_SQL + " OR " + holdsRolesBitsSql(SERVER_PERMISSIONS.MANAGE_ROLES) + ") " +
-      "AND (SELECT COUNT(*) FROM gc_roles WHERE server_id = ?) < " +
+      "AND (SELECT COUNT(*) FROM gc_roles WHERE server_id = ?) <= " +
         (GC_ROLES_MAX_PER_SERVER - 1);
 
   const result = await env.GOOBER_DB.prepare(ROLE_INSERT_SQL)
@@ -1506,15 +1452,6 @@ async function handleCreateRoleRoute(request, env, serverId) {
     .run();
 
   if (Number(result.meta?.changes) !== 1) {
-    // Diagnostic only (the channel-create pattern): the count read picks the
-    // 400 from the cap, otherwise the refusal is the 403 it already was. The
-    // cap keys on 249 — the explicit-row ceiling (INSERT refuses from here).
-    const roleCount = await env.GOOBER_DB.prepare(
-      "SELECT COUNT(*) AS n FROM gc_roles WHERE server_id = ?",
-    ).bind(serverId).first();
-    if (roleCount && Number(roleCount.n) >= GC_ROLES_MAX_PER_SERVER - 1) {
-      throw new HttpError(400, "That server already has the maximum number of roles.");
-    }
     throw new HttpError(403, "You do not have permission to do that.");
   }
 
@@ -2854,18 +2791,9 @@ function channelManageGuard(serverId, actorId) {
   };
 }
 
-async function handleDeleteChannelRoute(request, env, serverId, channelId, ctx) {
+async function handleDeleteChannelRoute(request, env, serverId, channelId) {
   const session = await requireUser(request, env);
   const userId = Number(session.user.id);
-
-  // The doom list rides the pre-read discipline (no id is ever derived
-  // INSIDE a batch): the batch's guarded chunk/attachment statements purge
-  // exactly this channel's attachments, so the changes==1 verdict below
-  // dooms this whole list to the R2 delete rides.
-  const doomedAttachmentIds = ((await env.GOOBER_DB.prepare(
-    "SELECT a.id FROM gc_attachments a WHERE a.message_id IN " +
-      "(SELECT id FROM gc_messages WHERE channel_id = ?)",
-  ).bind(channelId).all()).results || []).map((row) => Number(row.id));
 
   // The channel's category BEFORE the delete rides the same diagnostics read
   // the PATCH's move uses, so an emptied folder can follow its channel out
@@ -2925,14 +2853,6 @@ async function handleDeleteChannelRoute(request, env, serverId, channelId, ctx) 
     throw new HttpError(403, "You do not have permission to do that.");
   }
 
-  // The R2 objects' bytes die with the D1 rows (the T-R2-WIPE rides): one
-  // delete per dooming id, gated on the ONE changes verdict above — best-
-  // effort, so a missed delete leaves a garbage-collectable orphan, never a
-  // dangling reference (D1 stays the authority).
-  for (const attachmentId of doomedAttachmentIds) {
-    await deleteAttachmentObject(env, ctx, attachmentId);
-  }
-
   // The emptied-folder cleanup (only where the deleted channel LEFT a folder):
   // the identical guarded NOT EXISTS delete the category move runs.
   if (sourceCategoryId !== null) {
@@ -2969,7 +2889,7 @@ async function handleDeleteChannelRoute(request, env, serverId, channelId, ctx) 
 // bytes.
 const SERVER_DELETE_ATTACHMENT_IDS_LIMIT = 127;
 
-async function handleDeleteServerRoute(request, env, serverId, ctx) {
+async function handleDeleteServerRoute(request, env, serverId) {
   const session = await requireUser(request, env);
   const userId = Number(session.user.id);
 
@@ -3086,22 +3006,6 @@ async function handleDeleteServerRoute(request, env, serverId, ctx) {
     }
 
     throw new HttpError(403, "You do not have permission to do that.");
-  }
-
-  // The R2 objects' bytes die with the D1 rows (the T-R2-WIPE rides),
-  // gated per-id on the verdict that id's D1 bytes actually died:
-  //   - the expression + message-attachment ids are doom-exact — every one
-  //     of their chunk statements carries the server-row guard, so
-  //     servers==1 means their bytes left;
-  //   - the icon alone is NOT guard-carried: a genuinely shared icon keeps
-  //     its bytes (the NOT-EXISTS discipline above, the parity the batch
-  //     itself draws), so its ride fires only when the icon attachment row
-  //     died (deleted.iconAttachments === 1, the same predicate the chunk
-  //     statement carries). A missed delete leaves a garbage-collectable
-  //     orphan, never a dangling reference (D1 stays the authority).
-  for (const attachmentId of doomedAttachmentIds) {
-    if (attachmentId === iconMediaId && deleted.iconAttachments !== 1) continue;
-    await deleteAttachmentObject(env, ctx, attachmentId);
   }
 
   return json({ ok: true, deleted });
@@ -3474,9 +3378,10 @@ async function handleListOverwritesRoute(request, env, serverId, channelId) {
 }
 
 export async function handleServerRoutes(request, env, url, path, method, ctx) {
-  // ctx (the worker's execution context) carries the background-work lane —
-  // the server/channel delete routes' R2 object deletes schedule through it.
+  // ctx (the worker's execution context) completes the dispatch loop's handler
+  // signature; these routes schedule no background work today.
   void url;
+  void ctx;
 
   if (path === "/api/servers" && method === "POST") {
     return handleCreateServerRoute(request, env);
@@ -3497,7 +3402,7 @@ export async function handleServerRoutes(request, env, url, path, method, ctx) {
     ? path.match(/^\/api\/servers\/(0|[1-9][0-9]*)$/)
     : null;
   if (serverDeleteMatch) {
-    return handleDeleteServerRoute(request, env, Number(serverDeleteMatch[1]), ctx);
+    return handleDeleteServerRoute(request, env, Number(serverDeleteMatch[1]));
   }
 
   const channelsMatch = method === "POST"
@@ -3505,29 +3410,6 @@ export async function handleServerRoutes(request, env, url, path, method, ctx) {
     : null;
   if (channelsMatch) {
     return handleCreateChannelRoute(request, env, Number(channelsMatch[1]));
-  }
-
-  // T78 (docs/drafts/t78-starter-grove-spec.md): the Grove apply — a template
-  // document seeds roles/channels/overwrites through the hand-rolled shapes
-  // (api/starter-grove.mjs); the module's own gate answers the 403 copy.
-  const groveMatch = method === "POST"
-    ? path.match(/^\/api\/servers\/(0|[1-9][0-9]*)\/grove$/)
-    : null;
-  if (groveMatch) {
-    return handleApplyGroveRoute(request, env, Number(groveMatch[1]));
-  }
-
-  // T79 (docs/drafts/t79-post-boost-spec.md): the mirrored-boost consume —
-  // pending gc_fleet_boosts render as cards into an announcement channel.
-  // The kind gate answers FIRST inside the handler (404 unknown / 409 other
-  // kinds), then the membership read, then the channel's SEND bit.
-  const consumeBoostsMatch = method === "POST"
-    ? path.match(/^\/api\/servers\/(0|[1-9][0-9]*)\/channels\/(0|[1-9][0-9]*)\/consume-boosts$/)
-    : null;
-  if (consumeBoostsMatch) {
-    return handleConsumeBoostsRoute(
-      request, env, Number(consumeBoostsMatch[1]), Number(consumeBoostsMatch[2]),
-    );
   }
 
   // --- phase-3 roles, roster, nicknames, kicks, spoiler channels ---------------
@@ -3674,7 +3556,7 @@ export async function handleServerRoutes(request, env, url, path, method, ctx) {
           request, env, Number(channelPatchMatch[1]), Number(channelPatchMatch[2]),
         )
       : handleDeleteChannelRoute(
-          request, env, Number(channelPatchMatch[1]), Number(channelPatchMatch[2]), ctx,
+          request, env, Number(channelPatchMatch[1]), Number(channelPatchMatch[2]),
         );
   }
 

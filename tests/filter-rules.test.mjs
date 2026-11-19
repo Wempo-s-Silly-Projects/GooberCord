@@ -1,4 +1,4 @@
-// Copyright 2026 ItsWempo
+// Copyright 2026 YourLocalGoober
 //
 // This file is part of GooberCord.
 //
@@ -147,7 +147,7 @@ async function sessionFixtures(role = "member") {
     token,
     row,
     headers: {
-      Cookie: "__Host-goober_session=" + token,
+      Cookie: "goober_session=" + token,
       "X-CSRF-Token": csrf,
       Origin: ORIGIN,
     },
@@ -616,20 +616,14 @@ test("a care hit stores the message untouched, answers careNotice inline, and wr
   assert.match(body.careNotice, /findahelpline\.com/);
   assert.ok(body.careNotice.includes(CARE_HELPLINE_URL));
   // Zero FILTER writes: no alert row, no prune, no timeout — detection logs
-  // and notifies nothing beyond the message already stored. The TWO extra
-  // post-send writes in the merged tree are the coins grant (0011 — the same
-  // legitimate standalone write every fresh send earns) and the Campfire fuel
-  // accrual (T76's message rider, best-effort inside its own upsert cap) —
-  // never a care write.
+  // and notifies nothing beyond the message already stored. The one extra
+  // post-send write in the merged tree is the coins grant (0011 — the same
+  // legitimate standalone write every fresh send earns, never a care write).
   const postSendWrites = db.calls.filter((call) => call.call === "batch" || call.call === "run");
-  assert.equal(postSendWrites.length, 3);
+  assert.equal(postSendWrites.length, 2);
   assert.ok(
     postSendWrites.some((call) => /gc_coin_ledger/.test(call.sql)),
-    "the first non-send write is the coin grant's ledger INSERT",
-  );
-  assert.ok(
-    postSendWrites.some((call) => /gc_campfires/.test(call.sql)),
-    "the second non-send write is the Campfire fuel accrual's upsert",
+    "the only non-send write is the coin grant's ledger INSERT",
   );
   assert.ok(!JSON.stringify(body.message).includes("careNotice"));
 });

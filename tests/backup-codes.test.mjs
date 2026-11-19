@@ -1,4 +1,4 @@
-// Copyright 2026 ItsWempo
+// Copyright 2026 YourLocalGoober
 //
 // This file is part of GooberCord.
 //
@@ -84,7 +84,7 @@ async function bodyOf(response) {
 
 // The signed-in session every member-endpoint test needs; also the exact
 // session read the vendored requireCsrf runs.
-const MEMBER_SESSION_HEADERS = { "X-CSRF-Token": "c".repeat(24), Cookie: "__Host-goober_session=" + "A".repeat(44) };
+const MEMBER_SESSION_HEADERS = { "X-CSRF-Token": "c".repeat(24), Cookie: "goober_session=" + "A".repeat(44) };
 
 const SESSION_READ = {
   test: (sql) => sql.includes("FROM sessions s LEFT JOIN users u"),
@@ -401,7 +401,7 @@ test("login step: a valid backup code burns once and mints the session", async (
     env,
   );
   assert.equal(response.status, 200);
-  assert.match(response.headers.get("Set-Cookie"), /^__Host-goober_session=/);
+  assert.match(response.headers.get("Set-Cookie"), /^goober_session=/);
   const body = await bodyOf(response);
   assert.equal(body.user.totpEnabled, true);
   // The burn keys on user + hash — the raw code never lands in a bind.

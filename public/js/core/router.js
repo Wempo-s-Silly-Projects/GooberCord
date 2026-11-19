@@ -1,4 +1,4 @@
-// Copyright 2026 ItsWempo
+// Copyright 2026 YourLocalGoober
 //
 // This file is part of GooberCord.
 //
@@ -74,63 +74,11 @@ function matchRoute(path) {
 function renderRoute(route) {
   currentRoute = route;
   if (mountNode) {
-    // The focus wave's seat (T57): replaceChildren orphans whatever held
-    // focus, so the re-render re-threads it onto the fresh pane heading.
-    // Focus that never lived inside the mount — the first paint, a foreign
-    // dialog — is snapped up by the containment snapshot and left alone.
-    const previous = globalThis.document?.activeElement ?? null;
-    const focusHeld = !!(previous
-      && typeof previous.nodeType === "number"
-      && typeof mountNode.contains === "function"
-      && mountNode.contains(previous));
     mountNode.replaceChildren();
     // The render owns nothing outside its node: the router clears it before
-    // each render and hands the node over. A render's own death is caught by
-    // the shared failure painter below — navigation stays usable.
-    try {
-      route.render(route, mountNode);
-    } catch (caught) {
-      renderFailurePane(mountNode, caught);
-    }
-    if (focusHeld) restoreRouteFocus(previous);
+    // each render and hands the node over.
+    route.render(route, mountNode);
   }
-}
-
-// restoreRouteFocus(lost) — the re-anchoring half: the new pane's heading
-// takes focus (tabindex -1 keeps it outside the tab order), the failure
-// pane's h2 catches routes that died mid-render, and a render that re-kept
-// the old node declines quietly — focus that survived stays where it sits.
-function restoreRouteFocus(lost) {
-  if (mountNode.contains(lost)) return;
-  const heading = mountNode.querySelector?.(".pane-main h2")
-    ?? mountNode.querySelector?.(".pane-title")
-    ?? mountNode.querySelector?.("h1, h2, h3")
-    ?? null;
-  if (!heading) return;
-  heading.setAttribute?.("tabindex", "-1");
-  heading.focus?.();
-}
-
-// renderFailurePane(mountNode, error) — the render-guard's card: the thrown
-// render paints one pane into the mount instead of dying to the console, and
-// the full stack still rides the console for the QA lane (the pane is the
-// user's channel; the console is the developer's). The humanizer's assert is
-// the gate: only a live, connected mount takes the pane (the detached class —
-// a node already swapped out — paints nothing, silently); and the node-pinning
-// test half (no document at all) paints nothing too.
-function renderFailurePane(mountNode, error) {
-  console.error("Route render failed:", error);
-  if (!mountNode || (typeof mountNode.isConnected === "boolean" && !mountNode.isConnected)) return;
-  const doc = globalThis.document;
-  if (!doc || typeof doc.createElement !== "function") return;
-  const pane = doc.createElement("div");
-  pane.className = "router-error";
-  const title = doc.createElement("h2");
-  title.textContent = "This view failed to render.";
-  const body = doc.createElement("p");
-  body.textContent = (error && error.message) || "An unknown error stopped this view.";
-  pane.append(title, body);
-  mountNode.append(pane);
 }
 
 function resolve(path, { history: historyMode = false } = {}) {
@@ -163,13 +111,7 @@ export function navigate(path, { replace = false } = {}) {
 export function renderCurrent() {
   if (currentRoute) {
     // Same arg contract as renderRoute: the render receives (route, mountNode).
-    // The same guard: a render's death paints the failure pane and stops
-    // propagating.
-    try {
-      currentRoute.render(currentRoute, mountNode);
-    } catch (caught) {
-      renderFailurePane(mountNode, caught);
-    }
+    currentRoute.render(currentRoute, mountNode);
   }
   return currentRoute;
 }
@@ -187,12 +129,6 @@ export function notFoundHandler(fn) {
 // live for popstate and for every internal anchor click.
 export function mount(node) {
   mountNode = node;
-  // The browser-only half: a node-pinning importer mounts with neither
-  // window nor document — the live wiring skips cleanly, the render half
-  // (renderRoute/renderCurrent) works without it.
-  if (typeof window === "undefined" || typeof document === "undefined") {
-    return null;
-  }
   window.addEventListener("popstate", () => {
     resolve(location.pathname);
   });

@@ -1,4 +1,4 @@
-// Copyright 2026 ItsWempo
+// Copyright 2026 YourLocalGoober
 //
 // This file is part of GooberCord.
 //
@@ -51,7 +51,6 @@
 // server costs the sends it filters one exemption read. Every CRUD write
 // drops this isolate's cache entry for the server it touched.
 import { HttpError } from "./core/http.mjs";
-import { GC_INVISIBLE_CONTROL_STRIP } from "../constants.mjs";
 import { TIMEOUT_MINUTE_CHOICES } from "./permissions.mjs";
 
 // GC-scaled limits (docs/parity-limits.md, AutoMod row verified 2026-11-17):
@@ -536,11 +535,8 @@ export function filterAlertPruneSql() {
     FILTER_ALERT_CAP_PER_SERVER + ")";
 }
 
-// The mod-desk previews run the invisible-control strip (T10 U1) BEFORE the
-// length cap: the alert is exactly what a moderator's own editor shows, with
-// no bidi-mirage or zero-width padding riding the desk.
 export function alertPreview(value) {
-  const text = String(value ?? "").replace(GC_INVISIBLE_CONTROL_STRIP, "");
+  const text = String(value ?? "");
   return text.length > FILTER_ALERT_PREVIEW_MAX ? text.slice(0, FILTER_ALERT_PREVIEW_MAX) : text;
 }
 

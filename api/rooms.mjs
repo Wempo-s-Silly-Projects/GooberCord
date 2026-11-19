@@ -1,4 +1,4 @@
-// Copyright 2026 ItsWempo
+// Copyright 2026 YourLocalGoober
 //
 // This file is part of GooberCord.
 //
@@ -60,8 +60,6 @@ import { sendMessageToChannel as sendMessageToChannelPrimitive, RulesGateError, 
 import { CARE_WS_FRAME_TYPE } from "./filterrules.mjs";
 import { HttpError, json } from "./core/http.mjs";
 import {
-  GC_PING_DO_MIN_INTERVAL_MS,
-  GC_TYPING_DO_MIN_INTERVAL_MS,
   GC_VOICE_FRAME_VERSION,
   GC_VOICE_MAX_FRAME_BYTES,
   GC_VOICE_MAX_PARTICIPANTS,
@@ -238,23 +236,6 @@ export class ChatRoom extends (workerd?.DurableObject ?? DurableObjectBase) {
       // close handler cleans up its roster entry.
       void error;
     }
-  }
-
-  // The fan-out throttle (T10 F5): true = the frame may proceed, false = drop
-  // silently. One map keyed per kind-and-user — the DO serves ONE channel,
-  // so the user id is the only discriminator needed — and every ACCEPTED
-  // frame re-arms the window (the flood interval, not the frame rate, is
-  // what is bounded). The map rides the isolate's lifetime: a hibernation
-  // wake rebuilds it empty, which only softens the gate's first post-wake
-  // frame — an acceptable cost for state the free plan's DO cannot pin.
-  fanOutGate(kind, userId, minIntervalMs) {
-    if (!this.throttles) this.throttles = new Map();
-    const key = kind + ":" + userId;
-    const now = Date.now();
-    const last = this.throttles.get(key);
-    if (last !== undefined && now - last < minIntervalMs) return false;
-    this.throttles.set(key, now);
-    return true;
   }
 
   // The fan-out: every OTHER socket, never the sender (a user's own second
@@ -627,23 +608,13 @@ export class ChatRoom extends (workerd?.DurableObject ?? DurableObjectBase) {
 
     if (type === "typing") {
       // No persistence; broadcast to the others only (the sender throttles
-      // client-side). The server gate is the second wall (T10 F5): extra
-      // frames inside the re-arm window drop SILENTLY — no error dialog for
-      // what is a cosmetic broadcast, and the DO's fan-out never amplifies
-      // a faster clock than its own.
-      if (this.fanOutGate("typing", meta.userId, GC_TYPING_DO_MIN_INTERVAL_MS)) {
-        this.broadcastJson(socket, { type: "broadcast", kind: "typing", userId: meta.userId });
-      }
+      // client-side).
+      this.broadcastJson(socket, { type: "broadcast", kind: "typing", userId: meta.userId });
       return;
     }
 
     if (type === "ping") {
-      // The ping gate (T10 F5): the reply is worthless to a flooder — the
-      // echo answers at most once per window, extra frames drop silently
-      // (nothing is broadcast either way; the DO's CPU is the asset).
-      if (this.fanOutGate("ping", meta.userId, GC_PING_DO_MIN_INTERVAL_MS)) {
-        this.sendFrame(socket, { type: "pong", t: "t" in frame ? frame.t : null });
-      }
+      this.sendFrame(socket, { type: "pong", t: "t" in frame ? frame.t : null });
       return;
     }
 

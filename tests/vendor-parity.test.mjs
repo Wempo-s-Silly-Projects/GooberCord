@@ -1,4 +1,4 @@
-// Copyright 2026 ItsWempo
+// Copyright 2026 YourLocalGoober
 //
 // This file is part of GooberCord.
 //
@@ -36,7 +36,7 @@ import assert from "node:assert/strict";
 
 const HERE = path.dirname(new URL(import.meta.url).pathname);
 const VENDOR_DIR = path.resolve(HERE, "../public/js/vendor");
-const KIT_DIR = process.env.GC_KITSKEY_DIR || "/Users/itswempo/project-kitskey";
+const KIT_DIR = "/Users/itswempo/project-designer";
 
 // The kit's own header line starts each source file; stripping everything
 // before it removes exactly the GC vendoring banner (and nothing else).

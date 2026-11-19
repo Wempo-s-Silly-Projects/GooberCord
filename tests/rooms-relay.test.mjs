@@ -1,4 +1,4 @@
-// Copyright 2026 ItsWempo
+// Copyright 2026 YourLocalGoober
 //
 // This file is part of GooberCord.
 //
@@ -29,7 +29,6 @@ import { ChatRoom } from "../api/rooms.mjs";
 import { handleWsRoutes } from "../api/ws.mjs";
 import { randomToken, sha256Hex, nowSeconds } from "../api/core/crypto.mjs";
 import { HttpError } from "../api/core/http.mjs";
-import { GC_PING_DO_MIN_INTERVAL_MS, GC_TYPING_DO_MIN_INTERVAL_MS } from "../constants.mjs";
 
 const ORIGIN = "http://localhost";
 const CHANNEL_ID = 3;
@@ -195,36 +194,6 @@ test("typing broadcasts to the others without persisting anything", async () => 
   assert.deepEqual(sentFrames(bob), [{ type: "broadcast", kind: "typing", userId: 1 }]);
 });
 
-test("T10 F5: a typing flood inside the re-arm window drops silently; the gate re-arms per user", async () => {
-  const records = [];
-  const env = envWithSender(records);
-  const { room, ctx } = makeRoom(env);
-  const alice = await connect(room, ctx, { userId: 1, username: "alice", channelKind: "text" });
-  const bob = await connect(room, ctx, { userId: 2, username: "bob", channelKind: "dm" });
-  clearFrames(alice);
-  clearFrames(bob);
-
-  await room.webSocketMessage(alice, JSON.stringify({ type: "typing" }));
-  await room.webSocketMessage(alice, JSON.stringify({ type: "typing" }));
-  await room.webSocketMessage(alice, JSON.stringify({ type: "typing" }));
-
-  // One broadcast — the first; the window's extras dropped with NO error
-  // frame and zero persistence.
-  assert.deepEqual(sentFrames(bob), [{ type: "broadcast", kind: "typing", userId: 1 }]);
-  assert.deepEqual(sentFrames(alice), []);
-
-  // A DIFFERENT user's first typing frame is independent (the map is keyed
-  // per user): bob's broadcast reaches ALICE (never the sender).
-  await room.webSocketMessage(bob, JSON.stringify({ type: "typing" }));
-  assert.deepEqual(sentFrames(alice), [{ type: "broadcast", kind: "typing", userId: 2 }]);
-
-  // The original user's gate re-arms after the window.
-  clearFrames(bob);
-  room.throttles.set("typing:1", Date.now() - (GC_TYPING_DO_MIN_INTERVAL_MS + 1));
-  await room.webSocketMessage(alice, JSON.stringify({ type: "typing" }));
-  assert.deepEqual(sentFrames(bob), [{ type: "broadcast", kind: "typing", userId: 1 }]);
-});
-
 test("join and leave broadcast a roster of the members present to everyone", async () => {
   const env = envWithSender([]);
   const { room, ctx } = makeRoom(env);
@@ -291,27 +260,6 @@ test("ping answers pong with the client's echoed t, and nothing is broadcast", a
   assert.deepEqual(sentFrames(alice), [{ type: "pong", t: 4242 }]);
   assert.deepEqual(sentFrames(bob), []);
   assert.deepEqual(records, []);
-});
-
-test("T10 F5: a ping flood inside the window drops silently — one echo per window", async () => {
-  const records = [];
-  const env = envWithSender(records);
-  const { room, ctx } = makeRoom(env);
-  const alice = await connect(room, ctx, { userId: 1, username: "alice", channelKind: "text" });
-  clearFrames(alice);
-
-  await room.webSocketMessage(alice, JSON.stringify({ type: "ping", t: 1 }));
-  await room.webSocketMessage(alice, JSON.stringify({ type: "ping", t: 2 }));
-  await room.webSocketMessage(alice, JSON.stringify({ type: "ping", t: 3 }));
-
-  // One echo (the first t), the extras neither answered nor broadcast.
-  assert.deepEqual(sentFrames(alice), [{ type: "pong", t: 1 }]);
-  assert.deepEqual(records, []);
-
-  // The window re-arms.
-  room.throttles.set("ping:1", Date.now() - (GC_PING_DO_MIN_INTERVAL_MS + 1));
-  await room.webSocketMessage(alice, JSON.stringify({ type: "ping", t: 9 }));
-  assert.deepEqual(sentFrames(alice), [{ type: "pong", t: 1 }, { type: "pong", t: 9 }]);
 });
 
 test("a failed send (validation/filter/db) answers the sender with an error frame and relays nothing", async () => {
@@ -528,7 +476,7 @@ async function sessionFixtures(username, userId = MEMBER_ID) {
     avatar_version: null,
     totp_enabled: 0,
   };
-  return { token, row, headers: { Cookie: "__Host-goober_session=" + token } };
+  return { token, row, headers: { Cookie: "goober_session=" + token } };
 }
 
 const SESSION_READ_TEST = (sql) => sql.includes("FROM sessions s LEFT JOIN users u");

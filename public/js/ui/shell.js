@@ -1,4 +1,4 @@
-// Copyright 2026 ItsWempo
+// Copyright 2026 YourLocalGoober
 //
 // This file is part of GooberCord.
 //
@@ -50,13 +50,6 @@ import { loadMentions } from "./mentions.js";
 import { coinFooterLine } from "./economy.js";
 import { serverAdminRights } from "./settings.js";
 import { wempoAccountsSignOutUrl } from "./landing.js";
-import { renderPaper } from "./paper.js";
-
-// The Morning Paper surface (T87): the route registers from the shell's
-// module scope — this module evaluates BEFORE main.js's boot() pushes the
-// generic "/s/:serverId/:channelId" catch, so insertion order resolves
-// "/s/:serverId/paper" to this seat, never to a "paper" channel.
-router.addRoute("/s/:serverId/paper", "paper", renderPaper);
 
 // AGPL §13's source-offer rides the shell's user footer: every signed-in
 // screen carries the quiet anchor next to sign-out, pointing at the repo.
@@ -79,69 +72,6 @@ export const appearance = makeAppearance({
 
 export function currentTheme() {
   return document.documentElement.dataset.theme === "light" ? "light" : "dark";
-}
-
-// The a11y rows (T81, spec §3): the same text-and-label grammar as the
-// theme row, riding the token var/attr on documentElement. Storage keys
-// goober-hc / goober-font-scale; theme-preload.js re-reads both before
-// first paint (its FONT_STEPS copy is pinned to this list — the preload
-// can't import).
-const HC_STORE_KEY = "goober-hc";
-const FONT_STORE_KEY = "goober-font-scale";
-const FONT_STEPS = [0.875, 1, 1.25];
-
-export function highContrastOn() {
-  if (document.documentElement.dataset.hc === "on") return true;
-  try {
-    return localStorage.getItem(HC_STORE_KEY) === "on";
-  } catch {
-    // Storage blocked — the attribute half still answers for this page.
-    return false;
-  }
-}
-
-export function currentFontScale() {
-  let scale = Number.NaN;
-  try {
-    scale = parseFloat(
-      document.documentElement.style.getPropertyValue("--font-scale"),
-    );
-  } catch {
-    // No inline var — the :root default (1) is the seat.
-  }
-  return FONT_STEPS.includes(scale) ? scale : 1;
-}
-
-function nextFontStep() {
-  const index = FONT_STEPS.indexOf(currentFontScale());
-  return FONT_STEPS[(index + 1) % FONT_STEPS.length];
-}
-
-function textScaleLabel(step) {
-  return `${t("gc.shell.theme.textSize")} ${Math.round(step * 100)}%`;
-}
-
-// Cross-tab sync (T81 advisory 2): an hc/font-scale write in one tab lands
-// in the others through the storage event — the same localStorage keys the
-// rows write. Wired once at module scope (guarded for the node-pinning
-// importers), read-only apply: the labels repaint on the next render.
-if (typeof window !== "undefined" && typeof window.addEventListener === "function") {
-  window.addEventListener("storage", (event) => {
-    if (event.key !== HC_STORE_KEY && event.key !== FONT_STORE_KEY && event.key !== null) return;
-    try {
-      if (localStorage.getItem(HC_STORE_KEY) === "on") {
-        document.documentElement.dataset.hc = "on";
-      } else {
-        delete document.documentElement.dataset.hc;
-      }
-      const scale = parseFloat(localStorage.getItem(FONT_STORE_KEY));
-      if (FONT_STEPS.includes(scale)) {
-        document.documentElement.style.setProperty("--font-scale", String(scale));
-      }
-    } catch {
-      // Storage blocked — nothing to sync.
-    }
-  });
 }
 
 // The initials on a server tile: up to two characters, Space Grotesk 700.
@@ -227,22 +157,6 @@ export function serverPlaceholder(route, mount) {
 // the unsubscribe).
 let connectionStripUnsub = null;
 
-// The social lanes' seat (the same one-live-per-page idiom): the signed-in
-// boot paints the rails BEFORE the /api payloads land, and the payloads'
-// arrival must repaint — the store's whole purpose, wired. One subscription
-// per lane key, node-local edits inside the live frame (chat.js's roster
-// repaint idiom), never a route re-render.
-let laneUnsub = null;
-
-// The "/" seat: renderShell is BUILT for (route, paneOverride) — handing it
-// the router's mount node directly (the "/" addRoute once did exactly that)
-// made frame.append swallow #app into a detached frame: the signed-in home
-// rendered into nothing (the live blank-page incident, W-R1). The placeholder
-// idiom instead — the seat takes (route, mount) and appends the frame in.
-export function homeRoute(route, mount) {
-  mount.append(renderShell(route));
-}
-
 export function renderShell(route, paneOverride = null) {
   const frame = h("div", { class: "shell", "data-testid": "app-shell" });
   frame.append(serverRail(), channelRail());
@@ -268,19 +182,6 @@ export function renderShell(route, paneOverride = null) {
   paintConnectionStrip();
   if (connectionStripUnsub) connectionStripUnsub();
   connectionStripUnsub = store.subscribe("connection", paintConnectionStrip);
-  // The social lanes' live repaint: servers repaint the two rails, the
-  // conversation/friend lanes repaint the DM seat (the frozen-paint fix —
-  // the payload's arrival is the paint moment, the store's subscriber).
-  if (laneUnsub) laneUnsub();
-  const paintLanes = (_state, key) => {
-    if (key === "servers") {
-      frame.querySelector(".rail-servers")?.replaceWith(serverRail());
-      frame.querySelector(".rail-channels")?.replaceWith(channelRail());
-    } else {
-      frame.querySelector(".dm-section")?.replaceWith(dmSection());
-    }
-  };
-  laneUnsub = store.subscribe(["conversations", "servers", "friends"], paintLanes);
   loadServers();
   // The social lanes hydrate alongside (fire-and-forget; each re-render
   // paints from the store once its payload lands).
@@ -367,15 +268,6 @@ function channelRail() {
     text: Array.isArray(mentions) ? String(mentions.length) : t("gc.shell.mentions.loading"),
   })));
 
-  // The Morning Paper door (T87): every member of an active server can ride
-  // the link (the read's own gates decide what answers); the surface sits
-  // inside the paper pane, never in the rail.
-  if (server) {
-    rail.append(h("a", { class: "channel-row paper-item", href: `/s/${server.id}/paper`,
-      "aria-label": t("gc.paper.nav"), title: t("gc.paper.nav") },
-    h("span", { class: "channel-hash", text: "📰" }), t("gc.paper.nav")));
-  }
-
   if (server && Array.isArray(server.channels)) {
     // Channels file under their categories when the server has any;
     // otherwise one shared "Text channels" section carries them all.
@@ -414,19 +306,13 @@ function channelRail() {
 // activity first; unread rides the server's `unread` per row — pills only
 // for unread truth, never decoration.
 function dmSection() {
-  // The loader-lane texts ride the i18n binding pass (data-i18n): a
-  // pre-catalog paint humanizes the key's tail, and initI18n's resolution
-  // sweep repaints it — the loader never stays frozen (visible-garbage law's
-  // repaint half; the sweep sets textContent only, never a markup parse).
   const fragment = h("div", { class: "dm-section" },
-    h("h3", { class: "rail-section", "data-i18n": "gc.shell.nav.dm", text: t("gc.shell.nav.dm") }),
-    h("a", { class: "control-quiet dm-friends-link", href: "/friends",
-      "data-i18n": "gc.shell.social.friendsRequests", text: t("gc.shell.social.friendsRequests") }));
+    h("h3", { class: "rail-section" }, t("gc.shell.nav.dm")),
+    h("a", { class: "control-quiet dm-friends-link", href: "/friends", text: t("gc.shell.social.friendsRequests") }));
   const conversations = store.get("conversations");
   if (Array.isArray(conversations)) {
     if (conversations.length === 0) {
-      fragment.append(h("p", { class: "empty-state", "data-i18n": "gc.shell.social.none",
-        text: t("gc.shell.social.none") }));
+      fragment.append(h("p", { class: "empty-state", text: t("gc.shell.social.none") }));
     }
     for (const thread of conversations) {
       const others = thread.members
@@ -439,8 +325,7 @@ function dmSection() {
         thread.unread ? h("span", { class: "count-pill", text: String(thread.unread) }) : null));
     }
   } else {
-    fragment.append(h("p", { class: "empty-state", "data-i18n": "gc.shell.social.fetching",
-      text: t("gc.shell.social.fetching") }));
+    fragment.append(h("p", { class: "empty-state", text: t("gc.shell.social.fetching") }));
   }
   return fragment;
 }
@@ -484,42 +369,6 @@ function userBlock() {
         event.currentTarget.textContent = next === "dark" ? t("gc.shell.theme.light") : t("gc.shell.theme.dark");
       },
     }),
-    h("button", {
-      class: "control-quiet",
-      type: "button",
-      text: highContrastOn() ? t("gc.shell.theme.hcOff") : t("gc.shell.theme.hcOn"),
-      onClick: function toggleHighContrast(event) {
-        const next = highContrastOn() ? "off" : "on";
-        if (next === "on") {
-          document.documentElement.dataset.hc = "on";
-        } else {
-          delete document.documentElement.dataset.hc;
-        }
-        try {
-          localStorage.setItem(HC_STORE_KEY, next);
-        } catch {
-          // Storage blocked — the row still flips the live attribute.
-        }
-        event.currentTarget.textContent = next === "on"
-          ? t("gc.shell.theme.hcOff")
-          : t("gc.shell.theme.hcOn");
-      },
-    }),
-    h("button", {
-      class: "control-quiet",
-      type: "button",
-      text: textScaleLabel(nextFontStep()),
-      onClick: function cycleFontScale(event) {
-        const next = nextFontStep();
-        try {
-          document.documentElement.style.setProperty("--font-scale", String(next));
-          localStorage.setItem(FONT_STORE_KEY, String(next));
-        } catch {
-          // Storage blocked — the inline var half still takes the click.
-        }
-        event.currentTarget.textContent = textScaleLabel(nextFontStep());
-      },
-    }),
     h("a", {
       class: "control-quiet",
       href: wempoAccountsSignOutUrl(),
@@ -553,7 +402,7 @@ function homePane() {
   }
   return h("section", { class: "pane-main" },
     h("header", { class: "pane-header" },
-      h("h2", { class: "pane-title", text: t("gc.shell.home.title") })),
+      h("h2", { class: "pane-title", text: "Home" })),
     h("div", { class: "pane-body" },
       h("p", {
         class: "empty-state",
@@ -570,7 +419,7 @@ function mainPane() {
 function membersRail() {
   const rail = h("aside", { class: "rail-members", "aria-label": t("gc.shell.nav.members") },
     h("header", { class: "rail-header" },
-      h("h2", { class: "rail-title", text: t("gc.shell.members.title") })));
+      h("h2", { class: "rail-title", text: "Members" })));
   const activeServerId = store.get("activeServerId");
   if (activeServerId) {
     // The members wave owns the body; the shell only hands over the node.

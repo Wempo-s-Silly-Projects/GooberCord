@@ -1,4 +1,4 @@
-// Copyright 2026 ItsWempo
+// Copyright 2026 YourLocalGoober
 //
 // This file is part of GooberCord.
 //
@@ -16,16 +16,14 @@
 // GNU Affero General Public License along with this program.  If not,
 // see <https://www.gnu.org/licenses/>
 
-// The GIF media proxy (owner-direct ruling wave 2; KLIPY migration —
-// Tenor EOL 2026-06-30): GET /api/gifs/image?u=<picker media url> streams
-// KLIPY's bytes same-origin so the site CSP's img-src 'self' admits the
-// picker's <img>s. Pins: the 503-first key discipline (never touched
-// network, never leaked), the KLIPY-host allowlist (https + klipy.com or a
-// subdomain — the old Tenor hosts are now REFUSED like any other — every
-// other reference is the 400 and no fetch runs at all), the stream
-// pass-through with the image/* pin + the shared cache, and the 502s
-// (upstream fails, or upstream answers with bytes we did not validate as
-// images).
+// The GIF media proxy (owner-direct ruling wave 2): GET /api/gifs/image?u=
+// <picker media url> streams Tenor's bytes same-origin so the site CSP's
+// img-src 'self' admits the picker's <img>s. Pins: the 503-first key
+// discipline (never touched network, never leaked), the Tenor-host
+// allowlist (https + tenor.com or a subdomain — every other reference is
+// the 400 and no fetch runs at all), the stream pass-through with the
+// image/* pin + the shared cache, and the 502s (upstream fails, or
+// upstream answers with bytes we did not validate as images).
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -63,7 +61,7 @@ const SESSION_FIX = (async () => {
       avatar_version: null,
       totp_enabled: 0,
     },
-    headers: { Cookie: "__Host-goober_session=" + token },
+    headers: { Cookie: "goober_session=" + token },
   };
 })();
 
@@ -109,9 +107,9 @@ test("an unconfigured environment 503s the shared copy before any session work o
   globalThis.fetch = async () => { fetched = true; return { ok: true }; };
   try {
     const response = await dispatch(
-      new Request(ORIGIN + "/api/gifs/image?u=https%3A%2F%2Fstatic.klipy.com%2Fa.gif"),
+      new Request(ORIGIN + "/api/gifs/image?u=https%3A%2F%2Fmedia.tenor.com%2Fa.gif"),
       envWithLimiters({
-        KLIPY_API_KEY: "",
+        TENOR_API_KEY: "",
         GOOBER_DB: { prepare: () => { throw new Error("should never query"); } },
       }),
     );
@@ -123,16 +121,15 @@ test("an unconfigured environment 503s the shared copy before any session work o
   }
 });
 
-test("the allowlist pin: every non-KLIPY-host or non-https reference is a 400 with no fetch", async () => {
+test("the allowlist pin: every non-Tenor-host or non-https reference is a 400 with no fetch", async () => {
   const refs = [
     "", // missing entirely
     "https://evil.com/a.gif",
-    "https://media.tenor.com/a.gif", // the dead provider's host is now refused like any other
-    "https://klipy.com.evil.net/a.gif",
-    "http://static.klipy.com/a.gif", // scheme downgraded
-    "https://cdn-klipy-proxy.example/a.gif",
+    "https://tenor.com.evil.net/a.gif",
+    "http://media.tenor.com/a.gif", // scheme downgraded
+    "https://cdn.tenor-proxy.example/a.gif",
     "javascript:alert(1)",
-    "klipy.com/a.gif", // not even an absolute URL
+    "tenor.com/a.gif", // not even an absolute URL
     "x".repeat(2049),
   ];
   for (const ref of refs) {
@@ -147,7 +144,7 @@ test("the allowlist pin: every non-KLIPY-host or non-https reference is a 400 wi
           ORIGIN + "/api/gifs/image?u=" + encodeURIComponent(ref),
           { headers: (await SESSION_FIX).headers },
         ),
-        envWithLimiters({ KLIPY_API_KEY: "OWNER-SECRET", GOOBER_DB: sessionDb }),
+        envWithLimiters({ TENOR_API_KEY: "OWNER-SECRET", GOOBER_DB: sessionDb }),
       );
       assert.equal(response.status, 400, ref);
       assert.equal((await bodyOf(response)).error, GIF_IMAGE_INVALID_ERROR);
@@ -158,7 +155,7 @@ test("the allowlist pin: every non-KLIPY-host or non-https reference is a 400 wi
   }
 });
 
-test("a valid KLIPY reference streams through same-origin: bytes pass, image type pinned, cached", async () => {
+test("a valid Tenor reference streams through same-origin: bytes pass, image type pinned, cached", async () => {
   let upstreamUrl = null;
   // The upstream body is a real stream: the pass-through keeps it one (the
   // route never buffers a media body into a buffer).
@@ -186,10 +183,10 @@ test("a valid KLIPY reference streams through same-origin: bytes pass, image typ
     const response = await dispatch(
       new Request(
         ORIGIN + "/api/gifs/image?u=" +
-          encodeURIComponent("https://static.klipy.com/gif/abc/Cat%20gif.gif"),
+          encodeURIComponent("https://media1.tenor.com/m/AAAQ-MDxyz/Cat%20gif.gif"),
         { headers: (await SESSION_FIX).headers },
       ),
-      envWithLimiters({ KLIPY_API_KEY: "OWNER-SECRET", GOOBER_DB: sessionDb }),
+      envWithLimiters({ TENOR_API_KEY: "OWNER-SECRET", GOOBER_DB: sessionDb }),
     );
     assert.equal(response.status, 200);
     assert.equal(response.headers.get("Content-Type"), "image/gif");
@@ -199,7 +196,7 @@ test("a valid KLIPY reference streams through same-origin: bytes pass, image typ
       "the proxy never buffers a media body — it hands the stream straight through");
     // The upstream target is the allowed host's own path + its search, and
     // the SECRET never rides a media fetch.
-    assert.match(upstreamUrl, /^https:\/\/static\.klipy\.com\/gif\//);
+    assert.match(upstreamUrl, /^https:\/\/media1\.tenor\.com\/m\//);
     assert.equal(upstreamUrl.includes("OWNER-SECRET"), false);
     // The bytes arrive intact through the pass-through.
     const received = new Uint8Array(await response.arrayBuffer());
@@ -221,10 +218,10 @@ test("the upstream's failures answer the shared 502: not-ok, non-image, and netw
       const response = await dispatch(
         new Request(
           ORIGIN + "/api/gifs/image?u=" +
-            encodeURIComponent("https://static.klipy.com/gif/xyz/video.mp4"),
+            encodeURIComponent("https://media.tenor.com/x/video.mp4"),
           { headers: (await SESSION_FIX).headers },
         ),
-        envWithLimiters({ KLIPY_API_KEY: "OWNER-SECRET", GOOBER_DB: sessionDb }),
+        envWithLimiters({ TENOR_API_KEY: "OWNER-SECRET", GOOBER_DB: sessionDb }),
       );
       assert.equal(response.status, 502);
       assert.equal((await bodyOf(response)).error, GIF_SEARCH_UNAVAILABLE_ERROR);
@@ -238,10 +235,10 @@ test("the upstream's failures answer the shared 502: not-ok, non-image, and netw
     const response = await dispatch(
       new Request(
         ORIGIN + "/api/gifs/image?u=" +
-          encodeURIComponent("https://static.klipy.com/gif/xyz/a.gif"),
+          encodeURIComponent("https://media.tenor.com/x/a.gif"),
         { headers: (await SESSION_FIX).headers },
       ),
-      envWithLimiters({ KLIPY_API_KEY: "OWNER-SECRET", GOOBER_DB: sessionDb }),
+      envWithLimiters({ TENOR_API_KEY: "OWNER-SECRET", GOOBER_DB: sessionDb }),
     );
     assert.equal(response.status, 502);
     assert.equal((await bodyOf(response)).error, GIF_SEARCH_UNAVAILABLE_ERROR);

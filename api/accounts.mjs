@@ -1,4 +1,4 @@
-// Copyright 2026 ItsWempo
+// Copyright 2026 YourLocalGoober
 //
 // This file is part of GooberCord.
 //
@@ -131,12 +131,9 @@ export async function createGooberSession(request, env, userId) {
     /* best-effort tracking; the session and ban gate are already committed */
   }
   await env.GOOBER_DB.prepare("DELETE FROM sessions WHERE expires_at <= ?").bind(now).run();
-  // The __Host- mint (the rename wave, GC_LEGACY_COOKIE_NAME in
-  // core/auth.mjs): the mint always answers the new name, Secure unconditional
-  // (the __Host- contract requires the attribute); the legacy name is
-  // read-side only — a mint never has a legacy session in hand to migrate.
-  const setCookie = "__Host-goober_session=" + token +
-    "; Path=/; HttpOnly; SameSite=Lax; Max-Age=" + (60 * 60 * 24 * 30) + "; Secure";
+  const secure = new URL(request.url).protocol === "https:" ? "; Secure" : "";
+  const setCookie = "goober_session=" + token +
+    "; Path=/; HttpOnly; SameSite=Lax; Max-Age=" + (60 * 60 * 24 * 30) + secure;
   return { tokenHash, csrfToken, setCookie };
 }
 
@@ -540,11 +537,9 @@ async function handleCosmeticsPatchRoute(request, env) {
   return json({ cosmetics: publicCosmetics(row) });
 }
 
-function expiredCookie() {
-  // Same wave: the clear answers the __Host- name — the prefix contract makes
-  // "; Secure" a requirement even on the Max-Age=0 overwrite, or the deletion
-  // itself is rejected.
-  return "__Host-goober_session=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0; Secure";
+function expiredCookie(request) {
+  const secure = new URL(request.url).protocol === "https:" ? "; Secure" : "";
+  return "goober_session=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0" + secure;
 }
 
 // The footer version stamp (contract from the plan): both values come from the
@@ -558,21 +553,8 @@ async function handleVersionRoute(env) {
   });
 }
 
-// __Host- wave (the byte-twin's migrateCookies shape): /api/me is the boot
-// GET (public/js/main.js reads the session here on load), so a legacy-named
-// cookie self-migrates on this one response — the SAME token re-issued under
-// the prefixed name plus the legacy clear, riding Headers.append (a
-// plain-object header map cannot carry two Set-Cookie values). No session
-// rewrite; the fallback comes out on the named cleanup row.
-function migrateHeaders(migrateCookies) {
-  const headers = securityHeaders(new Headers());
-  for (const cookie of migrateCookies) headers.append("Set-Cookie", cookie);
-  return headers;
-}
-
 async function handleMeRoute(request, env) {
   const session = await requireSignedInRead(request, env);
-  const migration = session.migrateCookies ? migrateHeaders(session.migrateCookies) : undefined;
   // The vendored readSession shape is the single source — and it is pinned
   // byte-for-byte by tests/contract-parity.test.mjs, so the Goober+ perks
   // fields CANNOT ride its SELECT. They land here instead, as one additive
@@ -604,9 +586,9 @@ async function handleMeRoute(request, env) {
       ...(cosmetics.banner !== null ? { banner: cosmetics.banner } : {}),
       ...(cosmetics.flair !== null ? { flair: cosmetics.flair } : {}),
     };
-    return json({ user, csrfToken: session.csrfToken }, 200, migration);
+    return json({ user, csrfToken: session.csrfToken });
   }
-  return json({ user: session.user, csrfToken: session.csrfToken }, 200, migration);
+  return json({ user: session.user, csrfToken: session.csrfToken });
 }
 
 async function handleLoginRoute(request, env) {
@@ -773,27 +755,14 @@ async function handleTotpRoute(request, env) {
 
 async function handleLogoutRoute(request, env) {
   const session = await requireUser(request, env);
-  // The revoke-all arm (T10 credential-sweep, lead-ruling shape (b)): the
-  // route's OWN authenticated context extends to sweeping EVERY session of
-  // the caller — same requireUser proof (no weaker auth on the broader blast
-  // radius), the user_id-scoped statement rides the SAME sessions table the
-  // token arm deletes from (GC-owned write surface; no cross-app tables).
-  // A bodyless or {} POST keeps the exact pre-arm behavior: the one token.
-  let everywhere = false;
-  const body = await request.json().catch(() => null);
-  if (body && typeof body === "object" && !Array.isArray(body) && body.everywhere === true) {
-    everywhere = true;
-  }
-  const sql = everywhere
-    ? "DELETE FROM sessions WHERE user_id = ?"
-    : "DELETE FROM sessions WHERE token_hash = ?";
-  await env.GOOBER_DB.prepare(sql)
-    .bind(everywhere ? Number(session.user.id) : session.tokenHash).run();
+  await env.GOOBER_DB.prepare(
+    "DELETE FROM sessions WHERE token_hash = ?",
+  ).bind(session.tokenHash).run();
   return new Response(null, {
     status: 204,
     headers: securityHeaders(new Headers({
       "Cache-Control": "no-store",
-      "Set-Cookie": expiredCookie(),
+      "Set-Cookie": expiredCookie(request),
     })),
   });
 }
@@ -818,17 +787,6 @@ async function handleAdminResetPasswordRoute(request, env) {
   const relayed = await relaySet(env, username, password);
   if (!relayed) {
     throw new HttpError(503, "Password reset relay is not available. Try again shortly.");
-  }
-  // The credential sweep rides the reset (T10 credential-sweep, lead-ruling
-  // shape (b)): a re-issued pepper-backed credential invalidates EVERY live
-  // session of the rescued account — an admin rescue cannot leave old
-  // sessions valid. The target id is read LOCALLY after the relay (one
-  // indexed SELECT, so a rescue that minted the account still sweeps), bound
-  // to the GC worker's own sessions table only.
-  const rescued = await userByUsernameKey(env, username.toLowerCase());
-  if (rescued) {
-    await env.GOOBER_DB.prepare("DELETE FROM sessions WHERE user_id = ?")
-      .bind(Number(rescued.id)).run();
   }
   return json({ reset: true, user: relayed.user });
 }

@@ -1,0 +1,18 @@
+2026-11-18T22:27Z FINDING T25-SIG: /api/version build:"" live; it.json 404-plain OK; en.json 200-json OK (funnel clean, only build stamp wedged)
+2026-11-18T22:27Z CAUSE: git-push auto-deploy (Workers Builds) fired a7655d96 at 2026-11-18T22:26:33Z after lead pushes 03c8f6f/a3e75b6; platform default deploy has no COMMIT_SHA var (T25 via non-agent vector)
+2026-11-18T22:27Z SEATS: 1 running (fix-auds-w7, verdict pending); 23 idle teammates all have collected reports; none idle-with-uncollected
+2026-11-18T22:27Z PLAN: ritual redeploy deferred outside tick — lands AFTER next push in fix-auds-w7 collect chain (push then pnpm run deploy); owner-call candidate: disable git auto-deploy integration
+2026-11-18T22:55Z FINDING T25-SIG: build:"" live again; funnel clean (it 404, en 200-json)
+2026-11-18T22:55Z CAUSE-RACE: ritual deploy 22:32:18Z (afc19b4f build e60de82) overwritten by lagged auto-deploy 22:32:42Z — git-integration deploy lag ≈ 24-52s beats push-then-deploy ordering
+2026-11-18T22:55Z SEATS: 0 subagents running; 22 idle teammates all collected; fleet idle awaiting next slate dispatch (out of tick)
+2026-11-18T22:55Z RESOLUTION: owner hook change (deploy cmd with --var COMMIT_SHA:$(git rev-parse --short HEAD)) is the root fix; interim lead rule = push, wait out lag, ritual deploy, re-probe
+2026-11-18T23:25Z TICK: build:"" persists (SAME known incident — lagged auto-deploy from 22:32:42Z; no new deploys/pushes since; awaiting owner hook fix or next push+lagged ritual heal)
+2026-11-18T23:25Z TICK: funnel clean (it 404-plain, en 200-json); seats: 0 running subagents, 22 idle teammates all with collected reports; no uncollected lanes
+2026-11-18T23:55Z TICK: build:"" persists (same known auto-deploy incident, unchanged — no new deploys); funnel clean (it 404-plain, en 200-json); seats: 0 running subagents, 22 idle all-collected, fleet idle
+2026-11-19T00:25Z TICK: build:"" persists (4th consecutive steady tick — same known auto-deploy incident, unchanged, no new deploys); funnel clean (it 404-plain, en 200-json); seats: 0 running subagents, 22 idle all-collected, fleet idle
+2026-11-19T00:55Z TICK: build:"" persists (5th consecutive steady tick — same known auto-deploy incident, unchanged); funnel clean (it 404-plain, en 200-json); seats: 0 running subagents, 22 idle all-collected, fleet idle
+2026-11-19T01:21Z HEAL: delayed-ritual ordering beat auto-deploy lag — version c2bae36e build 0cedd18 (crowdin.yml 710cea1 + GH-13 pinned actions 0cedd18); funnel clean
+2026-11-19T01:21Z NOTE: root fix unchanged = owner hook cmd adding --var COMMIT_SHA; interim rule = push, wait >=90s, ritual deploy, probe
+2026-11-19T01:32Z LANE-COLLECT: fix-r2-w7 8e2e0b8->67fef8d rebased onto main, suite 1658/1658 verified in detached worktree, pushed
+2026-11-18T20:5x-EST T-R2-WIPE-RIDES chain complete: backfill avatars 26/26 verified puts; 0044 remote applied NAME-PRESENCE; chunks table dropped; deploys 4d52283+3d28f0b live, probes green.
+2026-11-19T01:56Z tick#7: build:"3d28f0b" (matches my deploy 969ed4b9 — stamp healthy, no T25 churn); it:404 en:200 {json}; ListAgents 29 roster seats registered (joined 3-6h), all lanes collected/landed (t90/t89/t100/w6-audit), no running workers, no uncollected verdicts; no action taken (read-only).

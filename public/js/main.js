@@ -1,4 +1,4 @@
-// Copyright 2026 ItsWempo
+// Copyright 2026 YourLocalGoober
 //
 // This file is part of GooberCord.
 //
@@ -31,7 +31,7 @@ import { api, setCsrfToken, AUTH_EVENT } from "./core/api.js";
 import store from "./core/store.js";
 import * as router from "./core/router.js";
 import {
-  appearance, homeRoute, serverPlaceholder,
+  appearance, renderShell, serverPlaceholder,
 } from "./ui/shell.js";
 import { ensureSignedIn, wempoAccountsSignInUrl } from "./ui/landing.js";
 import { renderMemberCard } from "./ui/members.js";
@@ -154,7 +154,7 @@ async function boot({ doc: bootDoc = document, win: bootWin = window } = {}) {
   //    Specific two-segment server routes register BEFORE the generic
   //    "/:channelId" catch — resolve scans in insertion order and "roles"
   //    would match an "([^/]+)" channel slot otherwise.
-  router.addRoute("/", "home", homeRoute);
+  router.addRoute("/", "home", renderShell);
   router.addRoute("/friends", "friends", renderSocialHub);
   router.addRoute("/join", "join", renderJoin);
   router.addRoute("/mentions", "mentions", renderMentions);
@@ -192,28 +192,5 @@ async function boot({ doc: bootDoc = document, win: bootWin = window } = {}) {
 // The guard keeps a node --test importer from walking the browser boot: the
 // exported boot-free pieces (compareBuild, buildStaleStrip) pin without DOM.
 if (typeof window !== "undefined") {
-  boot().catch((error) => {
-    // The boot's last line of defense (T-W23): the boot's own death paints
-    // one minimal card instead of leaving a blank #app. Failure-path copy
-    // rides literals here — the catch runs before any locale seat settles,
-    // so a translated lookup can be the very thing that failed. Exception:
-    // the retry button keeps its en key — the loader's en catalog floor
-    // (i18n.js initI18n) sets it unconditionally, and the no-copy sweep
-    // law forbids a bare "Reload" literal in this file.
-    const surfaceDoc = doc || window.document;
-    const host = surfaceDoc.getElementById("app") || surfaceDoc.body;
-    if (!host) return;
-    const card = surfaceDoc.createElement("div");
-    card.className = "router-error";
-    const title = surfaceDoc.createElement("h2");
-    title.textContent = "GooberCord couldn't start.";
-    const body = surfaceDoc.createElement("p");
-    body.textContent = (error && error.message) || "An unknown error stopped the boot.";
-    const retry = surfaceDoc.createElement("button");
-    retry.type = "button";
-    retry.textContent = t("gc.boot.stale.reload");
-    retry.addEventListener("click", () => window.location.reload());
-    card.append(title, body, retry);
-    host.append(card);
-  });
+  boot();
 }

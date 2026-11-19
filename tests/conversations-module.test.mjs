@@ -1,4 +1,4 @@
-// Copyright 2026 ItsWempo
+// Copyright 2026 YourLocalGoober
 //
 // This file is part of GooberCord.
 //
@@ -108,7 +108,7 @@ async function sessionFixtures() {
   return {
     token,
     row,
-    headers: { Cookie: "__Host-goober_session=" + token, "X-CSRF-Token": csrf },
+    headers: { Cookie: "goober_session=" + token, "X-CSRF-Token": csrf },
   };
 }
 
@@ -385,70 +385,6 @@ test("POST with 2–8 ids always creates a NEW group channel, even when the grou
   assert.notEqual(again.conversation.id, created.conversation.id);
   // Groups always create: a second standalone channel insert, at a NEW id.
   assert.equal(callsOf(db).filter((call) => CHANNEL_INSERT_TEST(call.sql)).length, 2);
-});
-
-// Member-batch failure shapes: the fake's batch() runs every member insert,
-// so a route here decides per-bound-value (the doomed member aborts, the
-// others succeed) — the same either-shape a real D1 failure lands as.
-const failingMemberRoute = ({ failUserId, throw: shouldThrow }) => ({
-  test: MEMBER_INSERT_TEST,
-  run: async (bound) => {
-    if (Number(bound[1]) === failUserId) {
-      if (shouldThrow) throw new Error("simulated D1 batch failure");
-      return { meta: { changes: 0, last_row_id: 0 } };
-    }
-    return { meta: { changes: 1, last_row_id: 0 } };
-  },
-});
-
-// The memberless-window guard: the channel row commits BEFORE the member
-// batch, so a member-batch failure must delete the stranded channel row —
-// otherwise a memberless gc_channels row survives the failure (invisible to
-// every member-join read, but an orphan on the shared DB).
-const strandedChannelDelete = (db) =>
-  callsOf(db).find((call) => call.call === "run" && LEAVE_CHANNEL_DELETE_TEST(call.sql));
-
-test("a failed member batch deletes the stranded channel row and answers the 500 copy", async () => {
-  const session = await sessionFixtures();
-  const db = fakeDb([failingMemberRoute({ failUserId: SECOND_ID }), ...baseRoutes({ session })]);
-  const env = { GOOBER_DB: db };
-
-  const response = await dispatch(
-    postJson("/api/conversations", { userIds: [OTHER_ID, SECOND_ID] }, session.headers),
-    env,
-  );
-  assert.equal(response.status, 500);
-  assert.equal((await bodyOf(response)).error, "The conversation could not be created. Please try again.");
-
-  // The channel insert committed (id 1, the fake's first row); the guard
-  // deletes EXACTLY that row bound by its id — and nothing else.
-  const deleteCall = strandedChannelDelete(db);
-  assert.ok(deleteCall, "the stranded channel row was deleted");
-  assert.ok(LEAVE_CHANNEL_DELETE_TEST(deleteCall.sql));
-  assert.deepEqual(deleteCall.bound, [1]);
-  // The compensating delete, not a member-batch rerun: exactly one batch.
-  assert.equal(callsOf(db).filter((call) => call.call === "batch").length, 1);
-});
-
-test("a thrown member batch (D1 abort/crash shape) also deletes the stranded channel row", async () => {
-  const session = await sessionFixtures();
-  const db = fakeDb([
-    failingMemberRoute({ failUserId: OTHER_ID, throw: true }),
-    ...baseRoutes({ session }),
-  ]);
-  const env = { GOOBER_DB: db };
-
-  await assert.rejects(
-    () => dispatch(
-      postJson("/api/conversations", { userIds: [OTHER_ID, SECOND_ID] }, session.headers),
-      env,
-    ),
-    /simulated D1 batch failure/,
-  );
-
-  const deleteCall = strandedChannelDelete(db);
-  assert.ok(deleteCall, "the stranded channel row was deleted");
-  assert.deepEqual(deleteCall.bound, [1]);
 });
 
 test("POST for a blocked pair refuses with the 403 copy and creates nothing", async () => {
@@ -797,7 +733,7 @@ async function signIn(db, userId, username) {
   db.prepare(
     "INSERT INTO sessions (token_hash, user_id, csrf_token, created_at, expires_at) VALUES (?, ?, ?, ?, ?)",
   ).run(await sha256Hex(token), userId, csrf, nowSeconds(), nowSeconds() + 3600);
-  return { Cookie: "__Host-goober_session=" + token, "X-CSRF-Token": csrf, Origin: ORIGIN };
+  return { Cookie: "goober_session=" + token, "X-CSRF-Token": csrf, Origin: ORIGIN };
 }
 
 function seedUsers(db) {

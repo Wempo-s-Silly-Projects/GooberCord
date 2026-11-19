@@ -1,4 +1,4 @@
-// Copyright 2026 ItsWempo
+// Copyright 2026 YourLocalGoober
 //
 // This file is part of GooberCord.
 //
@@ -61,21 +61,4 @@ test("mobile app shell: the members rail drops first, the rails compact second",
   const narrow = css.slice(narrowBreak);
   assert.match(narrow, /grid-template-columns:\s*56px\s+210px\s+minmax\(0,\s*1fr\);/,
     "the rails compact, the chat pane keeps the floor");
-});
-
-// --- the render-failure card (T28) ------------------------------------------
-
-test("the .router-error card pins: one minimal tokenized rule, both themes ride vars", async () => {
-  const css = await readFile(stylesheet, "utf8");
-  const at = css.indexOf(".router-error {");
-  assert.ok(at !== -1, "the rule rides the stylesheet");
-  const block = css.slice(at, css.indexOf("}", at) + 1);
-  assert.doesNotMatch(block.replace(/\/\*[\s\S]*?\*\//g, ""), /#[0-9a-fA-F]{3,8}\b/,
-    "tokens only — no hex literals outside the token system");
-  assert.match(block, /border:\s*2px solid var\(--error-chip-border\)/,
-    "the border is the error idiom's token");
-  assert.match(block, /background:\s*var\(--error-soft\)/, "the muted background is tokenized");
-  assert.match(block, /color:\s*var\(--error-ink\)/, "the ink is tokenized");
-  assert.match(block, /padding:\s*1\.4rem 1\.6rem/, "the card padding matches the gate-panel idiom");
-  assert.match(block, /max-width:\s*34rem/, "the card width matches the gate-panel idiom");
 });

@@ -1,4 +1,4 @@
-// Copyright 2026 ItsWempo
+// Copyright 2026 YourLocalGoober
 //
 // This file is part of GooberCord.
 //
@@ -186,7 +186,7 @@ test("settings.js speaks through gc.settings.* (and the shared seats only)", () 
   };
   for (const [key, value] of Object.entries(pinned)) {
     assert.equal(en[key], value, `the bundle carries ${key} as the source used to say it`);
-    assert.ok(SETTINGS.includes(`t("${key}`),
+    assert.match(SETTINGS, new RegExp(`t\\("${key.replace(/\./g, "\\.")}`),
       `the call site rides ${key}`);
   }
   // The adjudicated grammar ride: the use/member count seats flex at
@@ -225,21 +225,4 @@ test("settings.js holds NO sweep's leftover literals (the seat scan)", () => {
   // confirmDialog-style call must ride a key seat, never a bare word.
   assert.doesNotMatch(codeOnly, /, "(Clear|Delete|Revoke|Save|Keep|Done|Apply)",/,
     "no positional confirm label escapes as a literal");
-});
-
-// --- the language picker seat (the locale lane's switcher surface) -----------
-
-test("the language picker rides every settings seat: the manage build and both refusal panes", () => {
-  assert.match(SETTINGS, /export function languageBlock/,
-    "the picker is its own exported builder (testable, one seat)");
-  assert.match(SETTINGS, /BUNDLE_LANGS\.map\(\(seat\) =>/,
-    "the option list rides the loader's seat list, never a hand copy");
-  assert.match(SETTINGS,
-    /select\.addEventListener\("change", \(\) => \{ void setLang\(select\.value\); \}\)/,
-    "the select wires straight into setLang — no side state");
-  const mounts = (SETTINGS.match(/languageBlock\(\)/g) || []).length;
-  assert.ok(mounts >= 3,
-    `the picker mounts in the server-settings build and both refusal panes (${mounts} found)`);
-  assert.match(SETTINGS, /const LANG_ENDONYMS = \{/,
-    "labels are endonyms — the picker convention carries its own words");
 });

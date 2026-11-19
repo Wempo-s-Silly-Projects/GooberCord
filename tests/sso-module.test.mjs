@@ -1,4 +1,4 @@
-// Copyright 2026 ItsWempo
+// Copyright 2026 YourLocalGoober
 //
 // This file is part of GooberCord.
 //
@@ -242,7 +242,7 @@ test("the redeem rides the service-binding lane and answers the /api/me shape wi
   assert.match(String(payload.csrfToken), /^[A-Za-z0-9_-]+$/);
 
   const cookie = response.headers.get("Set-Cookie");
-  assert.match(cookie, /^__Host-goober_session=/);
+  assert.match(cookie, /^goober_session=/);
   assert.match(cookie, /HttpOnly/);
   assert.match(cookie, /SameSite=Lax/);
 

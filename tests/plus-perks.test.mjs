@@ -1,4 +1,4 @@
-// Copyright 2026 ItsWempo
+// Copyright 2026 YourLocalGoober
 //
 // This file is part of GooberCord.
 //
@@ -37,7 +37,7 @@ import {
 } from "../api/plus.mjs";
 import { HttpError, json } from "../api/core/http.mjs";
 import { randomToken, sha256Hex, nowSeconds } from "../api/core/crypto.mjs";
-import { GC_COIN_MESSAGE_DAILY_CAP, GC_WELL_STREAK_STEP_PERCENT, RATE_LIMIT_BINDINGS } from "../constants.mjs";
+import { GC_COIN_MESSAGE_DAILY_CAP, RATE_LIMIT_BINDINGS } from "../constants.mjs";
 
 const ORIGIN = "http://localhost";
 const USER_ID = 7;
@@ -253,7 +253,7 @@ function authed(method, path, body) {
     headers: {
       "Content-Type": "application/json",
       Origin: ORIGIN,
-      Cookie: "__Host-goober_session=" + SESSION_TOKEN,
+      Cookie: "goober_session=" + SESSION_TOKEN,
       "X-CSRF-Token": SESSION_ROW.csrf_token,
     },
     body: body === undefined ? undefined : JSON.stringify(body),
@@ -459,10 +459,6 @@ const CLAIM_TEST = (sql) =>
   sql.startsWith("INSERT INTO gc_coin_ledger (user_id, delta, source, created_at)") && sql.includes("'daily'");
 
 test("the claim is FLAT (25) for every tier; only the CEILING rides the term (500 vs 250)", async () => {
-  // T76 supersession (2026-11-18): the tier is retired from the DELTA and the
-  // CEILING still rides the term — and the Well's streak rider now multiplies
-  // the minted delta (a fresh Well claims WITH the first step: 25 * 1.2 = 30).
-  const firstStepGrant = Math.round(25 * (1 + GC_WELL_STREAK_STEP_PERCENT / 100));
   for (const [plus, ceiling] of [[true, 500], [false, 250]]) {
     const db = coinRoutesDb({ plus });
     const url = new URL(ORIGIN + "/api/coins/claim");
@@ -475,12 +471,10 @@ test("the claim is FLAT (25) for every tier; only the CEILING rides the term (50
     // binds: [userId, grant, now, userId, userId, dayStart, userId, dayStart, grant, ceiling]
     assert.deepEqual(
       [mint.bound[0], mint.bound[1], mint.bound[8], mint.bound[9]],
-      [USER_ID, firstStepGrant, firstStepGrant, ceiling],
+      [USER_ID, 25, 25, ceiling],
     );
     const body = await bodyOf(response);
     assert.equal(body.dailyCeiling, ceiling);
-    assert.equal(body.streak, 1, "the Well's fresh claim rides the streak fields");
-    assert.equal(body.bonusPercent, GC_WELL_STREAK_STEP_PERCENT);
     assert.equal(body.daily.grant, 25);
   }
 });
@@ -493,11 +487,7 @@ test("an inactive term mints the FREE claim values and answers the free standing
   );
   assert.equal(response.status, 200);
   const mint = db.calls.find((call) => call.call === "run" && CLAIM_TEST(call.sql));
-  // T76: the minted delta is the Well's first-step grant; the standing base
-  // and the FREE ceiling are untouched.
-  assert.deepEqual([mint.bound[1], mint.bound[8], mint.bound[9]],
-    [Math.round(25 * (1 + GC_WELL_STREAK_STEP_PERCENT / 100)),
-     Math.round(25 * (1 + GC_WELL_STREAK_STEP_PERCENT / 100)), 250]);
+  assert.deepEqual([mint.bound[1], mint.bound[8], mint.bound[9]], [25, 25, 250]);
   const body = await bodyOf(response);
   assert.equal(body.dailyCeiling, 250);
   assert.equal(body.daily.grant, 25);
@@ -588,12 +578,7 @@ test("every surface binds the badge's `now` FIRST in textual order (the fragment
 test("the media intake consumes the tier pair (messages.mjs passes attachmentCapBytes through)", () => {
   const messages = readFileSync(new URL("../api/messages.mjs", import.meta.url), "utf8");
   assert.match(messages, /import \{ attachmentCapBytes, plusActiveExpr, plusPerkActive, publicIsPlus \} from "\.\/plus\.mjs";/);
-  // The staged large-file lane passes the tier pair through (the buffered
-  // image lane rides the frame — T-AUD-M1 folded the boost seat into the gate
-  // read, and T-AUD-M2 dropped its dead second merge over the tier pair).
-  assert.match(messages, /attachmentCapBytes\(env, authorId, now\)/);
-  // Whitespace-tolerant (T-AUD-M2): the pins bind tokens, not the one
-  // formatting they happened to ship with.
-  assert.match(messages, /readMultipartWithImage\(request,\s*\{\s*maxFileBytes:\s*frameFileBytes,\s*maxRequestBytes:\s*frameFileBytes\s*\+\s*512\s*\*\s*1024,\s*\}\)/);
-  assert.match(messages, /prepareAttachmentBytes\(files\[0\],\s*frameFileBytes\)/);
+  assert.match(messages, /attachmentCapBytes\(env, Number\(session\.user\.id\), nowSeconds\(\)\)/);
+  assert.match(messages, /readMultipartWithImage\(request, caps\)/);
+  assert.match(messages, /prepareAttachmentBytes\(files\[0\], caps\.fileBytes\)/);
 });

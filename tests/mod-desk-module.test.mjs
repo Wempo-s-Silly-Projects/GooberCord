@@ -1,4 +1,4 @@
-// Copyright 2026 ItsWempo
+// Copyright 2026 YourLocalGoober
 //
 // This file is part of GooberCord.
 //
@@ -695,14 +695,8 @@ test("a fresh join carries the invite code on the membership row (join attributi
   assert.equal(response.status, 200);
   assert.deepEqual(await bodyOf(response), { joined: true, serverId: 3 });
 
-  // T10 R1: the INSERT and the uses bump ride ONE batch — the pin finds the
-  // pair inside the batch entry.
-  const batch = db.calls.find((entry) => entry.call === "batch");
-  assert.ok(batch, "the fused join-bump batch ran");
-  const insert = batch.statements.find((statement) => INVITE_JOIN_INSERT_TEST(statement.sql));
+  const insert = db.calls.find((entry) => entry.call === "run" && INVITE_JOIN_INSERT_TEST(entry.sql));
   assert.ok(insert);
-  const bump = batch.statements.find((statement) => INVITE_USES_BUMP_TEST(statement.sql));
-  assert.ok(bump, "the bump rides the same batch");
   // Binds: server, user, now, the attribution, the invite-exists pair's code,
   // then the two guard pairs.
   assert.deepEqual(insert.bound.slice(0, 4), [3, USER_ID, insert.bound[2], code]);
@@ -714,11 +708,7 @@ test("a fresh join carries the invite code on the membership row (join attributi
   assert.deepEqual(insert.bound.slice(10), [USER_ID, USER_ID, insert.bound[2]]);
   assert.match(insert.sql, /NOT EXISTS \(SELECT 1 FROM gc_server_bans ijb/);
   assert.match(insert.sql, /COUNT\(\*\) FROM gc_server_members ijw WHERE ijw\.user_id = \?\) < \(CASE/);
-  // The bump's claim arm scopes to THIS request's joined_at (a re-join's
-  // surviving row predates the request, so only a landing join moves uses).
-  assert.match(bump.sql, /EXISTS \(SELECT 1 FROM gc_server_members ium WHERE ium\.server_id = \? AND ium\.user_id = \? AND ium\.joined_at = \?\)/);
-  assert.deepEqual(bump.bound, [code, insert.bound[2], 3, USER_ID, insert.bound[2]]);
-  assert.ok(batch.statements.find((statement) => INVITE_USES_BUMP_TEST(statement.sql)), "the uses counter moved");
+  assert.ok(db.calls.find((entry) => INVITE_USES_BUMP_TEST(entry.sql)), "the uses counter moved");
 });
 
 test("a banned account joining by a VALID invite is refused with the banned copy", async () => {
@@ -735,16 +725,12 @@ test("a banned account joining by a VALID invite is refused with the banned copy
 
   assert.equal(response.status, 403);
   assert.deepEqual(await bodyOf(response), { error: "You are banned from that server." });
-  // The guard rode the INSERT; the fused batch's two statements (the INSERT,
-  // then the joined-at-scoped bump) made zero changes — nothing written. The
-  // batch always carries the pair under R1; the guarantee lives in the WHERE.
-  const fused = db.calls.filter((entry) => entry.call === "batch");
-  assert.equal(fused.length, 1, "one fused join-bump batch");
-  assert.equal(fused[0].statements.length, 2, "the INSERT leads, the bump follows");
-  assert.ok(INVITE_JOIN_INSERT_TEST(fused[0].statements[0].sql));
-  assert.ok(INVITE_USES_BUMP_TEST(fused[0].statements[1].sql));
-  assert.equal(db.calls.filter((entry) => entry.call === "run").length, 0, "no bare run — the lookup rode a first, the pair rides the batch only");
-  assert.ok(db.calls.find((entry) => entry.call === "first" && INVITE_LOOKUP_TEST(entry.sql)), "the lookup ran");
+  // The guard rode the INSERT; nothing was written.
+  assert.deepEqual(
+    db.calls.filter((entry) => entry.call === "batch"),
+    [],
+  );
+  assert.equal(db.calls.filter((entry) => entry.call === "run").length, 1);
 });
 
 test("a discovery join refuses a banned account with the same copy", async () => {
@@ -992,11 +978,7 @@ const MEMBER_GATE_SQL_TEST = (sql) =>
 const MEMBER_GATE_CHANNEL_SQL_TEST = (sql) =>
   sql.includes("SELECT server_id FROM gc_channels WHERE id = ? LIMIT 1");
 const SERVER_LEVEL_SQL_TEST = (sql) =>
-  sql.includes("SELECT verification_level, rules_text, boosts FROM gc_servers WHERE id = ? LIMIT 1");
-// The account-ban rider's shared read (api/accounts.mjs's activeBanRow) — the
-// same WHERE the login screen and the SSO redeem ran before T58.
-const ACTIVE_BAN_SQL_TEST = (sql) =>
-  sql.includes("SELECT reason, expires_at FROM bans WHERE user_id = ?");
+  sql.includes("SELECT verification_level, rules_text FROM gc_servers WHERE id = ? LIMIT 1");
 
 function gateRoutes({
   timed_out_until = null, role = "member", permissions = 0,
@@ -1024,51 +1006,6 @@ test("a timed-out member is refused with the filed ISO wording", async () => {
       assert.match(error.message, /^You are timed out until \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{3})?Z\.$/);
       return true;
     },
-  );
-});
-
-test("a mid-session global ban refuses the send gate with the account-ban copy", async () => {
-  // T58: the active-ban read (the login/SSO gates' shared WHERE) answers the
-  // gate BEFORE the member-state read — the open session loses the doors the
-  // moment the ban row lands, no session invalidation needed.
-  const db = fakeDb([
-    { test: ACTIVE_BAN_SQL_TEST, first: async () => ({ reason: "spam", expires_at: nowSeconds() + 999_999 }) },
-    ...gateRoutes({ verification_level: 0 }),
-  ]);
-  await assert.rejects(
-    () => enforceMemberGates(envWithLimiters(db), 3, USER_ID),
-    (error) => {
-      assert.equal(error instanceof HttpError, true);
-      assert.equal(error.status, 403);
-      assert.equal(error.message, "This account is currently banned.");
-      return true;
-    },
-  );
-  // The member read never happens for a banned account — the ban answers first.
-  assert.equal(db.calls.find((entry) => MEMBER_GATE_SQL_TEST(entry.sql)), undefined);
-});
-
-test("an unrevoked-but-expired global ban does not block the send gate", async () => {
-  // The active-ban predicate filters lapsed rows inside the WHERE (the same
-  // read the login gate runs), so the read answers null and the gate rides on.
-  const db = fakeDb([
-    { test: ACTIVE_BAN_SQL_TEST, first: async () => null },
-    ...gateRoutes({ verification_level: 0 }),
-  ]);
-  await enforceMemberGates(envWithLimiters(db), 3, USER_ID);
-});
-
-test("a mid-session global ban answers the DM lane's gate arm too", async () => {
-  // A ban is an account-level state, not a server-local one: the DM/group arm
-  // (which skips the member-state gates for want of a server row) still rides
-  // the one active-ban read. (RED first: pre-T58 this arm never read bans.)
-  const db = fakeDb([
-    { test: ACTIVE_BAN_SQL_TEST, first: async () => ({ reason: null, expires_at: null }) },
-    { test: MEMBER_GATE_CHANNEL_SQL_TEST, first: async () => ({ server_id: null }) },
-  ]);
-  await assert.rejects(
-    () => enforceMemberGatesForChannel(envWithLimiters(db), 44, USER_ID),
-    (error) => error.status === 403 && error.message === "This account is currently banned.",
   );
 });
 

@@ -1,4 +1,4 @@
-// Copyright 2026 ItsWempo
+// Copyright 2026 YourLocalGoober
 //
 // This file is part of GooberCord.
 //
@@ -16,16 +16,12 @@
 // GNU Affero General Public License along with this program.  If not,
 // see <https://www.gnu.org/licenses/>
 
-// GIF search (KLIPY migration, Tenor EOL 2026-06-30): the KLIPY route's
-// contract — the key is OWNER-SUPPLIED ONLY (never hardcoded, never
-// committed, never echoed) and rides the UPSTREAM PATH segment, an
+// GIF search (parity bundle 0020): the Tenor route's contract — the key is
+// OWNER-SUPPLIED ONLY (never hardcoded, never committed, never echoed), an
 // unconfigured environment answers the shared 503 before any caller work,
-// the query/limit/page shapes are clamped, and the upstream payload is
-// mapped down to the same three picker fields the client contract carried —
-// the wire shape NEVER changes with the provider. KLIPY's customer_id and
-// locale are OMITTED ENTIRELY (privacy law: LIMIT COLLECTION NOT ACCESS —
-// no user identifiers go to third parties). The upstream fetch is injected
-// via globalThis.fetch (no network in tests).
+// the query/limit/position shapes are clamped, and the upstream payload is
+// mapped down to the three picker fields. The upstream fetch is injected via
+// globalThis.fetch (no network in tests).
 import test from "node:test";
 import assert from "node:assert/strict";
 
@@ -58,7 +54,7 @@ async function session() {
       avatar_version: null,
       totp_enabled: 0,
     },
-    headers: { Cookie: "__Host-goober_session=" + token },
+    headers: { Cookie: "goober_session=" + token },
   };
 }
 
@@ -110,31 +106,26 @@ test("an unconfigured environment answers the shared 503 before any session work
 test("an empty-string key counts as unconfigured", async () => {
   const response = await dispatch(
     new Request(ORIGIN + "/api/gifs/search?q=cats", { method: "GET" }),
-    envWithLimiters({ KLIPY_API_KEY: "", GOOBER_DB: { prepare: () => { throw new Error("should never query"); } } }),
+    envWithLimiters({ TENOR_API_KEY: "", GOOBER_DB: { prepare: () => { throw new Error("should never query"); } } }),
   );
   assert.equal(response.status, 503);
 });
 
-test("the configured search clamps the shape and maps KLIPY's payload down to the unchanged picker fields", async () => {
+test("the configured search clamps the shape and maps Tenor's payload down to the picker fields", async () => {
   let upstreamUrl = null;
   globalThis.fetch = async (url) => {
     upstreamUrl = String(url);
     return {
       ok: true,
       json: async () => ({
-        result: true,
-        data: {
-          data: [
-            { id: "abc123", title: "happy cat", file: {
-              md: { gif: { url: "https://static.klipy.com/abc/md.gif" } },
-              sm: { gif: { url: "https://static.klipy.com/abc/sm.gif" } },
-            } },
-            { id: "no-media", title: "mystery", file: {} },
-          ],
-          current_page: 1,
-          per_page: 8,
-          has_next: true,
-        },
+        results: [
+          { id: "abc123", content_description: "happy cat", media_formats: {
+            gif: { url: "https://media.tenor.com/abc/full.gif" },
+            tinygif: { url: "https://media.tenor.com/abc/tiny.gif" },
+          } },
+          { id: "no-media", content_description: "mystery" },
+        ],
+        next: "7",
       }),
     };
   };
@@ -153,116 +144,22 @@ test("the configured search clamps the shape and maps KLIPY's payload down to th
         method: "GET",
         headers: (await SESSION_FIX).headers,
       }),
-      envWithLimiters({ KLIPY_API_KEY: "OWNER-SECRET", GOOBER_DB: db }),
+      envWithLimiters({ TENOR_API_KEY: "OWNER-SECRET", GOOBER_DB: db }),
     );
     assert.equal(response.status, 200);
     const body = await bodyOf(response);
     assert.deepEqual(body.gifs, [
       { id: "abc123", description: "happy cat",
-        url: "https://static.klipy.com/abc/md.gif",
-        previewUrl: "https://static.klipy.com/abc/sm.gif" },
+        url: "https://media.tenor.com/abc/full.gif",
+        previewUrl: "https://media.tenor.com/abc/tiny.gif" },
       { id: "no-media", description: "mystery", url: null, previewUrl: null },
     ]);
-    assert.equal(body.position, "2", "KLIPY's page cursor maps DOWN to the wire's opaque position — has_next hands the next page");
-    // The key never appears in the RESPONSE (it rode the upstream path only)
-    // and the privacy law rides: no customer_id, no locale, no client_key.
-    const echo = JSON.stringify(body);
-    assert.equal(!echo.includes("OWNER-SECRET"), true);
-    assert.match(upstreamUrl, /\/api\/v1\/OWNER-SECRET\/gifs\/search/, "the key rides KLIPY's PATH segment");
+    assert.equal(body.position, "7");
+    // The key never appears in the RESPONSE (it rode the upstream URL only).
+    assert.equal(!JSON.stringify(body).includes("OWNER-SECRET"), true);
+    assert.match(upstreamUrl, /key=OWNER-SECRET/);
     assert.match(upstreamUrl, /q=happy\+cat/); // URLSearchParams encodes the space
-    assert.match(upstreamUrl, /per_page=8/);
-    assert.match(upstreamUrl, /content_filter=low/, "the named default content filter rides");
-    assert.match(upstreamUrl, /format_filter=gif/, "the route asks the one format the picker renders");
-    assert.doesNotMatch(upstreamUrl, /customer_id=|locale=|client_key=/,
-      "LIMIT COLLECTION NOT ACCESS — no user identifiers or free locale knobs ride upstream");
-  } finally {
-    delete globalThis.fetch;
-  }
-});
-
-test("the position cursor maps to KLIPY's page: the wire's token walks one page at a time", async () => {
-  const seen = [];
-  globalThis.fetch = async (url) => {
-    seen.push(String(url));
-    return {
-      ok: true,
-      json: async () => ({ result: true, data: { data: [], current_page: 3, per_page: 12, has_next: false } }),
-    };
-  };
-  try {
-    const db = {
-      prepare: (sql) => ({
-        bind: () => ({
-          first: async () => (SESSION_READ_TEST(sql) ? (await SESSION_FIX).row : null),
-          all: async () => ({ results: [] }),
-          run: async () => ({ meta: { changes: 1 } }),
-        }),
-      }),
-    };
-    const response = await dispatch(
-      new Request(ORIGIN + "/api/gifs/search?q=cats&position=3", {
-        method: "GET",
-        headers: (await SESSION_FIX).headers,
-      }),
-      envWithLimiters({ KLIPY_API_KEY: "OWNER-SECRET", GOOBER_DB: db }),
-    );
-    assert.equal(response.status, 200);
-    assert.match(seen[0], /page=3/, "the wire's position token walks KLIPY's page param");
-    const body = await bodyOf(response);
-    assert.equal(body.gifs.length, 0);
-    assert.equal(body.position, null, "has_next=false hands back the end-of-list null the client contract carries");
-  } finally {
-    delete globalThis.fetch;
-  }
-});
-
-test("the page size clamps at 50 (KLIPY's per_page ceiling) — beyond is the shared 400", async () => {
-  const db = {
-      prepare: (sql) => ({
-        bind: () => ({
-          first: async () => (SESSION_READ_TEST(sql) ? (await SESSION_FIX).row : null),
-          all: async () => ({ results: [] }),
-          run: async () => ({ meta: { changes: 1 } }),
-        }),
-      }),
-    };
-  for (const limit of ["51", "0", "-3", "12x"]) {
-    const response = await dispatch(
-      new Request(ORIGIN + "/api/gifs/search?q=cats&limit=" + encodeURIComponent(limit), {
-        method: "GET",
-        headers: (await SESSION_FIX).headers,
-      }),
-      envWithLimiters({ KLIPY_API_KEY: "OWNER-SECRET", GOOBER_DB: db }),
-    );
-    assert.equal(response.status, 400, "limit=" + limit);
-    assert.equal((await bodyOf(response)).error, "That page size is invalid.");
-  }
-});
-
-test("KLIPY's failure shapes answer the shared 502 — a false result flag never maps down", async () => {
-  const db = {
-      prepare: (sql) => ({
-        bind: () => ({
-          first: async () => (SESSION_READ_TEST(sql) ? (await SESSION_FIX).row : null),
-          all: async () => ({ results: [] }),
-          run: async () => ({ meta: { changes: 1 } }),
-        }),
-      }),
-    };
-  globalThis.fetch = async () => ({
-    ok: true,
-    json: async () => ({ result: false, error: "upstream said no" }),
-  });
-  try {
-    const response = await dispatch(
-      new Request(ORIGIN + "/api/gifs/search?q=cats", {
-        method: "GET",
-        headers: (await SESSION_FIX).headers,
-      }),
-      envWithLimiters({ KLIPY_API_KEY: "OWNER-SECRET", GOOBER_DB: db }),
-    );
-    assert.equal(response.status, 502);
-    assert.equal((await bodyOf(response)).error, "GIF search is unavailable right now.");
+    assert.match(upstreamUrl, /limit=8/);
   } finally {
     delete globalThis.fetch;
   }

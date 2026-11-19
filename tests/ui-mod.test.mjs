@@ -1,4 +1,4 @@
-// Copyright 2026 ItsWempo
+// Copyright 2026 YourLocalGoober
 //
 // This file is part of GooberCord.
 //
@@ -184,7 +184,7 @@ test("mod.js speaks through gc.mod.* (and the swept seats only)", () => {
   };
   for (const [key, value] of Object.entries(pinned)) {
     assert.equal(en[key], value, `the bundle carries ${key} as the source used to say it`);
-    assert.ok(MOD.includes(`t("${key}`),
+    assert.match(MOD, new RegExp(`t\\("${key.replace(/\./g, "\\.")}`),
       `the call site rides ${key}`);
   }
   // The adjudicated grammar ride: prune's confirm flexes member/members at

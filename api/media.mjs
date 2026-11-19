@@ -1,4 +1,4 @@
-// Copyright 2026 ItsWempo
+// Copyright 2026 YourLocalGoober
 //
 // This file is part of GooberCord.
 //
@@ -205,7 +205,7 @@ export function standaloneAttachmentStatements(env, uploaderId, prepared, now) {
 // The standalone upload: one batch, { attachment } result. No idempotency key
 // exists here — a double-POST makes two pending rows, each reviewed on its
 // own (the queue shows the uploader/size/creation second either way).
-export async function createAttachment(env, uploaderId, fileBytes, ctx) {
+export async function createAttachment(env, uploaderId, fileBytes) {
   const prepared = prepareAttachmentBytes(fileBytes);
   const now = nowSeconds();
   const results = await env.GOOBER_DB.batch(
@@ -215,10 +215,6 @@ export async function createAttachment(env, uploaderId, fileBytes, ctx) {
   if (!Number.isInteger(id) || id < 1) {
     throw new HttpError(500, "That image could not be stored. Please try again.");
   }
-  // The object copy (T100): the sanitized bytes land at gc-attachments/<id>
-  // once the batch resolved the id — best-effort; the complete D1 copy above
-  // stays the serving fallback on a put miss.
-  await exportAttachmentObject(env, ctx, id, prepared.bytes);
   return {
     id,
     status: "pending",
@@ -276,109 +272,6 @@ export function messageAttachmentStatements(env, uploaderId, channelId, clientMe
   return statements;
 }
 
-// --- R2 object store (T100) --------------------------------------------------------
-//
-// The owner's 2026-11-18 order moved the D1 byte surfaces to R2 (the
-// GC_MEDIA binding, bucket wempos-forum-r2 — docs/drafts/
-// t100-r2-image-migration-spec.md is the doc of record). Every attachment/
-// emoji/sticker/sound object lives at gc-attachments/<gc_attachments.id> —
-// the id is the join key every consumer already holds, so no column is added
-// (the gc_attachments row stays the single source of truth). D1 keeps its
-// byte copy in v1 and remains the SERVING FALLBACK: a put/serving/delete
-// miss, or an env without the binding (tests, local dev), rides the proven
-// chunk-table paths with zero regression. The owner's S3 endpoint/keys stay
-// owner-held — the worker speaks only the native binding ops.
-
-export const ATTACHMENT_OBJECT_PREFIX = "gc-attachments/";
-
-export function attachmentObjectKey(attachmentId) {
-  return ATTACHMENT_OBJECT_PREFIX + Number(attachmentId);
-}
-
-function r2MissLog(op, attachmentId, error) {
-  console.error(op + " missed for attachment " + attachmentId + ":", String((error && error.message) || error));
-}
-
-// The small lanes' put: the sanitized bytes are in hand, so the write is
-// direct. Best-effort by the spec's posture — a missed put leaves the
-// complete D1 copy in charge of serving (the orphan-sweep repair lane
-// back-fills); no retry loop in the request path.
-export async function exportAttachmentObject(env, ctx, attachmentId, bytes) {
-  const bucket = env.GC_MEDIA;
-  if (!bucket) return;
-  const put = bucket.put(attachmentObjectKey(attachmentId), bytes).then(null, (error) =>
-    r2MissLog("GC_MEDIA.put", attachmentId, error));
-  if (ctx && typeof ctx.waitUntil === "function") {
-    ctx.waitUntil(put);
-    return;
-  }
-  await put;
-}
-
-// The large lane's put source: the committed chunk set read page-by-page —
-// the same paged reader shape the serving stream uses — so the isolate never
-// holds more than one SERVING_PAGE_ROWS (4 MiB) page while the bytes stream
-// into the bucket.
-export function attachmentChunkStream(env, attachmentId) {
-  let cursor = 0;
-  return new ReadableStream({
-    async pull(controller) {
-      const page = await env.GOOBER_DB.prepare(PAGE_READ_SQL).bind(attachmentId, cursor).all();
-      const rows = page.results || [];
-      if (rows.length === 0) {
-        controller.close();
-        return;
-      }
-      for (const entry of rows) controller.enqueue(blobToUint8Array(entry.data));
-      cursor = Number(rows[rows.length - 1].seq) + 1;
-      if (rows.length < SERVING_PAGE_ROWS) controller.close();
-    },
-  });
-}
-
-// The large commit's put: the R2 write needs a stream of known length, which
-// the Workers runtime's FixedLengthStream provides (piped from the paged
-// reader above); non-worker runtimes (tests) record the raw paged stream.
-export async function exportAttachmentObjectStreamed(env, ctx, attachmentId, sizeBytes) {
-  const bucket = env.GC_MEDIA;
-  if (!bucket) return;
-  const put = (async () => {
-    try {
-      if (typeof FixedLengthStream === "function") {
-        const stream = new FixedLengthStream(sizeBytes);
-        await Promise.all([
-          bucket.put(attachmentObjectKey(attachmentId), stream.readable),
-          attachmentChunkStream(env, attachmentId).pipeTo(stream.writable),
-        ]);
-      } else {
-        await bucket.put(attachmentObjectKey(attachmentId), attachmentChunkStream(env, attachmentId));
-      }
-    } catch (error) {
-      r2MissLog("GC_MEDIA.put", attachmentId, error);
-    }
-  })();
-  if (ctx && typeof ctx.waitUntil === "function") {
-    ctx.waitUntil(put);
-    return;
-  }
-  await put;
-}
-
-// The object delete: best-effort (a missed delete leaves an orphan object,
-// garbage-collectable, never a dangling reference — D1 stays the authority),
-// scheduled in waitUntil where a ctx is available.
-export async function deleteAttachmentObject(env, ctx, attachmentId) {
-  const bucket = env.GC_MEDIA;
-  if (!bucket) return;
-  const deletion = bucket.delete(attachmentObjectKey(attachmentId)).then(null, (error) =>
-    r2MissLog("GC_MEDIA.delete", attachmentId, error));
-  if (ctx && typeof ctx.waitUntil === "function") {
-    ctx.waitUntil(deletion);
-    return;
-  }
-  await deletion;
-}
-
 // --- serving ---------------------------------------------------------------------
 
 // Concatenates an attachment's chunk set in seq order, or returns null when
@@ -410,29 +303,6 @@ async function assembledChunkBytes(env, attachmentId) {
 // to stay one constant's truth (SERVING_PAGE_ROWS here).
 const SERVING_PAGE_ROWS = 64;
 
-// The paged read itself, one constant's truth shared by the D1 serving
-// stream and the large lane's R2 put source (byte-identical SQL either way).
-const PAGE_READ_SQL =
-  "SELECT seq, data FROM gc_attachment_chunks WHERE attachment_id = ? AND seq >= ? " +
-    "ORDER BY seq LIMIT " + SERVING_PAGE_ROWS;
-
-// The streamed header set, one builder for the D1 twin and the R2 twin (the
-// T10 hardening's law: the streamed set carries the small path's
-// line-for-line headers).
-function largeAttachmentHeaders(row) {
-  const approved = row.status === "approved";
-  return {
-    "Content-Type": row.mime,
-    "Cache-Control": approved ? "public, max-age=31536000, immutable" : "private, max-age=300",
-    "X-Content-Type-Options": "nosniff",
-    // The small path's header set rides the streamed one too (T10
-    // hardening-LOW): imageResponse pins this exact disposition on every
-    // assembled serving, and the stream re-verified the head bytes' mime
-    // above — so the streamed twin carries the same line, same copy.
-    "Content-Disposition": 'inline; filename="image"',
-  };
-}
-
 // Returns the streaming Response, or null for a chunk set that is not a
 // lawful serving set (callers turn that into the shared 404). Large rows are
 // lane-born IMAGES only — the soundboard's audio caps at 512 KiB and never
@@ -440,7 +310,10 @@ function largeAttachmentHeaders(row) {
 // sniff against the stored first bytes, exactly as the assembled path does.
 async function streamChunkedAttachment(env, row) {
   const attachmentId = Number(row.id);
-  const page = await env.GOOBER_DB.prepare(PAGE_READ_SQL).bind(attachmentId, 0).all();
+  const page = await env.GOOBER_DB.prepare(
+    "SELECT seq, data FROM gc_attachment_chunks WHERE attachment_id = ? AND seq >= ? " +
+      "ORDER BY seq LIMIT " + SERVING_PAGE_ROWS,
+  ).bind(attachmentId, 0).all();
   const headRows = page.results || [];
   if (headRows.length === 0 || Number(headRows[0].seq) !== 0) return null;
   const head = blobToUint8Array(headRows[0].data);
@@ -463,7 +336,10 @@ async function streamChunkedAttachment(env, row) {
         }
         // The next page never re-serves a row before the cursor (seq >= ?),
         // and a lawful set ends within one page of the cursor either way.
-        const nextPage = await env.GOOBER_DB.prepare(PAGE_READ_SQL).bind(attachmentId, cursor).all();
+        const nextPage = await env.GOOBER_DB.prepare(
+          "SELECT seq, data FROM gc_attachment_chunks WHERE attachment_id = ? AND seq >= ? " +
+            "ORDER BY seq LIMIT " + SERVING_PAGE_ROWS,
+        ).bind(attachmentId, cursor).all();
         rows = nextPage.results || [];
         if (rows.length === 0) {
           await writer.close();
@@ -477,82 +353,15 @@ async function streamChunkedAttachment(env, row) {
   })();
   void pump;
 
+  const approved = row.status === "approved";
   return new Response(readable, {
     status: 200,
-    headers: largeAttachmentHeaders(row),
-  });
-}
-
-// The R2 twin (T100): on auth-gate pass the object is consulted BEFORE the
-// chunk table. A miss — absent binding, absent object, failed read, or a
-// head whose bytes fail the row's mime re-verification — returns null and
-// rides the existing D1 paths verbatim; nothing here serves best-guess.
-// Small rows resolve through the SAME imageResponse/audioResponse flows (the
-// byte-identical content-type law); large rows stream with the head
-// re-verified first, exactly as the D1 stream does.
-async function r2AttachmentResponse(env, row) {
-  const bucket = env.GC_MEDIA;
-  if (!bucket) return null;
-  let object;
-  try {
-    object = await bucket.get(attachmentObjectKey(row.id));
-  } catch (error) {
-    r2MissLog("GC_MEDIA.get", row.id, error);
-    return null;
-  }
-  if (!object || !object.body) return null;
-
-  if (Number(row.size_bytes) > MAX_ATTACHMENT_BYTES) {
-    return r2StreamedResponse(object.body, row);
-  }
-  const bytes = blobToUint8Array(await new Response(object.body).arrayBuffer());
-  const admittedAudio = GC_SOUND_INTAKE_MIMES.includes(String(row.mime || ""));
-  const cache = row.status === "approved"
-    ? "public, max-age=31536000, immutable"
-    : "private, max-age=300";
-  return imageResponse(bytes, row.mime, cache) ??
-    (admittedAudio ? audioResponse(bytes, row.mime, cache) : null);
-}
-
-// The streamed twin: read the head (the first stream chunk), re-verify the
-// mime against the row, then pipe the remaining body — the egress law rides
-// the R2 path too. A mismatched or empty object falls back to D1 (null).
-async function r2StreamedResponse(body, row) {
-  let reader;
-  let first;
-  try {
-    reader = body.getReader();
-    first = await reader.read();
-  } catch {
-    return null;
-  }
-  if (first.done) return null;
-  let head = blobToUint8Array(first.value);
-  while (head.length < 12) {
-    const next = await reader.read(); // a sub-sniff-sized head keeps reading
-    if (next.done) return null;
-    const merged = new Uint8Array(head.length + next.value.length);
-    merged.set(head, 0);
-    merged.set(new Uint8Array(next.value), head.length);
-    head = merged;
-  }
-  if (sniffImageMime(head) !== row.mime) return null;
-
-  const readable = new ReadableStream({
-    start(controller) {
-      controller.enqueue(head);
-    },
-    async pull(controller) {
-      try {
-        const next = await reader.read();
-        if (next.done) controller.close();
-        else controller.enqueue(blobToUint8Array(next.value));
-      } catch (error) {
-        controller.error(error); // a truncated stream answers the client abort
-      }
+    headers: {
+      "Content-Type": row.mime,
+      "Cache-Control": approved ? "public, max-age=31536000, immutable" : "private, max-age=300",
+      "X-Content-Type-Options": "nosniff",
     },
   });
-  return new Response(readable, { status: 200, headers: largeAttachmentHeaders(row) });
 }
 
 async function handleAttachmentServingRoute(request, env, attachmentId) {
@@ -573,13 +382,6 @@ async function handleAttachmentServingRoute(request, env, attachmentId) {
       throw new HttpError(404, "Attachment not found.");
     }
   }
-
-  // R2-first (T100): the object is consulted before the chunk table; every
-  // miss (no binding, no object, failed read, a head that fails the mime
-  // re-verification — including the audio rows, whose object exists only
-  // once a put landed) rides the D1 paths below verbatim.
-  const r2Response = await r2AttachmentResponse(env, row);
-  if (r2Response) return r2Response;
 
   // The small lanes' proven set (every row the single-buffer intakes bore,
   // up to 20 MiB) assembles in memory; a LARGE lane row streams paged above.
@@ -615,13 +417,13 @@ async function handleAttachmentServingRoute(request, env, attachmentId) {
   throw new HttpError(404, "Attachment not found.");
 }
 
-async function handleUploadAttachmentRoute(request, env, ctx) {
+async function handleUploadAttachmentRoute(request, env) {
   const session = await requireUser(request, env);
   await rateLimit(request, env, "upload", "user:" + session.user.id);
   const files = (await readMultipartWithImage(request)).files;
   if (files.length !== 1) throw new HttpError(400, "Attach exactly one image.");
 
-  const attachment = await createAttachment(env, Number(session.user.id), files[0], ctx);
+  const attachment = await createAttachment(env, Number(session.user.id), files[0]);
   return json({ attachment: { id: attachment.id, status: attachment.status } }, 201);
 }
 
@@ -647,7 +449,7 @@ async function handlePendingQueueRoute(request, env) {
   });
 }
 
-async function handleAttachmentModerationRoute(request, env, attachmentId, action, ctx) {
+async function handleAttachmentModerationRoute(request, env, attachmentId, action) {
   const session = await requireStaff(request, env);
   const reviewerId = Number(session.user.id);
   const now = nowSeconds();
@@ -679,21 +481,17 @@ async function handleAttachmentModerationRoute(request, env, attachmentId, actio
   if (Number(results[1]?.meta?.changes) !== 1) {
     throw new HttpError(404, "Attachment not found.");
   }
-  // The object's bytes die with the row (T100): best-effort — a missed
-  // delete leaves a garbage-collectable orphan, never a dangling reference
-  // (D1 stays the authority). Fires only when the row actually died (the
-  // changes check above), exactly like the D1 chunk removal.
-  await deleteAttachmentObject(env, ctx, attachmentId);
   return json({ rejected: true, id: attachmentId });
 }
 
 export async function handleMediaRoutes(request, env, url, path, method, ctx) {
-  // ctx (the worker's execution context) carries the background-work lane;
-  // url stays unused — the dispatch loop's caller already parsed the path.
+  // ctx (the worker's execution context) completes the dispatch loop's
+  // handler signature; these routes schedule no background work today.
+  void ctx;
   void url;
 
   if (method === "POST" && path === "/api/attachments") {
-    return handleUploadAttachmentRoute(request, env, ctx);
+    return handleUploadAttachmentRoute(request, env);
   }
 
   const servingMatch = (method === "GET")
@@ -712,7 +510,7 @@ export async function handleMediaRoutes(request, env, url, path, method, ctx) {
     : null;
   if (moderationMatch) {
     return handleAttachmentModerationRoute(
-      request, env, Number(moderationMatch[1]), moderationMatch[2], ctx,
+      request, env, Number(moderationMatch[1]), moderationMatch[2],
     );
   }
 

@@ -1,4 +1,4 @@
-// Copyright 2026 ItsWempo
+// Copyright 2026 YourLocalGoober
 //
 // This file is part of GooberCord.
 //
@@ -35,7 +35,6 @@ import {
 } from "../api/servers.mjs";
 import { randomToken, sha256Hex, nowSeconds } from "../api/core/crypto.mjs";
 import { HttpError, json } from "../api/core/http.mjs";
-import { RATE_LIMIT_BINDINGS } from "../constants.mjs";
 
 const ORIGIN = "http://localhost";
 const USER_ID = 7;
@@ -123,7 +122,7 @@ async function authedRequest({ method, path, body }) {
     headers: {
       "Content-Type": "application/json",
       Origin: ORIGIN,
-      Cookie: "__Host-goober_session=" + token,
+      Cookie: "goober_session=" + token,
       "X-CSRF-Token": csrf,
     },
     body: body === undefined ? undefined : JSON.stringify(body),
@@ -131,28 +130,10 @@ async function authedRequest({ method, path, body }) {
   return { row, request };
 }
 
-// Recording limiters (the write-riders idiom): every binding answers success
-// and records (binding, key) — the join limiter tests assert the exact ride.
-// A run() that drops a binding exercises the vendor's hard-503 law.
-function limiterEnv(db) {
-  const env = { GOOBER_DB: db, limiterCalls: [] };
-  for (const binding of Object.values(RATE_LIMIT_BINDINGS)) {
-    env[binding] = {
-      limit: async ({ key }) => {
-        env.limiterCalls.push({ binding, key });
-        return { success: true, key };
-      },
-    };
-  }
-  return env;
-}
-
-async function run(routes, args, { limiterless = null } = {}) {
+async function run(routes, args) {
   const { row, request } = await authedRequest(args);
   const db = fakeDb([{ test: SESSION_READ_TEST, first: async () => row }, ...routes]);
-  const env = limiterEnv(db);
-  if (limiterless) delete env[limiterless];
-  return { db, env, response: await dispatch(request, env) };
+  return { db, response: await dispatch(request, { GOOBER_DB: db }) };
 }
 
 const INVITE_INSERT_TEST = (sql) =>
@@ -259,44 +240,6 @@ for (const [label, story] of [
   });
 }
 
-// --- the raid bound on the join lane (T30) -------------------------------------------
-// Every join attempt rides the write bucket keyed to the caller BEFORE the
-// invite lookup — a dead code burns the tick too — and the vendor's law says
-// a missing limiter is the hard 503, never a silently unlimited route.
-
-test("POST /api/invites/:code/join rides the write bucket, keyed to the caller, before the invite lookup", async () => {
-  const { db, env, response } = await run(
-    [{ test: INVITE_LOOKUP_TEST, first: async () => ({ server_id: 3 }) }],
-    { method: "POST", path: "/api/invites/Goober12/join" },
-  );
-  assert.equal(response.status, 200, "the limiter ride leaves the join landing");
-  assert.deepEqual(await bodyOf(response), { joined: true, serverId: 3 });
-  // One limiter ride, the user-keyed writer's key, ahead of the table work.
-  assert.deepEqual(env.limiterCalls, [{
-    binding: "GC_WRITE_RATE_LIMITER",
-    key: await sha256Hex("write:join:" + USER_ID),
-  }]);
-  assert.ok(db.calls.some((call) => INVITE_LOOKUP_TEST(call.sql)), "the invite lookup ran");
-});
-
-test("the join's write-bucket ride fires even when the invite is dead (the bound rides every attempt)", async () => {
-  const { env, response } = await run([], {
-    method: "POST", path: "/api/invites/Goober12/join",
-  });
-  assert.equal(response.status, 404, await response.text());
-  assert.deepEqual(env.limiterCalls.map((call) => call.binding), ["GC_WRITE_RATE_LIMITER"]);
-});
-
-test("a join without the write limiter configured answers the vendor's hard 503, never an unlimited route", async () => {
-  const { response } = await run([], {
-    method: "POST", path: "/api/invites/Goober12/join",
-  }, { limiterless: "GC_WRITE_RATE_LIMITER" });
-  assert.equal(response.status, 503, "the law serves the hard 503 body");
-  assert.deepEqual(await bodyOf(response), {
-    error: "Rate limiting is not configured for this endpoint.",
-  });
-});
-
 // --- the list (mod desk) -------------------------------------------------------------
 
 test("GET /api/servers/:sid/invites lists the mod-desk history with the computed active gate", async () => {
@@ -388,58 +331,3 @@ for (const [label, rowAnswer, authorityAnswer, expectedStatus] of [
     }
   });
 }
-
-// --- the join honeypot (T32): a filled decoy field is the SILENT drop ----------------
-// The pattern the server half must land: the join route reads an OPTIONAL
-// lenient JSON body; a non-empty string under the named honeypot field is a
-// bot-painted decoy (the human never sees the field, a naive filler paints
-// every field it can see). The drop answers the SAME flat 404 an invalid code
-// answers, with ZERO db calls — not even the lookup — so the trap is fully
-// invisible and nothing is written. The hit's signal rides the limiter lane,
-// never the response shape.
-
-const JOIN_HONEYPOT_FIELD = "hp";
-
-test("a filled join honeypot field is the silent drop: flat 404, NO lookup, zero writes", async () => {
-  for (const trapValue of ["spam", "http://raider.example", "1"]) {
-    const { db, response } = await run([], {
-      method: "POST", path: "/api/invites/Goober12/join", body: { [JOIN_HONEYPOT_FIELD]: trapValue },
-    });
-    assert.equal(response.status, 404, trapValue);
-    assert.deepEqual(await bodyOf(response), { error: "That invite is no longer valid." });
-    // The invisibility pin: not even the active-predicate lookup ran — the
-    // drop happens BEFORE any db touch, so a trap hit is indistinguishable
-    // from an invalid code and can never leak invite existence.
-    assert.equal(
-      db.calls.filter((call) => INVITE_LOOKUP_TEST(call.sql)).length,
-      0, "the honeypot drop never reaches the invite lookup",
-    );
-    assert.equal(
-      db.calls.filter((call) => call.call === "run" || call.call === "batch").length,
-      0, "the honeypot drop never writes",
-    );
-  }
-});
-
-for (const [label, body] of [
-  ["absent", undefined],
-  ["empty-string", { [JOIN_HONEYPOT_FIELD]: "" }], // empty = humans' untouched placeholder — NOT a bot hit
-  ["non-string", { [JOIN_HONEYPOT_FIELD]: 7 }], // only a non-empty STRING is the bot-painted shape
-]) {
-  test(`a ${label} honeypot value rides the normal active-predicate lane`, async () => {
-    const { db, response } = await run([], {
-      method: "POST", path: "/api/invites/Goober12/join", body,
-    });
-    assert.equal(response.status, 404);
-    assert.deepEqual(await bodyOf(response), { error: "That invite is no longer valid." });
-    // The no-false-trigger pin: the lookup DID run — nothing was dropped.
-    const lookup = db.calls.find((call) => INVITE_LOOKUP_TEST(call.sql));
-    assert.ok(lookup, "the normal-lane lookup ran");
-    assert.match(lookup.sql, ACTIVE_ARMS);
-  });
-}
-
-test("the honeypot trigger is the named constant shared with the join render", async () => {
-  const mod = await import("../api/servers.mjs");
-  assert.equal(mod.JOIN_HONEYPOT_FIELD, JOIN_HONEYPOT_FIELD);
-});

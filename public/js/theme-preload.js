@@ -1,4 +1,4 @@
-// Copyright 2026 ItsWempo
+// Copyright 2026 YourLocalGoober
 //
 // This file is part of GooberCord.
 //
@@ -41,27 +41,3 @@ if (storedTheme === "dark" || storedTheme === "light") {
   document.documentElement.dataset.theme = storedTheme;
 }
 document.documentElement.dataset.skin = storedSkin === "brand" ? "brand" : "discord";
-
-// The a11y rows ride the same pre-paint beat (T81, spec §3.4): high
-// contrast and the font scale land before styles.css, so neither ever
-// flashes on a re-theme. FONT_STEPS is pinned to shell.js's list (the
-// preload can't import); the token default lives in styles.css :root.
-var FONT_STEPS = [0.875, 1, 1.25];
-var storedHighContrast = null;
-try {
-  storedHighContrast = localStorage.getItem("goober-hc");
-} catch {
-  // Storage blocked — the :root tokens apply for this beat.
-}
-if (storedHighContrast === "on") {
-  document.documentElement.dataset.hc = "on";
-}
-var storedFontScale = Number.NaN;
-try {
-  storedFontScale = parseFloat(localStorage.getItem("goober-font-scale"));
-} catch {
-  // Ditto — the :root default (1) applies for this beat.
-}
-if (FONT_STEPS.includes(storedFontScale)) {
-  document.documentElement.style.setProperty("--font-scale", String(storedFontScale));
-}

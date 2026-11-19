@@ -1,0 +1,1228 @@
+{
+  "$comment": "Shared task board (Agent Team spec): teammates claim tasks, update status, log handoffs and blockers directly. One writer at a time per task row. File boundaries are LAW - a diff outside a task's file_scope is rejected. The four Section Q anti-waste laws govern all work (see /Users/itswempo/GooberCord/CLAUDE.md).",
+  "board_version": "v75-wave7-fielded",
+  "updated": "2026-11-18",
+  "team_roster": [
+    {
+      "session": "team-lead (main)",
+      "role": "Team Lead",
+      "owns": [
+        "goal breakdown",
+        "task assignment",
+        "blocker resolution",
+        "MERGE-GO execution: push main + D1 ledger audit + remote migrate + deploy + LIVE-VERIFIED"
+      ]
+    },
+    {
+      "session": "merge-eng",
+      "role": "Merge Engineer",
+      "file_scope": [
+        "branch merge-cutover",
+        "/private/tmp/gc-merge-cutover (recovered WIP worktree)",
+        "migrations/"
+      ],
+      "task_rights": [
+        "T01",
+        "T02 (coordinate)"
+      ]
+    },
+    {
+      "session": "backend-dev",
+      "role": "Backend Developer",
+      "file_scope": [
+        "/Users/itswempo/gc-rewrite: api/**, constants.mjs, migrations/0029+ (on local floor 0017)"
+      ],
+      "task_rights": [
+        "T04",
+        "T05",
+        "T07"
+      ]
+    },
+    {
+      "session": "frontend-dev",
+      "role": "Frontend Developer",
+      "file_scope": [
+        "/Users/itswempo/gc-rewrite: public/js/**, public/styles.css, public/locales/ (9 anchored bundles ONLY - the 6 frozen stray bundles are untouchable)"
+      ],
+      "task_rights": [
+        "T07 (BUNDLE_LANGS edit)"
+      ]
+    },
+    {
+      "session": "qa-runner",
+      "role": "QA & Test Engineer",
+      "file_scope": [
+        "READ-ONLY on source; executes suites; writes /tmp/gc-qa-*.log"
+      ],
+      "task_rights": [
+        "T02"
+      ]
+    },
+    {
+      "session": "ship-reviewer",
+      "role": "Code Reviewer / Security Auditor",
+      "file_scope": [
+        "READ-ONLY; verdicts only"
+      ],
+      "task_rights": [
+        "T03"
+      ]
+    },
+    {
+      "session": "ecc-reviewer-2",
+      "role": "ECC Fresh-Context Reviewer",
+      "file_scope": [
+        "READ-ONLY; feeds findings into T03"
+      ],
+      "task_rights": [
+        "T03 (input)"
+      ]
+    },
+    {
+      "session": "ecc-security",
+      "role": "ECC Security Auditor",
+      "file_scope": [
+        "READ-ONLY"
+      ],
+      "task_rights": [
+        "T05 (second opinion)"
+      ]
+    },
+    {
+      "session": "board-ceo",
+      "role": "Gate Chair (read-only)",
+      "file_scope": [
+        "READ-ONLY; gate decisions only, never edits"
+      ],
+      "task_rights": [
+        "T01-T08 gate dispositions"
+      ]
+    },
+    {
+      "session": "parity-auditor",
+      "role": "Parity Verifier (read-only)",
+      "file_scope": [
+        "READ-ONLY"
+      ],
+      "task_rights": [
+        "T04 (verification)"
+      ]
+    },
+    {
+      "session": "cost-monitor-2",
+      "role": "Cost & Token Budget Monitor",
+      "file_scope": [
+        "/tmp/gc-cost-ledger.md APPEND-ONLY"
+      ],
+      "task_rights": [
+        "watch: retry loops, 429s, activation volume"
+      ]
+    }
+  ],
+  "standing_resources": {
+    "standing_laws": "/Users/itswempo/GooberCord/CLAUDE.md (Section Q anti-waste protocol + fleet constraints)",
+    "baseline": "GC main 1412/1412 @ a6421c9 (docs/qa-exceptions.md register closed); rewrite 1114/1114 (ledger 1113 + 1, reconciliation must be NAMED); last cutover snapshot 1166/1175 (1 real defect + races)",
+    "red_team_findings": [
+      "F1 (HIGH/P0-SEC) ban gate only at session mint - api/core/auth.mjs:241 zero call sites",
+      "F2 (HIGH/P0-SEC) commit route skips tier gate - api/uploads.mjs:231 vs :193",
+      "F3 (HIGH) unbounded gc_upload_parts D1 growth - no cron, api/uploads.mjs:224",
+      "F4 (MED) missing CF-Connecting-IP collapses to one hash network - api/core/auth.mjs:36",
+      "F5 (MED) no DO fan-out throttle on typing/ping - api/rooms.mjs:486-496",
+      "F6 (LOW) uploadId class guarantee - api/uploads.mjs:224"
+    ],
+    "on_demand_seats": "~113 role definitions in ~/.claude/agents/ (user-level). Field only when a task touches the domain \u2014 do NOT run live by default."
+  },
+  "tasks": [
+    {
+      "id": "T01",
+      "title": "Merge origin/rewrite into main (merge-cutover branch)",
+      "status": "DONE-GOVERNED (REARM-2 committed 23b5af3 = merge(3a63ada, 386a437), worktree clean, suite 1321/1321 across 10 full runs total. Gate-chair defect receipts, all at tip: (a) roles cap = COUNT < (MAX-1) at api/servers.mjs:1463 + >=249->400 dia\u2026",
+      "owner": "merge-eng",
+      "file_scope": "merge-cutover + recovered tmp worktree + migrations/",
+      "resolution_law": "rewritten client = base; main's post-divergence features ride ALONG; all migrations from BOTH lines; Kitskey api/vendor/{db,http}.mjs byte-parity untouched; AGPLv3 notices on born-in-merge files (.js 17-line-blank //, .css /* */); restore .channel-item .conversation-icon rule (tests/group-manage-panel.test.mjs:124); NEVER commit the 6 frozen stray locale bundles (af/ak/it/ka/te/th)",
+      "handoffs": [],
+      "blockers": [
+        "GATE CHAIR REOPEN 2026-11-17 (board_version 14): committed tip 3a63ada fails the governed target 386a437 at the bytes \u2014 FOUR named defects; arming merge to 386a437 already in flight with 5 unresolved hunks (README.md UU, api/servers.mjs UU x2) \u2014 complete under the chair's pre-ruled resolution directions, then T02 re-run on the final tip"
+      ],
+      "log": [
+        "GATE CHAIR REOPEN + PRE-RULED RESOLUTIONS 2026-11-17 (board-ceo, byte-verified on tip 3a63ada and the working tree): the committed cut fails the governed record in FOUR named defects. (a) ROLES OFF-B\u2026"
+      ]
+    },
+    {
+      "id": "T02",
+      "title": "Quiescent suite re-run on merge-cutover (zero NEW failures bar)",
+      "status": "CLOSED \u2014 GREEN at tip 23b5af3 (REARM-2 final run: 1321/1321 pass / 0 fail / 0 todo, exit 0, log /tmp/gc-qa-cutover-2026-11-17-3.log; zero NEW failures; chair-accepted after independent byte verification of the tip; the 3a63ada run in the l\u2026",
+      "owner": "qa-runner",
+      "blocked_by": "T01 committed + tree quiet",
+      "rule": "identical failure reproducing on quiet tree = DEFECT, never re-run twice",
+      "handoffs": [
+        "ship-reviewer: T02 green \u2014 T03 unblocked, verdict may ride the count line above",
+        "T02 GREEN on final tip 23b5af3 \u2014 T03 verdict may ride run log /tmp/gc-qa-cutover-2026-11-17-3.log"
+      ],
+      "log": [
+        "2026-11-18T01:23:34.249Z qa re-run receipt: GC @ 150df06 \u2014 1341/1341, 5.8s, 0 fail."
+      ]
+    },
+    {
+      "id": "T03",
+      "title": "SHIP/BLOCK verdict on merge diff",
+      "status": "CLOSED \u2014 SHIP @ 23b5af3; CYCLE-2 SHIP @ e39c09c (union; 2026-11-17)",
+      "owner": "ship-reviewer",
+      "blocked_by": "T02 green",
+      "checks": [
+        "vendor pins 0 changed bytes",
+        "migrations both lines",
+        "resolution law honored",
+        "suite counts reconciled BY NAME",
+        "reviewer findings named in verdict (1412/1114/1166-1175 totals reconcile)"
+      ],
+      "handoffs": [],
+      "log": [
+        "2026-11-17 mention-rider rider (lead fwd of ecc-security advisory, MED-3/MED-4): VERDICT UNCHANGED, SHIP @ e39c09c. Mounted surface confirmed registration-only: api/mentions.mjs 0-byte diff on ALL TH\u2026"
+      ]
+    },
+    {
+      "id": "T04",
+      "title": "Pre-MERGE-GO parity bindings (board-ceo gate conditions)",
+      "status": "DONE (4 bound + 1 feature-deferred; gc-rewrite 7eac8e0 pushed)",
+      "owner": "backend-dev",
+      "file_scope": "gc-rewrite api/** + constants idiom + migrations >0017",
+      "rows": [
+        "roles/server 250 incl @everyone (error 30005)",
+        "invite codes/server 1000 (error 30016 'Maximum number of invites reached (1000)', docs.discord.com/developers/topics/opcodes-and-status-codes, verified 2026-11-17 \u2014 1000 supersedes the '~999' pre-binding label)",
+        "group DM members 10",
+        "servers joinable 100/200",
+        "polls (10/300/55/1h-1w) + threads (1000/1h-24h-3d-7d)"
+      ],
+      "fallback": "row-by-row exception register (docs/qa-exceptions.md law) if uncloseable",
+      "handoffs": [],
+      "log": [
+        "GATE CHAIR CUT-SCOPE AMENDMENT 2026-11-17 (board-ceo, adjudicating parity-auditor's placement flag): the trio ruling's LETTER is superseded by events; its LAW is not. Adjudication: (1) what the trio\u2026"
+      ]
+    },
+    {
+      "id": "T05",
+      "title": "Disposition red-team findings F1-F6 (fix or register)",
+      "status": "DISPOSITIONED (F1 already-satisfied via T09; F2 LOW carried as T10 rider; F3-F6 backend-dev fix-or-register in the T10 lane)",
+      "owner": "backend-dev",
+      "gate_coupling": "F1/F2 are the no-open-P0-security gate rows: fix pre-MERGE-GO or register row-by-row",
+      "order": [
+        "F1",
+        "F2",
+        "F3",
+        "F4",
+        "F5",
+        "F6"
+      ],
+      "handoffs": [],
+      "log": [
+        "CARRIED LOWS (non-blocking, ride the cut): F2 cap re-check; media.mjs chunk-stream Content-Disposition; __Host- cookie prefix; post-401 re-auth polish (no user-flow evidence yet). Two more determinat\u2026"
+      ]
+    },
+    {
+      "id": "T06",
+      "title": "Deploy ritual (lead-executed)",
+      "status": "DONE (LIVE-VERIFIED 2026-11-17 \u2014 gate CLOSED by board-ceo, board_version 24)",
+      "owner": "team-lead",
+      "blocked_by": "MERGE-GO (T01+T02+T03+T04 arms)",
+      "steps": [
+        "push main",
+        "remote D1 migration ledger audit (NAME-PRESENCE)",
+        "remote migrate",
+        "deploy",
+        "LIVE-VERIFIED evidence (sha, migration names d1_migrations, target, live URL + console check)"
+      ],
+      "log": [
+        "CYCLE-2 DEPLOY GATE CLOSED 2026-11-17 (board-ceo, board_version 27): LIVE-VERIFIED \u2014 chair-verified independently beyond the delivered evidence: origin/main = 9aeae30 (chain 9aeae30<-b2d192a<-e39c09c\u2026"
+      ]
+    },
+    {
+      "id": "T07",
+      "title": "Post-MERGE-GO chore batch (NO mid-gate diffs)",
+      "status": "PARKED",
+      "owner": "backend-dev + frontend-dev",
+      "items": [
+        "BUNDLE_LANGS edit at public/js/i18n.js:17 (path per pm's two-path ruling; ar/ja/zh never auto-pick-deploy without owner Firefox visual-pass report)",
+        "docs/parity-limits.md:49 stale soundboard row fix",
+        "L2 1440p row annotation (URL+date law)"
+      ],
+      "log": [
+        "PARKED CLEANUP (team-lead, 20:45 EST): refs/heads/merge-cutover2ref (bookmark \u2192 5c034e1, obsolete first-cut intermediate; reflog + merge-eng stash retain the chain) is OWNER-ONLY to delete \u2014 the Fact-Forcing Gate blocked the destructive ref delete for merge-eng (3x fast-failed) and team-lead (2x with facts presented); per Fast-Fail law it is parked, not retried. Owner one-liner: git update-ref -d refs/heads/merge-cutover2ref (rollback: git update-ref refs/heads/merge-cutover2ref 5c034e1). Also receipted: merge-eng recovered the primary checkout (stale staged index preserved as named stash, main @ 0c8e42c = origin/main, clean). Post-fire untracked .playwright-mcp noise stays for the owner to triage (browser-probe artifacts from pre-ban lanes).",
+        "NAMED CLEANUP ROW (__Host- twin, 2026-11-17, owner: board-ceo): REMOVE THE LEGACY-NAME READ FALLBACK once ledger evidence shows ZERO legacy-cookie-name reads over a FULL CYCLE on the live pair (evidence = the readSession legacy-hit counter or equivalent log line across both apps). Precondition: BOTH halves deployed (forum half = owner 5.0 gate; GC half = chair-lit cycle at 0c8e42c lineage). Forum SHA 4299fe2 (suite 208/208, 4 new tests); GC mirror SHA pending backend-dev. Fallback shape: prefixed-first read, legacy-name transitional read self-migrates (re-issue prefixed + Max-Age=0 clear), token-shape gate intact both trees, byte-identical twin, contract-parity GREEN both repos."
+      ]
+    },
+    {
+      "id": "T08",
+      "title": "Owner-gated: ar/ja/zh visual pass (Firefox)",
+      "status": "PARKED",
+      "owner": "OWNER",
+      "log": []
+    },
+    {
+      "id": "T09",
+      "title": "F1 fix, forum side: ban-commit session sweep (composes with GC mint-side gate)",
+      "status": "DONE (already-satisfied, zero diff)",
+      "owner": "forum-dev",
+      "file_scope": "wempos-forum worker ban-commit route (NOT a GC diff \u2014 api/core/auth.mjs is parity-pin-locked, tests/contract-parity.test.mjs:99-100)",
+      "spec": "(1) forum ban-commit route deletes/expires banned user session rows; (2) DELETE rides the same D1 batch as the bans INSERT (or race-bounded to its commit), atomicity shape per createGooberSession accounts.mjs:112-121",
+      "note": "post-merge defense-in-depth rider (identical bans predicate in BOTH repos' core/auth.mjs) = owner-gated, NOT a merge prerequisite (board-ceo ruling 2026-11-17); ecc-security review plan armed (5 checks incl. no collateral known_ips/banned_ips sweep)",
+      "log": [
+        "2026-11-18T01:23:34.249Z lead amend (threat-hunter): citation stale \u2014 ban module born aa305d634 (2026-11-15, contains the session DELETE at its line 69), NOT e0f9bb9 (unresolvable, 0 prefix hits in 6\u2026"
+      ]
+    },
+    {
+      "id": "T10",
+      "title": "Carried rider queue for backend-dev (fix-or-register, NON-gate-blocking unless ruled otherwise)",
+      "status": "DONE (T10 drained incl. F2 rider, local 3c531aa; holding for the cut)",
+      "owner": "backend-dev",
+      "rows": [
+        "F2-LOW: cap re-check in handleCommitUploadRoute, api/uploads.mjs:231-282",
+        "U1 (low-med): BIDI/zero-width strip at filterMessageBody + alertPreview, api/messages.mjs:528-535 + 643-650 (mod-abuse-sim)",
+        "credential-sweep (HIGH ref): GC credential lanes lack user-scoped session sweep / revoke-all relay wiring \u2014 api/accounts.mjs:759 token-scoped only; forum HAS /api/relay/session-revoke-all (threat-hunter refinement of sso-tester R1)",
+        "R3-note: shared sessions schema parity is test-only; R4-note: ?wt= ticket referrer hygiene",
+        "trust-safety queue items map to these rows (auth wire-in=F1 rider, R1, U1)",
+        "F1-residual-accounts (ecc-security residual, lead-verified 2026-11-17): wempo-accounts login runs NO ban gate BY DOCUMENTED DESIGN (wempo-accounts/api/accounts.mjs:33-36 'no ban gate runs at this login \u2014 the forum answers bans at its own sign-in') and its sessions live in wa_sso_sessions (its own migration 0001) \u2014 the forum ban-commit sweep touches only the shared sessions table, so a LIVE accounts SSO session survives a new ban until natural expiry; same exposure class as F1, different table. Fix shape when owner orders: add bans-EXISTS to the accounts mint + extend the sweep to wa_sso_sessions (forum owns neither table today \u2014 cross-app, owner-gated). CONTAINMENT (ecc-security followup): exposure BOUNDED \u2014 wa_sso_sessions confers no GC/forum access (GC redeem independently refuses banned members pre-mint, api/sso.mjs:150-160 \u2192 403; GC/forum mints predicate-covered) \u2014 the surviving surface is ONLY the accounts app's own manage pages for a banned member; severity drops to LOW",
+        "F1-rider: bans-module.test.mjs lacks the session-sweep assertion (board-ceo named rider T09 coverage gap)",
+        "roles-400diag (parity-auditor cosmetic, NON-gate 2026-11-17): the roles cap 400-diagnostic api/servers.mjs:1463 fires at count >= 250, unreachable while the INSERT stops at 249 rows \u2014 an owner AT cap gets the 403 message instead of the cap 400; enforcement correct, diagnostic dead (invite counterpart :1055 fires correctly). Fix is a diagnostic-range re-aim, not a cap change",
+        "roles-403-classifier (cosmetic, NON-gate, parity-auditor re-verdict): the roles cap-400 diagnostic api/servers.mjs:1463 is unreachable while the INSERT stops at 249 rows \u2014 an owner AT cap receives the 403 permission message instead of the cap 400 (invite counterpart :1055 fires correctly); enforcement correct, message-classification polish only",
+        "T09-residual-accounts fix shape final (board v5+): one-statement sweep extension DELETE FROM wa_sso_sessions WHERE user_id = ? at index 3 of forum bans.mjs:75-91 (plain D1, same database_id, no byte-pins) = cross-app write needing explicit owner blessing, OR scope-pure mint-gate inside wempo-accounts own code \u2014 owner picks",
+        "R1-invite LANDED (local d1e5e96 + pushed): batch-composed bump + joined_at gate; roles off-by-one fixed same commit; await parity-auditor shape-confirm.",
+        "hardening-LOW x2 FINAL: Content-Disposition LANDED local 226299a (stream twin carries imageResponse's exact line); __Host- arm = LEAD-APPROVED COORDINATED TWIN EDIT (lead's superseding ruling v18, supersedes my owner-gated-parked registration which was issued before the pin's shape was checked): cross-repo, forum-dev owns the forum line (routed + acked), backend-dev owns the GC mirrored line; contract-parity.test.mjs:99-100 BYTE-IDENTITY pin STAYS GREEN because both trees change the same cookie line to the same bytes (substitutions preserved \u2014 the NEVER-touch STACK LAW covers only api/vendor/{db,http}.mjs, never auth.mjs, and the standing GC-side-only ban is satisfied because the edit is not GC-side-only); contract-parity re-runs GREEN on BOTH trees in the one wave; POST-MERGE-GO per the chair's rider placement; no other byte moves; 3-line wave if forum-dev's copy diverges."
+      ],
+      "log": [
+        "2026-11-17 backend-dev (ledger-mirror rider LANDED): 94b673a pushed to main (9aeae30..94b673a) \u2014 docs/license-ledger.md ONLY, insert-only +40, the pair table (GC a8f28bf <-> forum 4299fe2), the union\u2026"
+      ]
+    },
+    {
+      "id": "T11",
+      "title": "Stray locale provenance (af/ak/it/ka/te/th FROZEN; threat-hunter adds sq.json \u2014 tree holds 7 strays; parse clean, CLDR-legitimate deltas vs en 426 keys)",
+      "status": "OPEN",
+      "owner": "team-lead (owner ruling pending)",
+      "note": "all uncommitted; never commit/activate; localizer ticket candidate",
+      "log": [
+        "2026-11-17 22:25 team-lead: CLOSED-RESOLVED \u2014 af/ak/it/ka/te/th/sq exist nowhere on disk/git (untracked, killed by worktree prune); prod /locales/it.json 200 confirmed SPA fallback; loader+funnel guards make the class unreachable.",
+        "2026-11-18 threat-hunter (T11 verify): PROVEN NON-THREAT \u2014 git log --all over af/ak/it/ka/te/th/sq.json = zero commits (never introduced in any branch); disk sweep of main tree + 15 worktrees = 0 strays; prod /locales/{af,ak,it,ka,te,th,sq}.json = HTTP 404 text/plain (not SPA-fallback-served, surface null); BUNDLE_LANGS pinned to exactly 9 anchored bundles tests/i18n.test.mjs:192, CARVE_GATES at tests/i18n.test.mjs:319 covers none of the strays; board's prior prod-200 note superseded by today's 404."
+      ]
+    },
+    {
+      "id": "T12",
+      "title": "RENAME WAVE: YourLocalGoober -> ItsWempo (owner directive) across GooberCord + wempos-forum",
+      "status": "DONE \u2014 GC ca97544 (155 files) + forum 6622999 (83 files) both pushed; grep=0 both repos; vendor pins + kitskey untouched; suites GC 1339/1339 + forum 208/208 (merge-eng) re-verified by qa-runner (same counts). Lockstep held; contract/vendo\u2026",
+      "owner": "merge-eng",
+      "file_scope": "/Users/itswempo/GooberCord + /Users/itswempo/wempos-forum (string replacement only); /Users/itswempo/project-kitskey READ-ONLY (0 instances, untouchable); api/vendor/*.mjs NEVER touched (byte-pins); GC<->forum api/core files in LOCKSTEP (same replacement both repos, same wave)",
+      "acceptance": "grep YourLocalGoober = 0 in both repos' source; GC suite (GC_FORUM_DIR/GC_KITSKEY_DIR env) green; forum suite (FORUM_KITSKEY_DIR) green; both committed 'chore: rename YourLocalGoober to ItsWempo' + push (pre-authorized)",
+      "handoffs": [
+        "qa-runner T02-class re-verify after push"
+      ],
+      "log": [
+        "2026-11-18T01:24:32.326Z accounts leg complete: wempo-accounts 3a8bcb6 pushed main \u2014 23 line-1 banners YourLocalGoober\u2192ItsWempo, zero code bytes, suite 63/63, residue grep 0. Rename directive now lan\u2026"
+      ]
+    },
+    {
+      "id": "T13",
+      "title": "LOCALE INVENTORY (owner directive: 'it aint localized enough / U DIDNT LOCALIZE EVERYTHING ELSE / what happened to the\u2026",
+      "status": "DONE (audit) \u2014 CORRECTION ACCEPTED into record: main DOES carry i18n (public/js/i18n.js + 9 bundles in public/locales/, byte-equal to rewrite wave; tests/i18n.test.mjs 81 rows). Blocker is ONE LINE: BUNDLE_LANGS=['en'] at i18n.js:36. Gap t\u2026",
+      "owner": "backend-dev",
+      "file_scope": "READ-ONLY audit: gc-rewrite branch/checkout (7-bundle wave) vs main; gap table by area. ZERO writes.",
+      "log": [
+        "2026-11-18T01:0xZ backend-dev audit findings (lead-adopted): bundles en 23786/es 25718/de 25798/fr 26406/pt 25689/ru 33159/ja 28148/zh 23629/ar 29718 bytes, identical both trees. Worktree drift: i18n\u2026"
+      ]
+    },
+    {
+      "id": "T14",
+      "title": "FORUM 5.0 SHIP PREP: rebase forum-5.0 (tip 255eb36) over main (incl. 589f48c), suite, reviewer pass, push branch",
+      "status": "DONE \u2014 PUSHED: origin/forum-5.0 @ 9d5600a (remote==local, 14 ahead of origin/main 6622999: 11 wave commits rebased clean + 3 ship-prep fcb5504/495c176/9d5600a \u2014 count corrected by forum-dev). Suite 216/216 at tip; grep YourLocalGoober bran\u2026",
+      "owner": "forum-dev",
+      "file_scope": "/Users/itswempo/wempos-forum branch forum-5.0 + clean worktree /Users/itswempo/forum50-ship; merge to main + deploy remain OWNER-GATED (do not merge, do not deploy)",
+      "log": [
+        "REGISTERED RIDER (lead, from forum-dev's false-positive correction): profile-report dialog retirement \u2014 dialog is LIVE via the profile Report button; any future retirement must remove the button OR b\u2026"
+      ]
+    },
+    {
+      "id": "T15",
+      "title": "SUITE BASELINES + post-rename re-verify (GC node --test with sibling env; forum node --test)",
+      "status": "DONE \u2014 baselines GC 1339/1339 + forum 208/208; re-verify after rename: GC @ca97544 1339/1339, forum @6622999 208/208. Zero failures any run.",
+      "owner": "qa-runner",
+      "file_scope": "READ-ONLY source; suites to /tmp/gc-qa-*.log",
+      "log": []
+    },
+    {
+      "id": "T16",
+      "title": "CI/ALERT WATCH: GitHub Actions status on both repos; CodeQL alerts after e5e882a (3 expressions defused); dependabot co\u2026",
+      "status": "WATCH DONE \u2014 2/3 closed (#12 ui-settings, #13 ui-mod fixed by CodeQL); #22 re-defused by lead at a691ba0 (computed tenor needle) + #21 fallow@SHA pinned, awaiting CodeQL re-analysis; remaining 8 open alerts are pre-existing test-file findi\u2026",
+      "owner": "devops",
+      "file_scope": "gh CLI read-only",
+      "log": []
+    },
+    {
+      "id": "T17",
+      "title": "GC 'BORKED' diagnosis + minimal fix on main (continuing lane)",
+      "status": "F2 FIXED + DEPLOYED LIVE \u2014 one canonical deploy per landed tip (aa9b2443@ca97544 crossed in-flight, superseded by f2e9e3e5@a691ba0, final). /api/version build:'a691ba0'; per-build ?v= stamps + functional stale-strip live. F1 REMAINS OWNER-\u2026",
+      "owner": "frontend-dev",
+      "file_scope": "/Users/itswempo/GooberCord main, smallest-diff fix, full suite before push",
+      "log": [
+        "2026-11-18T01:04Z frontend-dev PROD VERDICT: 6/6 core checks PASS (shell/assets byte-identical to main, node --check 18/18, all 79 client endpoints present, correct 401 gates, no 500s, deploy 6e97c5f\u2026"
+      ]
+    },
+    {
+      "id": "T18",
+      "title": "LOCALE STAGE-1 + RAW-SEAT SWEEP (gate lift es/de/fr/pt/ru; pins.js/shell seats; index.html hooks; i18n test pins)",
+      "status": "DONE \u2014 5ef17a1 pushed (a691ba0..5ef17a1), suite 1341/1341. Gate lifted to 6 (ar/ja/zh held, disclosed); pins.js 4 seats t()-routed (gc.chat.pins.title/note/close + sanctioned gc.chat.pins.empty reuse); shell Home/Members keyed; Goober+ = b\u2026",
+      "owner": "frontend-dev",
+      "file_scope": "public/js/i18n.js:36 only; public/js/pins.js; public/js/ui/shell.js:405,422; public/index.html attributes only; public/locales/en.json keys; tests/i18n.test.mjs. ar/ja/zh stay gated (Firefox visual pass law). Goober+ tier chips = brand exception, unpainted.",
+      "acceptance": "BUNDLE_LANGS pin = exactly 6; new keys pinned in tests/i18n.test.mjs; suite green; one commit; push pre-authorized. i18n.js:1 owner-side drift: inspect, disclose or keep out.",
+      "log": [
+        "2026-11-18 frontend-dev LANDED 5ef17a1: gate 6 langs; pins/shell seats keyed; brand exception honored; title hook wired; en fallback covers non-en until translations. Suite 1341/1341."
+      ]
+    },
+    {
+      "id": "T19",
+      "title": "TRANSLATE the 5 stage-1 raw-seat keys into all 8 non-en bundles (completes the 'localized enough' arc)",
+      "status": "DONE \u2014 36bd507 pushed (5ef17a1..36bd507), 9 files +48: all 8 bundles carry the 5 keys (gc.app.title 'GooberCord' verbatim = the only byte-eq carve row, declared in all 8 CARVE_GATES lists per ruling) + suite 1341/1341 (i18n 17/17). Two gar\u2026",
+      "owner": "backend-dev",
+      "file_scope": "public/locales/*.json + tests/i18n.test.mjs CARVE_GATES lists (+8 lines, declared only); gc.app.title copied verbatim in every bundle (proper noun)",
+      "acceptance": "i18n tests green first, then full suite; one commit; push pre-authorized. Fast-fail on key-parity/carve-gate pin conflicts.",
+      "log": [
+        "2026-11-18 team-lead RULING: scope widened (a) \u2014 tests/i18n.test.mjs CARVE_GATES +8 lines with 'gc.app.title' enumerated per bundle; commit body must name the declarations per the :190 law. Translati\u2026"
+      ]
+    },
+    {
+      "id": "T20",
+      "title": "GC prod deploy at 150df06 + language picker seat + RTL dir law",
+      "status": "DONE \u2014 language picker + LOW-3 strip + RTL dir law landed 331095d (suite 1344/0); deploy half DONE at adc3a8d (lead canonical, Version 6a71842d, verified).",
+      "owner": "frontend-dev",
+      "file_scope": "one deploy; public/js/i18n.js, settings seat, index.html title hooks only",
+      "log": [
+        "2026-11-18T01:25:56.491Z lead: deploy landed; canary stamp-chain verdicts + live probe receipt. NEW ROOT CAUSE (F1, lead-confirmed): wrangler deploy strips pre-existing secrets unless --keep-vars \u2014 G\u2026"
+      ]
+    },
+    {
+      "id": "T21",
+      "title": "GDPR deletion ticket T-GDPR-DEL-1 (gdpr-reaper audit): GC FK gaps block forum self-delete",
+      "status": "PARKED for owner ruling \u2014 CRITICAL: gc_servers.owner_user_id/gc_invites.created_by/gc_server_bans.created_by/gc_filter_rules.created_by lack ON DELETE actions (migrations 0001:13, 0004:19, 0008:37, 0010:67) \u2192 active users 500 on delete; HIGH silent GC cascade w/o archive; MEDIUM no export. Minimal shape: GC preamble statement list + 3 SET NULL migrations + owner ruling on server ownership",
+      "owner": "team-lead",
+      "file_scope": "future: api/profiles.mjs-style preamble + migrations; no build until owner call",
+      "log": [
+        "2026-11-18T01:23:17.297Z lead: full ticket in gdpr-reaper report; do not build without owner order."
+      ]
+    },
+    {
+      "id": "T22",
+      "title": "Compliance parked rows: locale ledger draft row + index.html license gap + DX/a11y/copy polish",
+      "status": "LARGELY DONE \u2014 polish wave i landed ac1653e (6 rows, zh/ru/es/de registers, orphan delete, Servidor) incl. required CARVE_GATES flexes; remaining: license ledger row, index.html notice row, gc.chat.pins.note reword lane, en plural-family row, LOW-1 pin.",
+      "owner": "backend-dev",
+      "file_scope": "docs/license-ledger.md for (a); en.json+pins.js+8 bundles for polish lane when ordered",
+      "log": [
+        "2026-11-18T01:23:17.297Z lead: parked wave-1 findings; polish lane is batched, not urgent."
+      ]
+    },
+    {
+      "id": "T23",
+      "title": "Static quality-audit findings ledger (fanout N+1, replay-verifier idempotency, lock-hunter batching, tr-dept register a\u2026",
+      "status": "COLLECTED \u2014 all four lane groups reported; hardening candidates ledgered (servers.mjs:840-843 EXISTS, conversations.mjs:246 orphan-window, mentions.mjs:137 IN-clause).",
+      "owner": "team-lead",
+      "file_scope": "future hardening: servers.mjs:840-843 EXISTS precondition + mentions IN-clause collapse \u2014 no build until batched",
+      "log": [
+        "2026-11-18T01:26:16.055Z tr-dept-1/3/4 + lock-hunter receipts: es 2 drift pairs + 1 orphan result_one + untranslated seat es gc.settings.nav.server \"Server\"; de 5 drift pairs (Klang/Sounds, hinauswer\u2026"
+      ]
+    },
+    {
+      "id": "T24",
+      "title": "Legal surface close-out: LICENSE filename + package.json license field (4 repos) + ToS/Privacy drafts",
+      "status": "CLOSED \u2014 (a) license field + LICENSE landed GC bee197a + forum eb36783; kitskey/accounts legs optional-follow-up. (b) OWN OWNER RULING 2026-11-17: NO ToS / NO Privacy Policy \u2014 drafts discarded (never committed, copies deleted); ship plans\u2026",
+      "owner": "backend-dev (a, GC+forum) / forum-dev (a, lockstep) / legal-drafter (b, drafts only)",
+      "file_scope": "package.json + LICENSE per repo; public/terms.html + public/privacy.html DRAFTS owner-gated",
+      "log": [
+        "2026-11-18T01:51:46.494Z lead: owner ruled no ToS/Privacy; drafts purged from ~ and /tmp, gate closed."
+      ]
+    },
+    {
+      "id": "T25",
+      "title": "DEPLOY CHURN INCIDENT + no-Origin GET fix: prod deploys loop without --var; /api/mentions GET 403 (owner console)",
+      "status": "FIX LIVE adc3a8d (Version 6a71842d, build=adc3a8d + stamp 1.0@adc3a8d verified; mentions GET now 401 not 403). Churn SOURCE STILL UNACCOUNTED: deploys 01:15/01:18:37/01:23x2/01:28:52Z land build:\"\"; frontend-dev cleared (git-poll loop only; its 3 deploys all canonical), devops cleared, no GH workflow deploys. Overseer running 3 spaced checks. Deploy authority: lead-only.",
+      "owner": "team-lead",
+      "file_scope": "api/mentions.mjs + tests/mentions-persist.test.mjs (landed); prod deploy = lead-only, one canonical run",
+      "log": [
+        "2026-11-18T01:30:29.693Z lead: fix adc3a8d pushed (1345/1345); awaiting frontend-dev stop-confession before the single canonical --keep-vars deploy.",
+        "2026-11-18T01:31:36.009Z lead: canonical adc3a8d deployed+verified. frontend-dev confession received; staging-hygiene law issued to frontend (explicit-path adds only).",
+        "2026-11-17 22:25 team-lead: churn root cause PINNED \u2014 manual bare `pnpx wrangler deploy` runs (no --var COMMIT_SHA) produced build:\"\"; nothing automated (hooks/cron/launchd/CI all negative per devops-prime). RIDER R1 FIXED: canonical redeploy a93fef1 (version f352d53a) LIVE-VERIFIED build stamp + funnel 404 guard; new standing law in CLAUDE.md: canonical deploy = pnpm run deploy, bare pnpx wrangler deploy FORBIDDEN."
+      ]
+    },
+    {
+      "id": "T26",
+      "title": "Platform rules shaped on Discord Community Guidelines + forum rules",
+      "owner": "team-lead",
+      "status": "DONE (platform-rules.md 176 lines, committed+pushed main)",
+      "priority": "high",
+      "notes": "Owner paste 20:59 Nov 17: shape GC platform rules around (a) Discord Community Guidelines eff. 2025-09-29 (27 rules: harassment/threats/doxxing/hate/extremism/CSAM-teen-safety/sexual-content-18+/NCII/self-harm/graphic-content/spam-selfbot/inauthentic-engagement/asset-selling/misinformation/impersonation/enforcement-evasion/phishing-scams/fraud/false-reports/IP/regulated-goods/gambling/illegal-activity) and (b) wempos-forum rule set (discrimination list, illegal content incl. drugs/tobacco/alcohol zero-tolerance, child endangerment, total sexual-content ban, personal-info disclosure list, profanity NO-BYPASS law, spam taxonomy, off-platform behaviour clause, gambling incl. VIRTUAL-currency sweepstakes ban, account trading, no-loopholes spirit clause). GC law layering: forum total-ban set is the BASE (all-ages), Discord set adds the platform-layer; care-rule boundary stands \u2014 self-harm detection never becomes a moderation action (roster O). Deliverable: rules doc + filter/permission wiring tickets, owner-gated.",
+      "created": "2026-11-18T01:59:00Z"
+    },
+    {
+      "id": "T27",
+      "title": "LIVE incident: signed-in '/' blank page \u2014 root-caused + fixed (homeRoute seat)",
+      "status": "done",
+      "owner": "team-lead",
+      "created": "2026-11-17T21:10:00-05:00",
+      "detail": "Root cause: router.addRoute('/','home',renderShell) passed #app (the mount node) to renderShell as paneOverride; shell.js frame.append(paneOverride) moved #app into a detached never-attached frame \u2192 signed-in '/' rendered blank, zero console errors, shipped broken since W-R1 4bdca5b. Anonymous loads stopped at the sign-in gate, so QA never saw it. Fix: homeRoute(route, mount) in shell.js (placeholder idiom), main.js registers it, route-seats pin rewritten to forbid the renderShell seat. Verified: suite 1348/1348, real-Firefox BiDi probe shows #app containing full shell, screenshot rendered. Cycle: commit \u2192 push \u2192 deploy \u2192 prod BiDi verify pending. | CLOSE-T27 (gate chair, 2026-11-17 ~21:30 EST): VERDICT OPEN->LIVE-VERIFIED. Arms: fix-commit 722e9e2 on main VERIFIED (git log, diff = main.js 2+/2- + shell.js +9 + tests +10/-1, seat wiring only, no security surface); suite 1348/1348 pin on record (qa-runner, prior worktree binding) VERIFIED-by-record; ship-reviewer SHIP + caller-sweep grep=0 VERIFIED-by-record; prod /js/main.js VERIFIED contains homeRoute x2, renderShell 0 (direct code binding to fix build); prod /api/version returned build:\"\" (EMPTY, not 722e9e2 as packet claimed) - overridden by direct bundle binding, filed as rider R1; Firefox probe DOM evidence per board record. Riders: R1 - populate /api/version build stamp from deploy (packet claim did not match wire); R2 - route-seat signature invariant (renderShell never a mount-seat) as static check in CI. Residual (owner-facing): prod clients need one reload (stale-strip offers it).",
+      "log": [
+        "2026-11-17 23:05 team-lead: riders R1 (build stamp) resolved 3e8b8cc + canonical redeploy; R2 (route-seat CI static check) still OPEN."
+      ]
+    },
+    {
+      "id": "T28",
+      "title": "Follow-up riders from ship-reviewer's T-W23 verdict",
+      "status": "DONE",
+      "claimed_by": null,
+      "file_scope": [
+        "public/styles.css"
+      ],
+      "detail": "LOW-2: .router-error has no styles.css rule (both new cards render unstyled on the edge path) \u2014 add a minimal bordered/narrow card rule. LOW-3 accepted: partial-render coexistence above the failure pane is cosmetic until the next navigation.",
+      "log": [
+        "2026-11-18T02:38Z lead: frontend-dev rule committed d6c7feb (suite 1362/1362 isolated-worktree verified at SHA); deployed 9e948f0d, probes green (build d6c7feb, it.json 404, boot().catch live)."
+      ]
+    },
+    {
+      "id": "T29",
+      "title": "Paint-swap race: initI18n never repaints on the en floor resolve (owner-incident rider)",
+      "status": "DONE (verified 4208728 \u2014 fix + RED pin pre-committed by prior cycle; suite re-run green this session)",
+      "claimed_by": "frontend-dev",
+      "file_scope": "public/js/i18n.js, public/js/main.js",
+      "detail": "main.js boot does not await initI18n; if en.json resolves AFTER the router mounts, the first paint runs t() over an empty catalog (visible tails) and the en floor resolve never calls applyDom \u2014 tails persist until the next route render. Fix: applyDom() on the en-seat resolve path (or await the en leg in boot).",
+      "log": [
+        "2026-11-18T02:37Z lead: opened from owner live incident \u2014 tab was on fixed build 1fc4b45 and still painted tails once; stale-tab/cache ruled out, this race is the one live suspect.",
+        "2026-11-18T~03:00Z frontend-dev: claimed T29 (paint-swap race).",
+        "2026-11-18T~03:10Z frontend-dev: found T29 fix + RED pin already committed as 4208728 (i18n.js en-seat applyDom @ public/js/i18n.js:144 + tests/i18n.test.mjs:643). Re-verified: tests/i18n.test.mjs 24/24 pass. No new diff needed; nothing committed this session."
+      ]
+    },
+    {
+      "id": "T76",
+      "title": "Economy uniqueness slate: Well streaks + Campfire + gift chains (spec + RED)",
+      "status": "CLOSED",
+      "claimed_by": "economy-designer",
+      "file_scope": "docs/drafts/feature-slate-lead-2026-11-18.md",
+      "detail": "Slate rows 1-3; every mint lane names its sink (T62 sequencing); gift chains privacy-native, depth-capped.",
+      "log": [
+        "2026-11-18T03:05Z lead: dispatched to economy-designer, branch-based, no commit.",
+        "2026-11-18T05:05Z lead: backend-dev fix committed ca13009, pushed, verified 1446/1446 at SHA in isolated worktree; render request sent to chair",
+        "2026-11-18T05:35Z lead: Key 1 GO rendered by chair-t27 (SHIP @ ca13009, all 3 discharged); canonical deploy from isolated worktree -> Version 7611ba43; probes green: build==ca13009, unknown-locale 404 plain, en 200 json, ?v=1.0@ca13009",
+        "2026-11-18T15:52Z lead: R8 ritual CLEAN \u2014 owner word \u2192 patch 9060039 \u2192 apply 0029-0033 in one chain \u2192 all presence/delta checks green; W3 CLOSE earned"
+      ],
+      "claimed_at": "2026-11-18T02:55Z",
+      "phase": "AWAITING-GO-RENDER",
+      "spec_received": "2026-11-18T03:00Z",
+      "note": "Key1 deployed (7611ba43 @ ca13009) + Key2 APPLIED 2026-11-18 ~15:52Z: 0029-0033 all named in ledger, gc_channels 15 zero-delta, 8 new tables; declared residual (500 no-such-table) self-healed",
+      "green_at": "2026-11-18T05:05Z",
+      "commit_sha": "ca13009",
+      "reopen": "ship-reviewer HOLD: pool never debits (HIGH) + chain-pass double-mint + draw double-pay (2 MEDIUM)",
+      "deploy_version": "7611ba43-2cf8-4dbe-abc4-e8a90daca65d"
+    },
+    {
+      "id": "T77",
+      "title": "Quiet hours: opt-in DM/ping schedule + wake digest (spec + RED)",
+      "status": "CLAIMED",
+      "claimed_by": "frontend-prime",
+      "file_scope": "docs/drafts/feature-slate-lead-2026-11-18.md",
+      "detail": "Slate row 4; defaults law (off by default, explicit each enable).",
+      "log": [
+        "2026-11-18T03:05Z lead: dispatched to frontend-prime."
+      ],
+      "claimed_at": "2026-11-18T02:55Z",
+      "phase": "GREEN",
+      "spec_received": "2026-11-18T03:00Z"
+    },
+    {
+      "id": "T78",
+      "title": "Starter Grove: community server templates (spec + RED)",
+      "status": "GREEN-COMMITTED",
+      "claimed_by": "backend-dev",
+      "file_scope": "docs/drafts/feature-slate-lead-2026-11-18.md",
+      "detail": "Slate row 5; mod lane permission surface stays explicit.",
+      "log": [
+        "2026-11-18T03:05Z lead: dispatched to backend-dev."
+      ],
+      "claimed_at": "2026-11-18T02:55Z",
+      "phase": "AWAITING-RENDER",
+      "spec_received": "2026-11-18T03:00Z",
+      "reopen_reason": "ship-reviewer HIGH: blanket-arm verdict + uncompensated post-batch refusals",
+      "commit_sha": "43cdd53",
+      "deployed": "wave-2 Key1, Version e3c5fe01 @ 43cdd53"
+    },
+    {
+      "id": "T79",
+      "title": "Forum post boost: thread -> GC announcement card (spec + RED)",
+      "status": "WAVE3-READY",
+      "claimed_by": "forum-dev",
+      "file_scope": "docs/drafts/feature-slate-lead-2026-11-18.md",
+      "detail": "Slate row 6; shared-DB twin contract; forum deploy stays owner-gated.",
+      "log": [
+        "2026-11-18T03:05Z lead: dispatched to forum-dev."
+      ],
+      "claimed_at": "2026-11-18T02:55Z",
+      "phase": "AWAITING-RENDER",
+      "spec_received": "2026-11-18T03:00Z",
+      "green_at": "2026-11-18T03:05Z",
+      "commit_sha": "a731fcd",
+      "note": "scoping pin caught 2 schema bugs; corrected pair a731fcd; suite 1424/1424 at tip",
+      "mint": "forum 6fcf1a0, 226/226, inert until owner-gated deploy + GC 0029 apply",
+      "wave3_package": "api/boost.mjs (ban screen + rateLimit) + spec $2.3/$4.1/$4.2 + 2 test pins (9/9) \u2014 committed at wave-3 window"
+    },
+    {
+      "id": "T80",
+      "title": "Churn attribution seat-hunt: session-side deployer behind shared token",
+      "status": "DONE",
+      "claimed_by": "qa-runner",
+      "file_scope": "ops",
+      "detail": "T45 final: no local automaton; source is interactive/agent-side. Hunt = correlate deploy timestamps vs seat activity logs.",
+      "log": [
+        "2026-11-18T03:05Z lead: prod restored to d6c7feb after 02:40-02:41Z build:\"\" \u00d73.",
+        "2026-11-18 qa-runner DONE: /tmp/gc-qa-t80-attribution.md \u2014 harness fully transcript-cleared (main d0dd3ad5 + 410 subagents + other project dirs; zero bare-deploy tool_use in window; zero deploy background loops). CF receipts: 6 deploys 01:15:08/01:18:37/01:23:29/01:23:39/01:26:13/01:28:52Z, Author itswempo@icloud.com, Source Unknown (lead transcript tool result ts 01:29:07.480Z); build:\"\" via same-file /api/version curl (01:28:53.120Z). Deploys trail main-worktree commits 36bd507(+41s)/8ed233d(+32s)/601cb97(+26s)/331095d(+25s) \u2014 a deploy-on-HEAD-watch SHAPE outside every Claude transcript; bash_history bare `wrangler deploy` precedent exists but untimestamped \u2192 not attributed. Verdict: UNSOURCED at agent level; brief date slip (2026-11-17\u21922026-11-18) noted."
+      ],
+      "recurrence": "churn #4 at ~03:39Z, restored 05039baf"
+    },
+    {
+      "id": "T81",
+      "title": "A11y theme rows: high-contrast + font scale (spec + RED)",
+      "status": "GREEN-DELIVERED",
+      "claimed_by": "a11y-navigator",
+      "file_scope": "docs/drafts/feature-slate-lead-2026-11-18.md",
+      "detail": "Slate row 8; WCAG 2.2, token-driven both themes.",
+      "log": [
+        "2026-11-18T03:05Z lead: dispatched to a11y-navigator."
+      ],
+      "claimed_at": "2026-11-18T02:55Z",
+      "phase": "PAIR-WINDOW",
+      "spec_received": "2026-11-18T03:00Z",
+      "green_at": "2026-11-18T03:05Z",
+      "riders": "resolved: preload VERIFIED, storage-sync ADOPTED, text-scale partial (spec \u00a77 follow-up); FROZEN",
+      "ready_commit": true
+    },
+    {
+      "id": "R1",
+      "desc": "Honeypot decoy input: paint the client producer in the join render (trap live-but-inert)",
+      "status": "OPEN",
+      "created": "2026-11-18T03:30Z",
+      "source": "chair-T52-render"
+    },
+    {
+      "id": "R2",
+      "desc": "fleet-tick escalation rate-cap: one escalation per N minutes (budget lever)",
+      "status": "LANDED (uncommitted)",
+      "created": "2026-11-18T03:30Z",
+      "source": "chair-T52-render",
+      "joint": "chair: churn-recurrence counter on the tick + one-escalation-per-N-min rate-cap = same budget lever; implement post-wave-2 keys as its own commit (fleet-tick.sh is branch-committed; no drift during deploy window)",
+      "claimed_by": "devops",
+      "claimed_at": "2026-11-18T16:10Z",
+      "log": [
+        "2026-11-18T16:0xZ devops: rate-cap + churn counter landed in scripts/fleet-tick.sh (uncommitted per brief); bash -n clean; live tick run green (build=9060039, churn count=1); second trigger inside window no-op exit 0."
+      ],
+      "title": "T100 \u2014 R2 native binding GC_MEDIA (D1 blob/byte storage migration)",
+      "notes": "LANDED main 48ae869 + deployed f5aac957, binding live (bucket wempos-forum-r2 now binding-load-bearing; rollback hazard pinned in now.md). Wrangler.toml GC_MEDIA; media.mjs intake put + streamed serving + delete-on-changes==1; uploads.mjs page-stream commit; 12 pins r2-binding.test.mjs; security GREEN (ecc-security-t100). Owner-gated gaps: messages/servers/emoji/soundboard put+delete rides, soundboard intake put, scripts/r2-backfill.mjs, 0044 cleanup migration, avatar reader flip (forum-coord)."
+    },
+    {
+      "id": "R3",
+      "claimed_by": "forum-dev",
+      "progress": "guard implemented GREEN, uncommitted per brief (drops into next wave commit with its GREEN per R4)",
+      "desc": "deploy-ledger test: skip-if-absent guard on sibling forum pin (red on fresh clone otherwise)",
+      "status": "OPEN",
+      "created": "2026-11-18T03:30Z",
+      "source": "chair-T52-render"
+    },
+    {
+      "id": "R4",
+      "desc": "LAW: red-by-design test files land in the same commit as their GREEN (suite green at every pushed tip)",
+      "created": "2026-11-18T03:30Z",
+      "source": "chair-T52-render"
+    },
+    {
+      "id": "R5",
+      "desc": "grove + consume-boost routes: rateLimit ride joining T30 write bucket (was missing)",
+      "status": "DONE",
+      "created": "2026-11-18T03:15Z",
+      "source": "wave-2-HOLD",
+      "owner": "backend-dev",
+      "consume_note": "reviewer parked-LOW already covered: forum implementation rides wave-3 commit",
+      "closed_sha": "7618377 + 43cdd53"
+    },
+    {
+      "id": "R6",
+      "desc": "boost mirror ban rider: consume-boost performs T58 activeBanRow check at render; forum-only authors pass; spec section + pin",
+      "status": "DONE",
+      "created": "2026-11-18T03:15Z",
+      "source": "wave-2-HOLD",
+      "owner": "forum-dev",
+      "closed_sha": "7618377"
+    },
+    {
+      "id": "R7",
+      "desc": "NUL-in-name grove pair-seat edge: refuse-only today, never a bypass (ship-reviewer parked LOW, non-blocking); candidate: author-time validator rejects NUL/control chars in grove names",
+      "status": "OPEN",
+      "created": "2026-11-18T03:25Z",
+      "source": "wave-2-render"
+    },
+    {
+      "id": "R8",
+      "desc": "0029 remote D1 apply: classifier-denied; apply on OWNER WORD on waking (one command, full ritual; then wave-2 key 1 deploy can fire, or already fired per chair re-render)",
+      "status": "OWNER-GATED",
+      "created": "2026-11-18T05:05Z",
+      "hard_gate": "0029 apply lands on OWNER WORD and MUST precede: forum mint deploy / boost-lane enablement / announcement-kind UI / wave-3 0030 remote apply (chain order, not skippable)"
+    },
+    {
+      "id": "R9",
+      "desc": "OWNER ruling: do bans freeze coins? (anonymous chain lane currently open to banned members \u2014 reviewer spec-flag; owner-level economy law, no code until ruled)",
+      "status": "OWNER-GATED",
+      "created": "2026-11-18T05:25Z",
+      "source": "wave-3-review"
+    },
+    {
+      "id": "T82",
+      "title": "Time Capsules: scheduled future-reveal messages (spec + RED)",
+      "status": "DEPLOYED (7611ba43->3cb23759)",
+      "claimed_by": "backend-dev",
+      "file_scope": "docs/drafts/feature-slate-wave4-2026-11-18.md",
+      "detail": "Capsule text/target/reveal only; deletable until reveal; opt-in never default; reveal gate server-checked.",
+      "lane": "backend",
+      "log": [
+        "2026-11-18T13:37Z lead: wave-4 lane opened (owner: 'i was expecting more'; 'u dont have to ask')",
+        "2026-11-18T14:10Z lead: spec+RED collected (8/8 RED verified by construction); GREEN lane to backend-dev",
+        "2026-11-18T15:10Z lead: T82 collected, seat self-verified 1458/1458 at 228f0dc and pushed; coordination flag relayed to T86 seat; 0031 rides next owner ritual with 0030 retry",
+        "2026-11-18T15:56Z lead: wave-4 batched deploy 3cb23759 probes green (build propagated 9060039)"
+      ],
+      "note": "migration 0031_gc_time_capsules rides the NEXT owner ritual (with 0030 retry after 0029 FK fix)",
+      "commit_sha": "228f0dc"
+    },
+    {
+      "id": "T83",
+      "title": "Goober of the Day: daily spotlight w/ per-server votes (spec + RED)",
+      "status": "DEPLOYED (7611ba43->3cb23759)",
+      "claimed_by": "backend-dev",
+      "file_scope": "docs/drafts/feature-slate-wave4-2026-11-18.md",
+      "detail": "Per-server visibility only; no global ranking; opt-out of candidacy; one free cosmetic tagline for the winner.",
+      "lane": "backend",
+      "log": [
+        "2026-11-18T13:37Z lead: wave-4 lane opened (owner: 'i was expecting more'; 'u dont have to ask')",
+        "2026-11-18T15:25Z lead: spec+RED collected (7/7 RED by construction, votes-as-PK, no-ladder); GREEN to backend-dev, hunk-split second-hand vs T86",
+        "2026-11-18T15:50Z lead: T83 GREEN landed 197e08a (seat push), 0033 in ritual apply; deploy awaits batched render",
+        "2026-11-18T15:56Z lead: wave-4 batched deploy 3cb23759 probes green (build propagated 9060039)"
+      ],
+      "note": "committed+pushed by seat (self-verified at SHA); 0033 applied in prod ritual 15:52Z",
+      "commit_sha": "197e08a"
+    },
+    {
+      "id": "T84",
+      "title": "Server Seasons: weekly rotating theme + shared quest meter (spec + RED)",
+      "status": "DONE",
+      "claimed_by": "backend-dev",
+      "file_scope": "docs/drafts/feature-slate-wave4-2026-11-18.md",
+      "detail": "Mod-configured opt-in; no season configured == no change; contribution from existing activity only, no new tracker.",
+      "lane": "backend",
+      "claimed_at": "2026-11-18T13:56Z",
+      "log": [
+        "2026-11-18T13:37Z lead: wave-4 lane opened (owner: 'i was expecting more'; 'u dont have to ask')",
+        "2026-11-18T14:05Z backend-dev: spec+RED delivered \u2014 docs/drafts/t84-server-seasons-spec.md + tests/server-seasons-lane.test.mjs (8 pinned rows, RED by construction: ERR_MODULE_NOT_FOUND on api/seasons.mjs) + migrations/0034_gc_server_seasons.sql (CREATE-only, 2 tables + 1 index, meter = read-time aggregate, no meter table); sink named: finish 250 coins, pool-first 80/20 via shared GC_JOB_POOL/MEMBER_SHARE percents; rider R10 LANDED in this lane's working tree (api/jobs.mjs dead pair removed, node --check green, 2-line diff) \u2014 uncommitted per spec+RED-only brief",
+        "2026-11-18T16:05Z lead: GREEN lane dispatched to backend-dev-2 (tip 887e650; R10+rider already committed)",
+        "2026-11-18T16:35Z lead: prior in-flight seat stopped mid-lane by owner (api/seasons.mjs partial in tree); fresh teammate backend-dev-3 dispatched to finish GREEN (owner Team-Lead ruling in force: spawn-per-task, no standing squad)",
+        "2026-11-18T16:40Z lead: committed e962be1 (8/8 RED-GREEN, i18n key fixed, fold rides claim batch), isolated 1494/1494, pushed. 0034+0035 ritual window queued"
+      ],
+      "commit_sha": "e962be1"
+    },
+    {
+      "id": "R10",
+      "title": "delete dead lines api/jobs.mjs:199-200 (unreachable def-reference after return false)",
+      "status": "DONE",
+      "claimed_by": "backend-dev",
+      "file_scope": "per title",
+      "detail": "LOW-1 from wave-4 render; fold into next jobs.mjs lane",
+      "log": [
+        "2026-11-18T15:55Z lead: rider opened from wave-4 DEPLOY-GO render",
+        "2026-11-18T14:05Z backend-dev: LANDED \u2014 the dead pair had DRIFTED to api/jobs.mjs:174-175 (blank + unreachable `return finishJob(..., def.id, ...)` after the `return false` at :173); removed, node --check green, diff = 2 deletions 0 insertions",
+        "2026-11-18T16:55Z lead: dead lines consumed by the C1 fold (0589cc2) \u2014 every def reference in recordJobProgress is live"
+      ]
+    },
+    {
+      "id": "T85",
+      "title": "Soundboard Studio: server sound packs, mod-approved (spec + RED)",
+      "status": "DEPLOYED (7611ba43->3cb23759)",
+      "claimed_by": "frontend-prime",
+      "file_scope": "docs/drafts/feature-slate-wave4-2026-11-18.md",
+      "detail": "Rides soundboard module + upload staging; 5MB clip cap from constants.mjs; packs deletable; never auto-play.",
+      "lane": "frontend",
+      "log": [
+        "2026-11-18T13:37Z lead: wave-4 lane opened (owner: 'i was expecting more'; 'u dont have to ask')",
+        "2026-11-18T13:55Z lead: spec+RED collected (4/4 RED, soundboard 18/18 untouched); GREEN lane returned to frontend-prime (constants+ui+en+rows flip)",
+        "2026-11-18T14:55Z lead: T85 GREEN collected (4/4 flipped, lane-scoped commit f82545a); isolated verify then push",
+        "2026-11-18T15:56Z lead: wave-4 batched deploy 3cb23759 probes green (build propagated 9060039)"
+      ],
+      "commit_sha": "f82545a"
+    },
+    {
+      "id": "T86",
+      "title": "Goober Jobs: weekly quests, pool-side mint first (spec + RED)",
+      "status": "DEPLOYED (7611ba43->3cb23759)",
+      "claimed_by": "economy-designer",
+      "file_scope": "docs/drafts/feature-slate-wave4-2026-11-18.md",
+      "detail": "Sink law: finishes mint to Campfire pool FIRST, members second; 3 jobs/server/week; quest counters only, no member tracker.",
+      "lane": "backend",
+      "log": [
+        "2026-11-18T13:37Z lead: wave-4 lane opened (owner: 'i was expecting more'; 'u dont have to ask')",
+        "2026-11-18T14:20Z lead: spec+RED collected (9/9 RED); GREEN to economy-designer; migration number collision ruled: jobs=0032, capsules=0031",
+        "2026-11-18T15:35Z lead: T86 closed \u2014 fcb4bdf(feat)+52c4bdf(rider fix); seat + lead both verified 1470/1470 at pushed SHA; 0032 rides owner ritual; hunk-law worked but rider sweep shows add-A hazard for co-located lanes",
+        "2026-11-18T15:56Z lead: wave-4 batched deploy 3cb23759 probes green (build propagated 9060039)"
+      ],
+      "note": "migration 0032_gc_server_jobs (lead ruling: 0031 taken by T82 capsules)",
+      "commit_sha": "52c4bdf"
+    },
+    {
+      "id": "T87",
+      "title": "The Morning Paper: opt-in daily server digest (spec + RED)",
+      "status": "DEPLOYED (02bb420->d0a710e)",
+      "claimed_by": "backend-dev-3",
+      "file_scope": "docs/drafts/feature-slate-wave4-2026-11-18.md",
+      "detail": "Off until a mod enables; public-activity wrap only \u2014 no DMs/presence/profiling; derived on-request from existing rows.",
+      "lane": "backend",
+      "log": [
+        "2026-11-18T13:37Z lead: wave-4 lane opened (owner: 'i was expecting more'; 'u dont have to ask')",
+        "2026-11-18T14:49Z backend-dev-3: T87 RED dispatch claimed \u2014 spec read; deliverables: 0037 migration + constants (5) + tests/morning-paper-red.test.mjs; no GREEN module, no routes, no commit.",
+        "2026-11-18T14:50Z backend-dev-3: RED delivered \u2014 11 rows, 9 FAIL vs dispatch tail (404 generic, no paper handler), 2 PASS (constants pin \u2014 GC_PAPER_* landed in constants.mjs per RED-import rule; 0037 DDL pin). Files: migrations/0037_gc_morning_paper.sql (gc_paper_configs, 1 CREATE, FKs CASCADE), constants.mjs (+5 GC_PAPER_*), tests/morning-paper-red.test.mjs (fakeDb idiom). No module, no routes, no worker.mjs touch, no commit."
+      ],
+      "owner": "backend-dev",
+      "claimed": "2026-11-18T16:20Z",
+      "backend_receipts": [
+        "commit 0b1bdbb pushed; api/paper.mjs 241 lines + worker.mjs +2 + constants + 0037 + red tests (fake repaired lead-side: member session variant, DELETE-route unshadowing \u2014 assertions untouched)",
+        "suite 1515/1515 at committed SHA (isolated worktree), deploy c4621c32, probe build=0b1bdbb x2 stable, it:404 en:200, paper-unauth 403 (live, governed)",
+        "note: unauth paper GET answers 403 where sound-packs answers 401 (auth-first) \u2014 flag for one-glance check, suite is the gate and is green"
+      ],
+      "note": "backend DONE; client half claimed by frontend-dev",
+      "receipts": [
+        "2026-11-18T16:58Z client half: seat 't87-frontend' delivered paper.js+shell.js+enkeys; lead reproduced 1517/1526 (9 reds = T88 designed-RED, not regression); commit f55e55e verified 1515/1515 isolated worktree; pushed 02bb420..f55e55e; deploy batch-held until t88 settles",
+        "2026-11-18T17:03Z client half deployed in the wave-5 batch: chair DEPLOY-GO (chair-deploy render, conditions clean), canonical deploy version ef04955f build d0a710e; probes: first-probe build==SHA (no churn), paper-unauth 403 (T87 receipt consistent), paper.js?v= bind 200"
+      ],
+      "notes": "paper.configuredBy ruled N/A (backend is derived-on-request, no updated_by exists; an attribution field would need owner word). /previous surface (rail link vs pane tab) owner-gated. no deploy yet \u2014 batching law"
+    },
+    {
+      "id": "R11",
+      "title": "T85 backend lane: /sound-packs CRUD + gc_sound_packs + STATEMENT-level mod gate; REQUIRED before studio surfaces user-visibly",
+      "status": "IN-FLIGHT",
+      "claimed_by": "backend-dev",
+      "file_scope": "per title",
+      "detail": "LOW-2: client gates are cosmetic without the server lane",
+      "log": [
+        "2026-11-18T15:55Z lead: rider opened from wave-4 DEPLOY-GO render",
+        "2026-11-18T17:00Z lead: claimed + dispatched (0036 + /sound-packs CRUD + statement-level mod gate + RED-first, seat makes no commits/deploy)"
+      ],
+      "claimed_at": "2026-11-18T17:00Z"
+    },
+    {
+      "id": "R12",
+      "title": "scoping-pin files for every future migration (0031/0033 lack dedicated ones)",
+      "status": "OPEN",
+      "claimed_by": null,
+      "file_scope": "per title",
+      "detail": "LOW-3; create-only today, pins for tomorrow",
+      "log": [
+        "2026-11-18T15:55Z lead: rider opened from wave-4 DEPLOY-GO render"
+      ]
+    },
+    {
+      "id": "L2",
+      "title": "coins L2 TOCTOU: fold the refuse arm into the claim WHERE (api/coins.mjs:984-993)",
+      "status": "DONE",
+      "claimed_by": "backend-dev",
+      "file_scope": "api/coins.mjs + one regression row",
+      "detail": "JS-side read outside the batch races the claim; move the affordance check into the same guarded statement.",
+      "lane": "backend",
+      "log": [
+        "2026-11-18T16:05Z lead: dispatched to backend-dev after lock-hunter + backend-dev confirmation",
+        "2026-11-18T16:30Z lead: committed+verified 1486/1486 isolated at c876093, pushed; regression row honest-race proven RED-then-GREEN by seat"
+      ],
+      "commit_sha": "c876093"
+    },
+    {
+      "id": "C1",
+      "title": "jobs affordance/debit split: fold pool credit into the finish claim (api/jobs.mjs:182-214)",
+      "status": "DONE",
+      "claimed_by": "backend-dev",
+      "file_scope": "api/jobs.mjs",
+      "detail": "Affordance check and pool credit cross awaits; a retry can double-deliver. Claim-idiom repair.",
+      "lane": "backend",
+      "log": [
+        "2026-11-18T16:05Z lead: queued behind coins L2 on backend-dev",
+        "2026-11-18T16:45Z lead: folded 0589cc2 pushed (suite 1496/1496, worktree-verified), reviewer HIGH fixed + regressed, deploy next"
+      ],
+      "note": "fold-in green (jobs red 10/10, suite 1495/1495); ecc:code-reviewer running; commit+worktree-verify+push next",
+      "completed": "2026-11-18T15:10Z",
+      "receipts": [
+        "commit 0589cc2 pushed (origin=fleet-wave-2026-11-18 @ 86f3090)",
+        "tests/jobs-finish-retry-race.test.mjs 2/2 GREEN (interrupted delivery + interleaved-stamp)",
+        "tests/goober-jobs-red.test.mjs 9/9 GREEN (fold-shape rewrites)",
+        "isolated worktree at pushed SHA 86f3090: 1496/1496",
+        "ritual: pre top=0035, applied 0036+0037, post names present, gc_channels 15->15 zero-delta",
+        "deploy pnpm run deploy version 60923960-ad6f-4859-bc6b-61c9100c0733; probe /api/version build=86f3090 (stable x3), it:404 en:200"
+      ]
+    },
+    {
+      "id": "FK35",
+      "title": "gc_fleet_boosts.forum_post_id FK gains ON DELETE CASCADE \u2014 migration 0035 + test pins + spec 2.2 amendment",
+      "status": "DONE",
+      "claimed_by": "forum-dev",
+      "file_scope": "migrations/, tests/ seat + spec",
+      "detail": "0029 confirmed applied remote (0034 only pending); fix must be a new migration, not an amend.",
+      "lane": "forum",
+      "log": [
+        "2026-11-18T16:05Z lead: 0029 apply-state resolved via remote migrations-list read; dispatched forum-dev",
+        "2026-11-18T16:20Z lead: committed+verified 1485/1485 isolated at d7bf7d4, pushed; remote apply (0034+0035) rider-only, lead ritual, OWNER_GATED"
+      ],
+      "commit_sha": "d7bf7d4"
+    },
+    {
+      "id": "CHURNF",
+      "title": "churn-forensics charter hunt: attribute recurring build:\\\"\\\" deploys (T25/T80)",
+      "status": "DONE",
+      "claimed_by": "qa-runner-2 (attribution) / churn-forensics (standdown)",
+      "file_scope": "READ-ONLY repo; /tmp/gc-churn-*.md",
+      "detail": "Per spawner charter: correlate deploy timestamps vs seat activity; 6-turn ceiling; deploy authority stays lead-only.",
+      "lane": "ops",
+      "log": [
+        "2026-11-18T16:05Z lead: seat fielded per spawner-audit charter",
+        "2026-11-18T16:10Z lead: attribution DELIVERED by qa-runner-2 (/tmp/gc-qa-t80-attribution.md) \u2014 UNSOURCED at agent level; deploys trail in-harness commits +25-41s; remaining scope narrowed to process-binding at next recurrence hook",
+        "2026-11-18T16:15Z lead supplement (arrived at stand-down): /tmp/gc-churn-analysis.md 15-row ledger \u2014 event #4 (03:40Z) does NOT match the T80 HEAD-watch shape (no commit 03:16-05:25Z; last green 90a05f7 03:01Z); same source class as T25, out-of-harness bare deploy under owner token. Rider for next hygiene commit: copy the T25 ruling into docs/decisions/ as numbered ADR"
+      ]
+    },
+    {
+      "id": "T85",
+      "title": "soundboard studio pack routes (backend half) \u2014 mod-gated CRUD + candidate arms on 0036",
+      "status": "DONE",
+      "completed": "2026-11-18T16:15Z",
+      "owner": "lead",
+      "receipts": [
+        "commit 82a523b pushed; verified 1504/1504 in isolated worktree pre-push; chore rider c50e870 (CLAUDE.md + pnpm workspace/lockfile + issue templates; ECC-era deps pruned) verified 1504/1504 post-push",
+        "deploy 55e932e6 active 100%; probe build=c50e870 stable, it:404-plain, en:200, ?v= bundle bind 200, /api/servers/1/sound-packs 401-auth (route live, no 404/5xx)",
+        "migration 0036 ritual-applied earlier in this cycle (gc_channels 15\u219215)"
+      ],
+      "notes": "client (soundboard-studio.js) was already live consulting these routes \u2014 live gap closed. NOTE: version-propagation window ~30s post-deploy can serve the prior build stamp on /api/version; probe twice before judging churn."
+    },
+    {
+      "id": "T88",
+      "title": "Bookmarks: private per-member reading queue on messages (spec + RED lane)",
+      "status": "DEPLOYED (02bb420->d0a710e)",
+      "owner": "t88-green",
+      "receipts": [
+        "2026-11-18T16:57Z RED delivered t88-backend: 9/11 fail (all feature-absent), spec docs/drafts/t88-bookmarks-spec.md, routes message-anchored per spec \u00a73",
+        "2026-11-18T17:00Z lead-side fake repair on the GREEN blocker: t88-green reported 5/11 with two fake defects (raw-token session bind vs auth.mjs sha256 bind; DELETE shadowed by includes() read at routes.find first-match) \u2014 lead verified both against core/auth.mjs:104-105 + the 2026-11-18 ruling class, repaired the fake only, pins 11/11 GREEN; awaiting seat full-suite neighbor check + final receipt",
+        "2026-11-18T17:01Z GREEN closed: lead full-suite 1526/1526 post-repair; commit 4be5ff6 (6 files: api/bookmarks.mjs + 0038 + constants hunk + worker 2 hunks + red pins + spec) + slate docs commit d0a710e; verified 1526/1526 isolated worktree at 4be5ff6; pushed f55e55e..d0a710e; chair-deploy render in flight for the batched deploy",
+        "2026-11-18T17:03Z deployed in wave-5 batch: ritual 0038_gc_bookmarks NAME-PRESENT at ledger top (0036/0037/0038 all by name), gc_channels 15->15 zero-delta; deploy ef04955f build==d0a710e; probes: bookmarks POST+GET cookie-less-with-Origin -> 401 pinned body 'Your session has expired...' (missing-Origin 403 = assertSameOrigin csrf law, expected), en?v= 200, it:404",
+        "2026-11-18T19:08Z sec-read (ecc-security) verdict GREEN, zero CRITICAL/HIGH: requireUser/requireCsrf ordering verified (auth.mjs:225-229), ledger SQL pure-bind WHERE server_id=? AND created_at>=?, memberGate throws shared-server-404 (no oracle), 0039 CHECK constraints + CASCADE FK + no member column, bookmarks owner-scoped WHEREs + changes-0->'Bookmark not found.'; 2 LOW informational, no changes asked (bookmarks side)"
+      ],
+      "notes": "wave-5 slate #1; GREEN lane in flight (t88-green); T88 owns migration ordinal 0038 (first-claim ruling); parked: parity cap source (100 is GC-native), cursor pagination, orphan-pointer sweep (no-timers law)"
+    },
+    {
+      "id": "T89",
+      "title": "Reaction tags: mod emoji-to-cosmetic-tag map, member opt-in (spec + RED lane)",
+      "status": "GREEN (lane-built, uncommitted)",
+      "owner": "t89-green",
+      "receipts": [
+        "2026-11-18T18:25Z spec+RED seat fielded (owner standing loop order 13:24 EST: finish wave-5 -> full security+code audit -> feature wave -> repeat); migration ordinal claimed: T90=0039, T91=0040, T89=0041, T92=0042 (lead pre-ruled, no first-claim race)",
+        "2026-11-18T19:02Z RED test file re-fielded on the roster seat (t89-red) after resume orphaned the first wave; spec survived on disk; both lead-ruled fake laws (session-hash bind, prefix-anchored order) ride the brief",
+        "2026-11-18T19:05Z RED delivered 15/16 feature-absent (roster seat; caps read as constants-text so RED is per-test; shared 404 body 'Reaction tag not found.' pinned with explicit notEqual(403) rows; 0041 CREATE-only planned). GREEN QUEUED behind t90-green (constants.mjs/worker.mjs contention \u2014 serial-green law). Owner-gated parked: Discord tag parity docs (ships native 20/32), tag-unlock-by-reacted bridge, per-tag color variants",
+        "2026-11-18T19:11Z t89-green DONE: 16/16 first-run; api/reaction-tags.mjs (7 pinned SQL statements, TAG_PUT_SQL 8-bind statement-gate :38-46, prefix-anchored routes, shared 404 body); 0041 CREATE-only (no FK/message word, text pins honored); constants.mjs:420-424 GC_REACTION_TAGS_MAX=20/TEXT_MAX=32; worker.mjs exactly 2 hunks (:44 import, :219 handler). Full suite 1551/1561 \u2014 all 10 fails = designed-RED neighbors (T92 welcome-card 1/9, T91 file-level). Uncommitted per brief.",
+        "2026-11-18T19:22Z t89-review verdict FLAGGED/REQUEST-CHANGES: CRITICAL \u2014 TAG_PUT_SQL gates only the DO UPDATE arm; fresh-emoji plain INSERT bypasses role+cap on real D1 (fake diverges: models gates pre-conflict). Lead re-verified against shipped SQL + fake. Fix brief sent to t89-green: SELECT-WHERE for insert arm + DO UPDATE WHERE for update arm (11 binds), spec \u00a74 + fake amended to real upsert semantics (lead rule change), 0041 gains idx_gc_reaction_tag_opts_user, other LOWs parked. NEW unrelated defect fixed lead-side: en.json missing gc.settings.danger.removed + gc.settings.invites.revoke (client drift; missing-diff now 0, i18n suite green).",
+        "2026-11-18T19:30Z OWNER APPLIED 0039/0040/0041 TO PROD D1 directly (pnpm run db:migrate:remote, d1_migrations ids 84-86). Lead read-only NAME-PRESENCE audit: names present, gc_campfire_pool_ledger + gc_user_anniversaries + gc_server_reaction_tags (+autoindexes +idx_gc_reaction_tags_server) + gc_reaction_tag_opts all live. Schema-before-code is safe (worker d0a710e has no routes for them yet). MIGRATION FILES 0039/0040/0041 FROZEN IMMUTABLE; countermand sent to t89-green (opts user index -> parked candidate 0043), freeze sent to t91-green (pins must satisfy applied 0040 shape or STOP). Remaining pre-deploy verify = on-disk file bytes vs applied content at batch ritual.",
+        "2026-11-18T19:45Z T89 amendment GREEN (both cycles): TAG_PUT_SQL both arms gated (INSERT\u2026SELECT\u2026WHERE role+cap / DO UPDATE\u2026WHERE role+cap, 11 binds :44-63); one-arm-class audit clean (DELETE single-WHERE, OPT insert arm gated + DO NOTHING); fake now models real upsert semantics with the non-mod fresh-emoji hole pinned; 0041 REVERTED to prod byte shape (index removed per countermand), 0043_gc_reaction_tag_opts_user.sql added UNAPPLIED/parked, spec \u00a74/\u00a75 match. 16/16; full suite 1560/1569 (9 = welcome-card designed-RED). NOTE for reviewer: t89-green reports a concurrent on-disk edit to its RED test file mid-cycle from an unknown seat \u2014 reviewer re-pass audits the file against the ruled pin list.",
+        "2026-11-18T20:02Z re-pass verdict SHIP (security GREEN) / APPROVE (code): CRITICAL converted \u2014 both upsert arms gated (INSERT-SELECT WHERE role+cap / DO UPDATE WHERE role+cap, 11 binds :51-60 verified vs ?-positions); full-file deception sweep found NO weakened/deleted pins, concurrent unknown-seat edit left no residue; 0041 byte-verified vs applied shape; 0043 parked verified CREATE-INDEX-only. 5 non-blocking LOWs (incl. new: tag text immutable at full cap -> unmap+remap mints new id/orphans opts) \u2014 owner-gate queue. T89 lane CLOSED, awaiting batch chain."
+      ],
+      "notes": "wave-5 slate #2"
+    },
+    {
+      "id": "T90",
+      "title": "Campfire ledger page: derived-on-request public coin flow naming sinks (spec + RED lane)",
+      "status": "GREEN (lane-built, uncommitted)",
+      "owner": "t90-backend",
+      "receipts": [
+        "2026-11-18T18:25Z spec+RED seat fielded (owner standing loop order 13:24 EST: finish wave-5 -> full security+code audit -> feature wave -> repeat); migration ordinal claimed: T90=0039, T91=0040, T89=0041, T92=0042 (lead pre-ruled, no first-claim race)",
+        "2026-11-18T19:02Z RED test file re-fielded on the roster seat (t90-red) after resume orphaned the first wave; spec survived on disk; both lead-ruled fake laws (session-hash bind, prefix-anchored order) ride the brief",
+        "2026-11-18T19:04Z RED delivered 8/8 feature-absent (roster seat, fake laws honored at harness level); GREEN lane fielded post-unblock: constants export + 0039_gc_campfire_pool_ledger (CREATE-only, no member columns) + handleCampfireLedgerRoute derived-on-request",
+        "2026-11-18T19:06Z GREEN: seat 8/8 + lead re-verified 8/8; constants GC_CAMPFIRE_LEDGER_WINDOW_SECONDS=2592000; 0039 CREATE-only lead-checked 0 member-word occurrences; worker.mjs zero hunks (router rides existing handler); suite 1561/1536, all 25 fails = other lanes' designed-RED. Open follow-up: companion-append wiring (pool-moving statements emit ledger INSERTs) rides T90-b next pass",
+        "2026-11-18T19:07Z review seats fielded on the green diff (sec-read + code-review-seat, read-only, per owner's use-actual-agent-teams + ecc:code-review/security-review methods)",
+        "2026-11-18T19:08Z sec-read (ecc-security) verdict GREEN, zero CRITICAL/HIGH: requireUser/requireCsrf ordering verified (auth.mjs:225-229), ledger SQL pure-bind WHERE server_id=? AND created_at>=?, memberGate throws shared-server-404 (no oracle), 0039 CHECK constraints + CASCADE FK + no member column, bookmarks owner-scoped WHEREs + changes-0->'Bookmark not found.'; 2 LOW informational, no changes asked",
+        "2026-11-18T19:16Z code-review-seat (ecc:code-review 7-category) verdict FIX-FIRST, 1 HIGH (Correctness+Completeness): spec-\u00a73 append points ABSENT \u2014 gc_campfire_pool_ledger referenced once in repo (read @campfire.mjs:150), prod answers flows:[] forever; conversion condition = append wiring rides a committed hunk in this lane before commit. All other categories clean (LOW: inert fake token_hash length). t90-append (backend-dev) fielded same minute on campfire.mjs stoke/credit/draw batches + coins.mjs call sites; test pins stay law, zero test edits.",
+        "2026-11-18T19:30Z OWNER APPLIED 0039/0040/0041 TO PROD D1 directly (pnpm run db:migrate:remote, d1_migrations ids 84-86). Lead read-only NAME-PRESENCE audit: names present, gc_campfire_pool_ledger + gc_user_anniversaries + gc_server_reaction_tags (+autoindexes +idx_gc_reaction_tags_server) + gc_reaction_tag_opts all live. Schema-before-code is safe (worker d0a710e has no routes for them yet). MIGRATION FILES 0039/0040/0041 FROZEN IMMUTABLE; countermand sent to t89-green (opts user index -> parked candidate 0043), freeze sent to t91-green (pins must satisfy applied 0040 shape or STOP). Remaining pre-deploy verify = on-disk file bytes vs applied content at batch ritual.",
+        "2026-11-18T19:38Z t90-append (T90-b append wiring) DONE on all 5 companion points: stoke batch 3rd member :489; chain-fee books ACTUAL post-arm delta at coins.mjs :1167/:1283 (marker-pool 0 corner omitted \u2014 0039 FK makes unbookable rows a batch abort); draw mints batched with payouts (results.slice keeps verdict walk stable :316-:331), reversal books AHEAD :340, refund rides :365. campfirePoolCreditStatement byte-identical (C1 green 11/11). Gates: ledger-red 8/8, full suite 1554/1569 (fails = designed-RED + T91 paper-shape, attributed). LEAD RULINGS: delta convention = magnitude+direction (spec \u00a72 amended lead-side); jobs/seasons unbooked classes PARKED as T90-c (spec \u00a73 note added) \u2014 no hot-zone churn mid-lane. Reviewer pass next.",
+        "2026-11-18T19:55Z t90-b-review verdict FIX-FIRST: CRITICAL-1 chain-fee companion computes delta 0 at a capped pool (prePool==MAX reachable) -> 0039 CHECK delta<>0 rejects -> whole chain batch aborts -> chain routes 500 until drain. Fix ordered (lane reopened, t90-append): zero-delta guard folds into the WHERE (9 binds; zero movement banks no row per spec \u00a75). LOW-1 same-second two-server mint collision PARKED. Clean: batch idiom/reversal order/pre-arm pool/FK corners/pure binds all verified.",
+        "2026-11-18T20:25Z CRITICAL-1 fix landed: CHAIN_FEE ledger WHERE arm folded to zero-delta guard (INSERT...SELECT has no bare-column scope -> seat routed the arm through an explicit server-keyed subquery, semantically identical to the ruled delta<>0 test, refuses over-cap pools too; 9 binds). Gates 8/8 + 11/11 + coins 52/52 + full suite 1560/1569 (only welcome-card RED). Reviewer re-pass fielded. Parked: LOW-1 two-server same-second mint collision.",
+        "2026-11-18T20:35Z t90-b-review RE-PASS SHIP: subquery arm proven exactly-equivalent over [0,MAX] (fee floor coins.mjs:1098; at-cap refuses = zero-line law; over-cap refused = strictly STRONGER than bare delta<>0 \u2014 correct side) and deviation sound (same cf.server_id=? arm reads the same pre-arm pool). Bind order 9/9 exact. T90 CLOSED. Parked: jobs/seasons ledger classes (T90-c), same-second two-server mint collision (LOW-1)."
+      ],
+      "notes": "paper.mjs precedent; sink-law exhibit\n2026-11-18T22:20Z lead: ledger-complete T90-c DONE-GREEN (uncommitted) \u2014 api/jobs.mjs jobPoolLedgerStatement (source job_finish, rides claim batch LAST, fold pins [0..2] preserved) + api/seasons.mjs seasonPoolLedgerStatement (season_finish, guarded on landed gc_season_completions); booked-shape headroom guard honors 0039 CHECK(delta<>0); +2 pins, ledger file 10/10, adjacent 30/30, full 1593/1593 x2 (before foreign R2 writes hit shared tree). Spec \u00a73 amended (known-partial removed). COMMIT HELD until r2-build seat stabilizes shared tree (api/media.mjs, api/uploads.mjs, constants.mjs mid-write; r2-binding test 8-RED is theirs). Reviewer pass due before commit.\nLANDED main b01cd7e + deployed f5aac957 (probe build=48ae869). Review SHIP (code-review-t90c, 5/5 claims, binds placeholder-exact). Test-only LOWs carried: tautological pin campfire-ledger-red:621; seasons test lacks direction='in' pin; fakes pin shape not guard semantics."
+    },
+    {
+      "id": "T91",
+      "title": "Month-day anniversaries: opt-in, year never stored (spec + RED lane)",
+      "status": "SHIP (review passed); follow-up ticketed",
+      "owner": "t91-backend",
+      "receipts": [
+        "2026-11-18T18:25Z spec+RED seat fielded (owner standing loop order 13:24 EST: finish wave-5 -> full security+code audit -> feature wave -> repeat); migration ordinal claimed: T90=0039, T91=0040, T89=0041, T92=0042 (lead pre-ruled, no first-claim race)",
+        "2026-11-18T19:02Z RED verified lead-side post-resume: tests/anniversaries-red.test.mjs complete (303 lines, 9 pins), fails feature-absent at import (GC_PAPER_ANNIVERSARIES_MAX not exported) \u2014 designed RED intact, awaiting GREEN lane",
+        "2026-11-18T19:30Z OWNER APPLIED 0039/0040/0041 TO PROD D1 directly (pnpm run db:migrate:remote, d1_migrations ids 84-86). Lead read-only NAME-PRESENCE audit: names present, gc_campfire_pool_ledger + gc_user_anniversaries + gc_server_reaction_tags (+autoindexes +idx_gc_reaction_tags_server) + gc_reaction_tag_opts all live. Schema-before-code is safe (worker d0a710e has no routes for them yet). MIGRATION FILES 0039/0040/0041 FROZEN IMMUTABLE; countermand sent to t89-green (opts user index -> parked candidate 0043), freeze sent to t91-green (pins must satisfy applied 0040 shape or STOP). Remaining pre-deploy verify = on-disk file bytes vs applied content at batch ritual.",
+        "2026-11-18T19:38Z t91-green lane-built (constants +3 exports, 0040 frozen-immutable + prod-applied, paper.mjs ride-along, ZERO worker hunks) then BLOCKED on 2 law conflicts; lead ruled: blocker1 = anniversaries red fake raw-token vs sha256 bind (T88 fake-defect class) repaired LEAD-SIDE (import :38, SESSION_HASH :43, bound[0] :82) -> 9/9 GREEN post-repair, implementation satisfied all pins as-written; blocker2 = morning-paper red :310 4-section shape update AUTHORIZED (spec \u00a72.5 additive). t91 riding to full green + trailer.",
+        "2026-11-18T19:55Z t91-green FULL GREEN: anniversaries 9/9, morning-paper 11/11 (single authorized shape edit :310), constants 3 exports, 0040 prod-frozen untouched, worker zero hunks; full suite 1560/1569 (9 = welcome-card RED). Lane closed pending review pass.",
+        "2026-11-18T20:35Z code-review-t91 SHIP: security all-clean (self-scoped session id only, ordering per paper-toggle idiom, pure binds, shared 404s, config gate precedes join, paint {userId,handle} per spec \u00a72.5); 0040 frozen audit as-is; month/day bounds consistent (0-11/1-31, Feb 30 accepted verbatim). 1 MEDIUM -> follow-up row ADOPT queue (celebrant read side zero seeded coverage: join binds/cap slice/painted shape unasserted); 3 LOW tickets (unindexed (month,day) join ticket-only, snake_case-literal no-profiling pin cannot catch camelCase, celebrants no ORDER BY). Lane closed."
+      ],
+      "notes": "paper.mjs precedent; sink-law exhibit"
+    },
+    {
+      "id": "T92",
+      "title": "Server welcome card: mod-configured once-greeting, off until configured (spec + RED lane)",
+      "status": "SHIP (santa converged) \u2014 in batch chain",
+      "client_half": "t87-frontend seat in flight",
+      "receipts": [
+        "2026-11-18T18:25Z spec+RED seat fielded (owner standing loop order 13:24 EST: finish wave-5 -> full security+code audit -> feature wave -> repeat); migration ordinal claimed: T90=0039, T91=0040, T89=0041, T92=0042 (lead pre-ruled, no first-claim race)",
+        "2026-11-18T19:02Z RED test file re-fielded on the roster seat (t92-red) after resume orphaned the first wave; spec survived on disk; both lead-ruled fake laws (session-hash bind, prefix-anchored order) ride the brief",
+        "2026-11-18T19:05Z RED delivered 9/10 feature-absent (roster seat; statement-gate proof \u2014 upsert fires once, non-mod = changes-0 \u2192 shared-server-404 family per api/paper.mjs:116; once-shown both arms + ?repeat=1 re-show pinned; 0042 two-table CREATE-only; GC_WELCOME_CARD_BLURB_MAX=300 house cap). GREEN QUEUED behind T89/T91",
+        "2026-11-18T20:25Z welcome-card-build (backend-dev) GREEN lane in flight on 0042 ordinal; suite shows 9 designed-RED pins waiting.",
+        "2026-11-18T20:35Z welcome-card-build GREEN: welcome-card-red 10/10; 0042_gc_welcome_cards.sql (2 CREATE-only tables, no-FK text pins clean after comment reword), constants GC_WELCOME_CARD_BLURB_MAX=300 (:442), api/welcome-card.mjs (CARD_UPSERT_SQL 4-bind statement gate changes-0 -> shared 404 :97-99, VIEW_INSERT_SQL 3-bind, once-shown keyed on row existence), worker.mjs exactly 2 hunks. FULL SUITE 1569/0. Note: red regex bit comment prose first run (fixed by reword). 0042+0043 await ritual.",
+        "2026-11-18T20:52Z santa-method CONVERGENCE: reviewer 1 (ecc-security FLAGGED) + reviewer 2 (code-review BLOCK) independently found the SAME CRITICAL (CARD_UPSERT insert-arm ungated; fake strongers-than-real at :131-141). Reviewer 2 CORRECTED the lead prod-alarm: PAPER_ENABLE_SQL is backstopped by membershipGate+403 pre-read (paper.mjs:230,237-239) \u2014 lead re-verified by eye; PROD IS CLEAN of the hole (the 403-oracle idiom smell is an idiom-law ticket, not authz). welcome-card fix brief + riders (MEDIUM-1 view ON CONFLICT DO NOTHING, LOW-1 empty-blurb 400, LOW-2 spec-doc the PUT response body) sent; both-arms 6-bind shape vs RED pins re-derivation ordered.",
+        "2026-11-18T21:25Z riders CONFIRMED FOLDED (messages crossed; fresh gate re-run): view insert ON CONFLICT DO NOTHING (:61, fake arm already idempotent \u2014 zero test edits for it), emptiness-trim 400 arm (:126, stored text never trimmed), spec \u00a74 documents PUT {blurb} echo + idempotency as law. welcome-card 10/10 exact (no emptiness pin \u2014 RED pins none), full suite 1569/1569. Lane re-closed; dual re-pass dispatched to both reviewer seats (santa re-conversion pending).",
+        "2026-11-18T21:30Z reviewer 2/2 (code-review) RE-PASS SHIP: BLOCK converted \u2014 all 4 findings addressed exactly (both-arms gate ?-positions verified [0-5], conflict target present = valid D1 INSERT-SELECT upsert; DO NOTHING race closed; trim 400; spec \u00a74 spec-defect repaired not just code). 10/10. Reviewer 1 (ecc-security) re-pass independent, pending.",
+        "2026-11-18T21:35Z santa CONVERGED: reviewer 1/2 (ecc-security) RE-PASS GREEN/SHIP \u2014 both arms gated under real D1 semantics (zero-row SELECT on gate-false; WHERE-before-ON-CONFLICT grammar disambiguator verified; ON CONFLICT target = 0042 PK), DO-NOTHING idempotency + emptiness arm + 6-bind pin verified, 0042 column-consistent, 10/10. Reviewer 2/2 SHIP already in. T92 CLOSED, merge-green."
+      ],
+      "notes": "wave-5 slate #5",
+      "owner": "t92-backend"
+    },
+    {
+      "id": "ADOPT-1",
+      "title": "Process-law adoption: ECC survey (ecc-explorer) + superpowers standing invocations",
+      "status": "ADOPTED",
+      "owner": "team-lead",
+      "receipts": [
+        "2026-11-18T20:25Z ecc-explorer surveyed 327 skills + 98 commands; 12 adopt rows ranked. IMMEDIATE: verification-loop (batch-chain verify gate), loop-design-check (brief pre-flight), santa-method (merge-gate dual reviewers), strategic-compact//checkpoint (session handoff), module-regression + i18n-sync + config-health + /harness-audit (the owner-ordered audit stage), council (parity verdicts, on-call). Already-live: gateguard (Fact-Forcing hook active this session). PARKED: cost-report (needs cost-tracker hooks first), /loop-start (only on owner-armed continuous loop). Superpowers standing: systematic-debugging on every defect arc (live on bork arc), brainstorming for wave slates (wave 6+), verification-before-completion gates the push/deploy chain.",
+        "2026-11-18T20:25Z owner complaint on record: superpowers commands untriggered for days -> adoption is now operational, not advisory.",
+        "2026-11-18T20:40Z ecc-explorer merged 15-row table (sp=superpowers 15 skills surveyed real path anthropic-plugin-directory/superpowers/7.0.2-22f0b463e7a5). NEW rows beyond first brief: sp#3 subagent-driven-development = LEAD DISPATCH PROTOCOL (fresh implementer+review per task, rulings-not-stalls, 4 stop conditions); sp#4 brainstorming adapted (human-approval steps -> lead/owner-order per Section A); sp#5 writing-plans = slate->brief bridge (exact files/interfaces/proving-test per task \u2014 matches red-first already in tree); sp#6 executing-plans = cheaper variant for single-seat lanes; sp#7 receiving-code-review = fixer lanes verify-before-implementing, no performative agreement; sp#8 finishing-a-development-branch = merge gate (menu -> lead decides); sp#9 dispatching-parallel-agents = independence screen before fan-out (zero shared write-surface). Verify/debugging rows unchanged. Truncated tail (rows 13-15 ECC) = i18n-sync + module-regression + harness-audit per first brief."
+      ]
+    },
+    {
+      "id": "T-FIX-1",
+      "title": "Follow-up: seeded celebrant paint test (T91 MEDIUM) + T91 LOW tickets",
+      "status": "done",
+      "owner": "unassigned",
+      "receipts": [
+        "2026-11-18T20:35Z MEDIUM from code-review-t91: anniversaries red :111-122 join route is dead fake code \u2014 no test seeds celebrants and GETs a paper; join bind order [month,day,serverId], cap-25 slice, painted {userId,handle} shape unasserted. LOW-1 unindexed (month,day) join (ticket only, 0040 frozen). LOW-2 no-profiling pin is snake_case literal, camelCase keys escape it. LOW-3 celebrants join has no ORDER BY."
+      ],
+      "updated": "2026-11-18T21:50:09.473Z",
+      "log": [
+        "2026-11-18 t91-rider: celebrant paint pin landed GREEN against shipped paper paint (api/paper.mjs:312-320 \u2014 no api change needed); snake_case label alignment in tests/anniversaries-red; lane files 21/21. The concurrent suite fail in ui-shell is dom-paint-fix mid-flight, not this lane."
+      ]
+    },
+    {
+      "id": "T-SEC-CLASS",
+      "title": "Fleet-wide one-arm upsert gate class audit + fixes",
+      "status": "audit-stage-running",
+      "owner": "unassigned",
+      "receipts": [
+        "2026-11-18T20:48Z THIRD occurrence this wave (reaction-tags fixed, welcome-card CRITICAL verdict in lead-verified) + reviewer CLASS NOTE: PAPER_ENABLE_SQL api/paper.mjs:67-72 has the identical insert-arm gap AND SHIPS IN PROD (d0a710e) \u2014 any authed user can first-enable Morning Paper on any server (changes=1 fresh insert). welcome-card fix brief sent (both-arms INSERT...SELECT form); upsert-class-audit seat auditing ALL 26 upsert statements in api/*.mjs for the class; paper.mjs hotfix rides the audit report. The fake-defect pattern repeated: fakes model gates on BOTH paths while shipped SQL gates one.",
+        "2026-11-18T21:02Z welcome-card CRITICAL closed: CARD_UPSERT re-shaped both-arms (INSERT...SELECT ? ? 1 WHERE mod-gate / DO UPDATE WHERE mod-gate, 6 binds :113-115, bound[0]/[1]/[3] unchanged \u2014 ZERO test edits, prefix pin honored); spec \u00a74 amended :39-53. FULL SUITE 1569/1569. IMPORTANT DDL note from seat: 0042 pins only (server_id, blurb_text, enabled) \u2014 no updated_by/updated_at columns exist; the gate rides the pinned three columns (migration out of fix scope; reviewers to re-verify DDL consistency). Rider status check sent (view insert DO NOTHING / empty-blurb 400 / spec PUT-body line) \u2014 seat report omitted them, awaiting confirm-or-apply.",
+        "2026-11-18T21:08Z upsert-class-audit COMPLETE: 28 sites \u2014 20 SAFE, 7 ALREADY-BOTH-ARMS, 1 GAPPED (api/jobs.mjs:82 JOBS_TOGGLE_UPSERT_SQL: owner gate DO-UPDATE-only, handler :348-362 memberGate only, member first-toggle = changes-1 200; PROD-SHIPPED \u2014 fix dispatched jobs-gate-fix, both-arms INSERT...SELECT form, no pre-read), 1 dead-armed-shape (paper.mjs:67 \u2014 handler pre-gate :237 closes it; idiom-uniformity ticket only), 0 exploitable besides jobs. welcome-card both-arms state confirmed by the audit as ALREADY-BOTH-ARMS (post-fix verdict-in)."
+      ],
+      "updated": "2026-11-18T21:47:36.091Z"
+    },
+    {
+      "id": "T-BORK",
+      "title": "Prod bork arc: strings paint humanized tails (owner reported)",
+      "status": "fix-green-awaiting-economy-fix",
+      "owner": "unassigned",
+      "receipts": [
+        "2026-11-18T21:15Z systematic-debugging phases 1-3 COMPLETE (bork-visual seat, Firefox-BiDi clean profile, prod bytes): ROOT CAUSE = public/js/i18n.js:162-181 setLang() \u2014 no BUNDLE_LANGS/base-script gate (storedLang has it since aa6979a) + bundle-404 else branch leaves lang on the seatless key with EMPTY catalog (:177-179), no self-heal, stale stored key never scrubbed. IN-PAGE REPRO: setLang(quote_it_quote) -> currentLang it -> t(gc.shell.nav.mentionsShort) = the owner tail exactly. Owner-browser layer: it was never a shipped seat; pre-aa6979a builds auto-honored a stored it; a long-open signed-in tab never revalidates module bytes (explains persistence across deploys + pill IT + tab Title + zero console errors). One reload heals paint; the stored key re-arms via setLang. Fix (setlang-fix seat, TDD): setLang gate + 404 rollback + boot scrub + test pins. Receipts: /tmp/gc-bork2/*.",
+        "2026-11-18T21:48Z Phase 4 COMPLETE (setlang-fix seat, TDD): RED 5 pins failing on the right asserts -> GREEN 28/28 i18n (5 new/rewritten pins: setLang refusal :524, 404 rollback :556, boot scrub :580, traversal :266, fmt :695) + ui-shell 8/8 + FULL SUITE 1574/1574. Diff: lawfulSeat() :57 = the one sanitize+shipped-base gate (DRY, both storedLang and setLang ride it); setLang :180-216 refuses unlawful seats BEFORE store/switch/fetch; bundle-404 rolls back to previousSeat + removeItem failure key + setHtmlLang + applyDom (no empty-catalog state survives); initI18n boot scrubs rejected keys. Guidance gate ran (2 queries, zero topic hits \u2014 fleet i18n law governs). NOT committed; ships in the batch chain. Owner self-heal meanwhile: one reload of the stuck tab.",
+        "2026-11-18T22:05Z OWNER REPORTS still-borked + NO BUTTONS WORK after reloads -> lead re-diagnosis: the v4.3.2 stamp comment (worker.mjs:159-160) is FALSE \u2014 relative module imports DROP the base query (WHATWG resolution), so only main.js rides ?v=; every sub-module has a FIXED url and a churn-era heuristically-fresh cache entry replays old bytes forever across deploys. Owner runs a MIXED graph (stamped fresh main.js + stale cached i18n/shell modules) -> mid-boot throw -> no listeners -> no buttons + i18n tails. REAL FIX dispatched: import-stamp-fix seat \u2014 worker now server-side-rewrites every relative .js import specifier with the build stamp (?v=), vendor/ excluded (byte-parity), false comment amended; each build lands its whole graph at unseen URLs -> stale entries unreachable. Ships in the batch chain; ONE reload after THIS deploy heals the owner for good."
+      ],
+      "updated": "2026-11-18T21:51:19.761Z",
+      "log": [
+        "2026-11-18 lead: root cause CLOSED \u2014 setLang seat hole (public/js/i18n.js lawfulSeat gate + 404 rollback + boot scrub) AND mixed module graph (worker.mjs stampModuleImports stamps every relative .js import with the build stamp, /js/vendor/ excluded by path AND specifier; worker-dispatch pin updated to new call shape). Suite 1582/1582 at staged state (/tmp/gc-verify-prechain.txt). Remaining gate: signedin-boot-hunt (signed-in repro at prod bytes d0a710e, live) + code-review-fixes verdict, then batch chain -> deploy -> one owner reload heals.",
+        "2026-11-18 21:40 lead: signedin-boot-hunt verdict \u2014 ZERO exceptions in the signed-in boot on prod bytes d0a710e. TWO silent wedges: (1) public/js/core/dom.js:67 node.addEventListener(key.slice(2), value) \u2014 camelCase onClick props attach type \"Click\", never dispatched; 36 dead call sites vs 22 working lowercase. (2) no store subscription for conversations/servers/friends anywhere (shell.js:416 paints Fetching when not array) so data arrival never repaints; t()-direct painted text never repaints after initI18n (applyDom covers [data-i18n] nodes only). Both reproduce on current tree. Fix lane dom-paint-fix running (TDD, dom.js + shell.js + tests). Chain: commits f9b223d/61ad25e/c1b0b4a pushed + worktree-verified 1582/1582; deploy HELD until fix lands.",
+        "2026-11-18 21:52 lead: dom-paint-fix DONE \u2014 dom.js:70 lowercases on* names; shell.js:275-287 subscribes conversations/servers/friends; DM seat carries data-i18n keys (T29 tail paint now heals); 1591/1591. Deploy HELD so ONE deploy also carries economy-fix (audit C1 money printer + H1 refused-stoke fill) \u2014 the C1 printer is ALREADY live in prod, but the bork cure beats waiting: second deploy 30min later acceptable if economy lane stalls."
+      ]
+    },
+    {
+      "id": "T-DOCS-1",
+      "title": "Owner order: README/CONTRIBUTING sweep across all repos",
+      "status": "DONE",
+      "owner": "docs-repos",
+      "receipts": [
+        "2026-11-18T21:40Z 5 commits pushed: GooberCord c463513 (fleet-wave branch \u2014 rides batch chain), wempos-forum 5e725bd (main) + 4a30c92 (forum-5.0 worktree), wempo-accounts 4735f15, project-kitskey 40563cd. All pathspec-only (pre-existing uncommitted sets untouched, verified per commit); quick-starts grounded in real package.json scripts (pnpm only); license sections AGPL-3.0-or-later. Skipped: upstream ECC clone (not fleet), minecraft-server (not git). FUEL-UP NOTE: accounts + kitskey have no LICENSE file (COPYING only) \u2014 follow-up ticket T-DOCS-2."
+      ]
+    },
+    {
+      "id": "T-DOCS-2",
+      "title": "Add LICENSE files to wempo-accounts + project-kitskey (AGPLv3 law completeness)",
+      "status": "done",
+      "owner": "unassigned",
+      "receipts": [
+        "2026-11-18T21:40Z from docs-repos sweep: both repos carry COPYING but no LICENSE; the AGPLv3-all-repos law (09:01 Nov 17) names LICENSE files as the notice vehicle. GC + forum already have LICENSE. One-commit fix per repo, owner-law trivial."
+      ],
+      "updated": "2026-11-18T21:48:29.022Z",
+      "log": [
+        "2026-11-18 lead: kitskey LICENSE 2f74c5b pushed; forum eb36783 verified pushed + byte-identical. Closed."
+      ]
+    },
+    {
+      "id": "T93",
+      "title": "Emoji slot ladder (boostLevelFor wiring, static/animated split receipt-gated)",
+      "status": "lane-running (owner 21:04 wave-7)",
+      "updated": "2026-11-18T21:47:36.091Z",
+      "slate": "docs/drafts/feature-slate-wave6-2026-11-18.md",
+      "notes": "[lead 21:1x EST] Lane w7-t93 (backend-dev seat, worktree lane-w7-t93) \u2014 RED-first ladder via boost-level resolver pattern; split receipt-gated"
+    },
+    {
+      "id": "T94",
+      "title": "Sticker slot ladder 5/15/30/60 wiring",
+      "status": "LANDED",
+      "updated": "2026-11-18T21:47:36.091Z",
+      "slate": "docs/drafts/feature-slate-wave6-2026-11-18.md",
+      "landed": "2026-11-18T22:15Z commit 5c36b83, deployed version 0616e74c, suite 1618/1618, pins-only (gate pre-wired)",
+      "claimedBy": null
+    },
+    {
+      "id": "T95",
+      "title": "Soundboard slot ladder 8/24/36/48 wiring",
+      "status": "LANDED",
+      "updated": "2026-11-18T21:47:36.091Z",
+      "slate": "docs/drafts/feature-slate-wave6-2026-11-18.md",
+      "landed": "2026-11-18T22:15Z commit adc1f9c, deployed version d14ca42a, suite 1623/1623, pins-only (gate pre-wired)",
+      "claimedBy": null
+    },
+    {
+      "id": "T96",
+      "title": "Server-wide upload boost L1/L2/L3 greedy-of-tier wiring",
+      "status": "LANDED",
+      "updated": "2026-11-18T23:59:00.000Z",
+      "slate": "docs/drafts/feature-slate-wave6-2026-11-18.md",
+      "note": "t96-upload-boost lane: RED lane (merge was NOT wired). Wired at the send-with-image intake (api/messages.mjs) + resolver (api/boost-level.mjs); uploads.mjs staged lane untouched (destination-agnostic \u2014 needs a lead ruling, see lane report); suite 1635/1635; await review before ship chain.",
+      "landed": "2026-11-18T22:35Z commit a2c0653, deployed version e6c61199, suite 1635/1635, RED lane (merge wired in send-with-image route)",
+      "claimedBy": null
+    },
+    {
+      "id": "T-AUD-HYG",
+      "title": "Hygiene audit verdict (audit-sync)",
+      "status": "verdict-collected",
+      "updated": "2026-11-18T21:49:06.758Z",
+      "log": [
+        "MEDIUM: 41 wave-5 keys (gc.paper.*17, gc.studio.*12, gc.social.quiet.*7, gc.shell.theme.hc*3, danger.removed, invites.revoke) missing from all 8 non-en bundles \u2014 localizer batch dispatched",
+        "LOW kept: 22 gc.seasons.* en-only keys are SERVER-PAYLOAD keys (api/seasons.mjs:233) \u2014 not dead, keep",
+        "LOW: 8 dead translated keys repo-wide (gc.chat.dm.heading, gc.chat.errors.notFound, gc.chat.gif.unconfigured, gc.chat.search.invalid, gc.expressions.errors.exists, gc.gate.refused, gc.social.dm.heading, gc.social.dm.placeholder) \u2014 cleanup ticket",
+        "LOW: plural-arm deltas (ru+12/fr+7/pt+7/ar+10) are by-design rule-table arms, tests pin them \u2014 no action",
+        "LOW: orphan constant KLIPY_MEDIA_CDN_HOST (constants.mjs:580, zero refs) \u2014 removal rides next constants-touching cycle",
+        "Config: bindings all live, deploy ritual intact, migrations 0001-0043 contiguous, .dev.vars ignored. i18n 28/28 at 5b1d0c1."
+      ],
+      "notes": [
+        "2026-11-18T22:05Z lead: localizer-batch DONE-GREEN \u2014 41 wave-5 keys x8 non-en bundles landed add-only (en untouched, 328 insertions), i18n 28/28, full suite 1593/1593, one lawful carve gate (gc.paper.channelRow placeholders-only). MEDIUM leg closed. FOLLOW-UP T-SEASONS-LOC ticketed for the 22-27 gc.seasons.* en keys."
+      ]
+    },
+    {
+      "id": "T-SEC-LOW",
+      "title": "Security audit LOW triage (security-scan 2026-11-18)",
+      "status": "queued-after-ledger-complete",
+      "updated": "2026-11-18T21:49:29.630Z",
+      "log": [
+        "4/4 arcs CLEAN, 0 CRITICAL/HIGH \u2014 verdicts on /tmp/gc-audit-security.md",
+        "L1: jobs:read limiter key lacks userId (api/jobs.mjs:380) \u2014 cross-member bucket starvation; fix after ledger-complete (same file)",
+        "L2: reaction-tags emoji unbounded below 16KB body cap (api/reaction-tags.mjs:186) \u2014 bind GC_REACTION_TAG_EMOJI_MAX",
+        "L3: welcome-card PUT validates body before its per-route limiter (api/welcome-card.mjs:121-131) \u2014 reorder limiter first",
+        "INFO: ?v=${build} unescaped attribute interpolation (worker.mjs:208/228) \u2014 owner-env-only value, no exposure; note only"
+      ]
+    },
+    {
+      "id": "T-ECO-FIX",
+      "title": "Audit C1+H1: chain-send refused-opener batch + stoke pool fill",
+      "status": "fix-running",
+      "updated": "2026-11-18T21:51:19.761Z",
+      "log": [
+        "C1 coins.mjs:1159-1175 probe-verified (fee+credit+hop commit on changes-0 opener, x20 repeater)",
+        "H1 campfire.mjs:81-86 unguarded POOL_CREDIT_UPSERT on refused stoke",
+        "fake-defect class: economy-slate-red:196/:236 cannot express refusal \u2014 repair + refusal pins",
+        "MEDIUM: reaction-tags at-cap re-label (cap rides update arm only)",
+        "seasons.mjs:142-144 cross-check look only"
+      ]
+    },
+    {
+      "id": "T-SEASONS-LOC",
+      "title": "gc.seasons.* en keys (22-27) missing from all 8 non-en bundles \u2014 follow-up from localizer-batch",
+      "status": "lane-running (owner 21:04 wave-7)",
+      "owner": "backend-dev (seasons lane)",
+      "notes": [
+        "2026-11-18T21:58Z lead: ticketed from localizer-batch OWNER_GATED flag; belongs to seasons lane owner (api/seasons.mjs rider) \u2014 bundle additions after the routes land, 8-bundle add-only pass",
+        "[lead 21:1x EST] Lane w7-seasons-loc (localizer seat, worktree lane-w7-seasons-loc) \u2014 gc.seasons.* add-only 8-bundle pass"
+      ]
+    },
+    {
+      "id": "T-CONF-DATES",
+      "title": "Owner-call: compatibility_date bump parked (2026-10-13) \u2014 behavior-risk items from CF docs 2026-11-18",
+      "status": "queued",
+      "owner": null,
+      "notes": [
+        "2026-11-18T22:10Z lead: wrangler.toml line 4 = 2026-10-13; bump is OWNER-CALL (behavior risk, could flip verified lanes). Considerations verified from developers.cloudflare.com/workers/configuration/compatibility-flags/ (2026-11-18): (1) new_module_registry default-ON from 2026-11-17 \u2014 changes import-attribute validation + require()/ESM rules; review vendored/stamped module graph before any bump. (2) durable_object_io_tasks_prevent_eviction default-ON 2026-10-01 \u2014 ALREADY active at our date, benefits the voice-relay DO. (3) websocket_standard_binary_type default-ON 2026-03-17 \u2014 hibernatable webSocketMessage still always receives ArrayBuffer; voice relay unaffected. (4) Also parked with it (owner-call): GC+forum+accounts all live on workers.dev subdomains; docs recommend custom domains for production (developers.cloudflare.com/workers/configuration/routing/, 2026-11-18) \u2014 hostname-based Access only if ever added (ws routes 403 on worker-level Access).",
+        "2026-11-18T22:15Z lead: also parked here \u2014 workers.dev BIC can't be turned off on the workers.dev zone; automated clients with default library User-Agents (python urllib/requests) get error 1010 BEFORE the Worker runs and never log (developers.cloudflare.com/workers/configuration/routing/workers-dev/, 2026-11-11). Fleet law: any agent script hitting PROD curl/HTTP must send a descriptive User-Agent. And: `pnpx wrangler preview` (wrangler>=4.135) branch previews exist with isolated bindings \u2014 NOT adopted (owner-call if wanted; needs a separate D1 resource)."
+      ]
+    },
+    {
+      "id": "T-REACTION-REPIN",
+      "title": "reaction-tags-red fake: re-label update-arm expectation + pin relabel exemption",
+      "status": "lane-running (owner 21:04 wave-7)",
+      "owner": "t89 seat",
+      "notes": "economy-fix follow-up: fake update arm encodes old at-cap refuse (tests/economy-slate-red.test.mjs); shipped code exempts update via OR EXISTS (reaction-tags.mjs:51-71), zero new binds. | [lead 21:1x EST] Lane w7-fix-arm"
+    },
+    {
+      "id": "T-STOKE-ARM",
+      "title": "STOKE_LEDGER_SQL changes() arm \u2014 t90-b ack + spec rider",
+      "status": "lane-running (owner 21:04 wave-7)",
+      "owner": "t90-b seat",
+      "notes": "economy-fix added changes() arm to campfire.mjs:201 stoke ledger (same-batch/same-second corner); carry into t90-campfire-ledger-spec.md. | [lead 21:1x EST] Lane w7-fix-arm (backend-dev seat, worktree lane-w7-fix-arm) \u2014 arm verify/carry + RED pin + reaction repin in same lane"
+    },
+    {
+      "id": "T-R2-WIPE-RIDES",
+      "title": "R2 put/delete rides: messages, servers, emoji/stickers/soundboard deletes, soundboard intake put",
+      "status": "LANDED",
+      "owner": "unclaimed",
+      "notes": "T100 gap seats; delete rides gate changes==1 (media.mjs:679-686 shape), intake put best-effort. Backfill script + 0044 + avatar flip = OWNER_GATED prod. | LANDED 2026-11-18: fix-r2-w7 commit 67fef8d (rebased onto 0cedd18; lead verified detached-worktree suite 1658/1658 exit 0 w/ GC_FORUM_DIR). Rides on messages/servers/emoji(KIND gc_stickers)/soundboard intake+deletes gated changes==1; uploads.mjs read-confirmed no wipe seats; 0044_gc_drop_attachment_chunks written (single DROP, gc-prefixed, users columns untouched); scripts/backfill-blobs-to-r2.mjs (LOCAL default, remote=lead gate); avatars.mjs R2-first serving w/ D1 fallback (avatar bytes stay: users CHECK law). PROD: counts attachments=0 chunks=0 avatars=26 pending=0; remote avatar backfill running via lead runner /tmp/gc-ops/backfill-prod.mjs (engine-verified); 0044 remote apply NEXT under NAME-PRESENCE after backfill tally clean. Forum remainder: forum seat adopts avatars/<id>+avatars/pending/<id> intake scheme. | [lead 20:5x EST] prod backfill FALSE GREEN caught: first remote run read zero rows (wrangler d1 --json returns batch-entry ARRAY; engine read page.results on it). Fix 4d52283 (d1JsonToD1Shape + pin, suite 1659/1659 at sha) pushed; corrected backfill re-run in flight; 0044 NOT yet applied. | [lead 20:5x EST CHAIN COMPLETE] run3 avatars {put:26, kept:0, failed:0} (run2's 26 fails were wrangler verb-first objectPath parser \u2014 fixed 3d28f0b, pinned, suite 1660/1660 at sha). Independent spot-check 3/3 byte-match (ids 1/121/133). 0044 applied remote via wrangler migrations apply (d1_migrations had all GC 0001-0043, 0044 absent -> exactly one migration); NAME-PRESENCE by name confirmed; gc_attachment_chunks GONE; users 26 avatar fallback rows intact. Deploys live: 4d52283 (f3eee3a8) + 3d28f0b (969ed4b9), probes it:404 en:200 both.",
+      "updated": "2026-11-18"
+    },
+    {
+      "id": "T-AUD-H1",
+      "title": "W6-audit HIGH: buffered frame OOM \u2014 25 MiB ceiling + L2/L3 staged routing (merges T96 staged destination contract)",
+      "status": "LANDED",
+      "owner": "backend-dev",
+      "updated": "2026-11-18",
+      "audit_source": "audit-review-w6 (3/3 sweep: security GREEN, review no-CRITICAL, rbac VERIFIED 7/7)",
+      "notes": [
+        "MECHANISM lead-verified: api/media.mjs:107 formData() full-body buffer + :137 Uint8Array(arrayBuffer()) copy (chunked branch adds readLimitedBody :113) = peak ~2x file size vs 128 MiB isolate; messages.mjs:1226-1228 passes the T96 bless frame (L3=100MiB) as the cap -> near-certain OOM on L3 send ~90MB, L2 ~40MB at edge.",
+        "DESIGN RULED (lead): buffered send-with-image frame gets a memory-safe ceiling GC_BUFFERED_FRAME_CEILING=25MiB (peak ~50MiB, headroom under 128MiB); merge arm becomes min(greedier(MAX_ATTACHMENT_BYTES, serverBlessing), CEILING); L2/L3 raises ride the STAGED lane per the lane's own declared design (messages.mjs:1218 'the tier raise is the staged lane's seat'). Merges into the open T96 row: staged large-file lane destination contract (api/uploads.mjs) \u2014 one lane decides the contract, then caps the frame.",
+        "rbac-w6 corroborated: gates stay auth-before-body (A1-A4 bodyUsed=false), blessing read binds [serverId] only, member state can never mint a server blessing (B1-B3). Fix must NOT change gate order.",
+        "LANDED 2026-11-18: fix-h1-w7 commit 4956a8e (constants GC_BUFFERED_FRAME_CEILING=25MiB; messages.mjs frame min(greedier,ceiling); tests repinned). Lead verify: independent node --test in detached worktree at 4956a8e = 1636 pass / 0 fail exit 0. Pushed; pnpm run deploy version c4257425 build 4956a8e; probes /api/version + root 200 green. Chunked-vs-Content-Length 413/400 harness nuance pinned in tests."
+      ]
+    },
+    {
+      "id": "T-AUD-M1",
+      "title": "W6-audit MEDIUM: fold gc_servers boosts read into SERVER_GATE_SQL (true ONE-read pin route-wide)",
+      "status": "LANDED",
+      "owner": "backend-dev",
+      "notes": "messages.mjs:329 SERVER_GATE_SQL + boost-level.mjs:83 BOTH read gc_servers row; 'ONE read' pin (messages.mjs:1215) honest only for the ladder segment (T96 test counts 1 read but never runs past the parse). Cheap PK reads today \u2014 cleanup pass, not gate-blocking. | LANDED 2026-11-18: fix-auds-w7 commit e60de82 (ff to main, pushed, ritual deploy afc19b4f, build e60de82, probes green). Lead verify: detached worktree suite at e60de82 w/ GC_FORUM_DIR = 1636/1636 exit 0. M1 = SERVER_GATE_SQL carries boosts (:251), uploadBytesForServerRow resolver, one gc_servers read per buffered send; M2 = preparedFileBytes lane gone (prepareAttachmentBytes rides frameFileBytes), \\s+-tolerant pins, media-module:842 test renamed.",
+      "updated": "2026-11-18"
+    },
+    {
+      "id": "T-AUD-M2",
+      "title": "W6-audit MEDIUM/LOW cleanup: inert prepared-merge line + test-shape naming",
+      "status": "LANDED",
+      "owner": "backend-dev",
+      "notes": "messages.mjs:1231 preparedFileBytes can never bind (account side pinned at frame; staged lane owns tier raises \u2014 declared design) \u2014 remove or re-aim comment so future readers wire tier seats at :1225 not :1231. LOWs: tests/plus-perks.test.mjs:596 whitespace-sensitive source-pin regex; tests/media-module.test.mjs:844 test name vs channel-scaffold setup. | LANDED 2026-11-18: fix-auds-w7 commit e60de82 (ff to main, pushed, ritual deploy afc19b4f, build e60de82, probes green). Lead verify: detached worktree suite at e60de82 w/ GC_FORUM_DIR = 1636/1636 exit 0. M1 = SERVER_GATE_SQL carries boosts (:251), uploadBytesForServerRow resolver, one gc_servers read per buffered send; M2 = preparedFileBytes lane gone (prepareAttachmentBytes rides frameFileBytes), \\s+-tolerant pins, media-module:842 test renamed.",
+      "updated": "2026-11-18"
+    },
+    {
+      "id": "R2-delete-rides (conversations)",
+      "title": "R2-delete-rides (conversations)",
+      "status": "lane-running (owner 21:04 wave-7)",
+      "notes": [
+        "[lead 21:1x EST] Lane w7-r2-ride (backend-dev seat, worktree lane-w7-r2-ride) \u2014 changes==1-gated R2 delete ride, RED-first"
+      ]
+    }
+  ],
+  "meta": {
+    "wave5_slate": "docs/drafts/feature-slate-wave5-2026-11-18.md",
+    "audit_sweep_w6": "AUDIT ROWS ALL LANDED 2026-11-18: H1 (4956a8e) + M1/M2 (e60de82); deploy afc19b4f build e60de82 probes green"
+  }
+}

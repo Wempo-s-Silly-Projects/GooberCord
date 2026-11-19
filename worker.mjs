@@ -1,4 +1,4 @@
-// Copyright 2026 ItsWempo
+// Copyright 2026 YourLocalGoober
 //
 // This file is part of GooberCord.
 //
@@ -32,17 +32,8 @@ import { handleMediaRoutes } from "./api/media.mjs";
 import { handleWsRoutes } from "./api/ws.mjs";
 import { handlePresenceRoutes } from "./api/presence.mjs";
 import { handleCoinRoutes } from "./api/coins.mjs";
-import { handleCampfireRoutes } from "./api/campfire.mjs";
-import { handleJobsRoutes } from "./api/jobs.mjs";
-import { handleCapsuleRoutes } from "./api/capsules.mjs";
-import { handleSeasonRoutes } from "./api/seasons.mjs";
 import { handleExpressionRoutes } from "./api/emoji.mjs";
 import { handleSoundboardRoutes } from "./api/soundboard.mjs";
-import { handleSoundPackRoutes } from "./api/soundpacks.mjs";
-import { handlePaperRoutes } from "./api/paper.mjs";
-import { handleBookmarkRoutes } from "./api/bookmarks.mjs";
-import { handleWelcomeCardRoutes } from "./api/welcome-card.mjs";
-import { handleReactionTagRoutes } from "./api/reaction-tags.mjs";
 import { handleGifRoutes } from "./api/gifs.mjs";
 import { handleAvatarRoutes } from "./api/avatars.mjs";
 import { handleUploadRoutes } from "./api/uploads.mjs";
@@ -97,39 +88,11 @@ export { PresenceHub } from "./api/presence.mjs";
 // JS it was served with across deploys, and old JS talking to the newer
 // backend is where the "page doesn't update after an action" class of
 // misbehavior comes from; a mismatch offers the reload instead.
-async function stampedAssetResponse(assetResponse, env, path = "") {
+async function stampedAssetResponse(assetResponse, env) {
   const build = env.VERSION ? [env.VERSION, env.COMMIT_SHA].filter(Boolean).join("@") : "";
   const type = assetResponse.headers.get("Content-Type") || "";
-  // JS modules: served under the SAME stamp theory, but vendor paths are
-  // VENDORED-VERBATIM (byte-parity law) — excluded by path before any
-  // transform so their bytes ride through untouched.
-  const isModuleJs = type.includes("javascript") && !path.includes(VENDOR_ASSET_PATH);
-  if (!build || (!type.includes("text/html") && !isModuleJs)) return assetResponse;
+  if (!build || !type.includes("text/html")) return assetResponse;
   let html = await assetResponse.text();
-  if (isModuleJs) {
-    const stamped = stampModuleImports(html, build);
-    if (stamped === html) {
-      // Nothing to rewrite: serve the bytes exactly as read. The body was
-      // already consumed, so a fresh Response carries them forward — the
-      // original's validators still describe these unchanged bytes and stay.
-      return new Response(html, {
-        status: assetResponse.status,
-        statusText: assetResponse.statusText,
-        headers: new Headers(assetResponse.headers),
-      });
-    }
-    // The bytes changed, so the old validators no longer describe them (same
-    // rationale as the HTML branch below).
-    const jsHeaders = new Headers(assetResponse.headers);
-    jsHeaders.delete("Content-Length");
-    jsHeaders.delete("ETag");
-    jsHeaders.delete("Last-Modified");
-    return new Response(stamped, {
-      status: assetResponse.status,
-      statusText: assetResponse.statusText,
-      headers: jsHeaders,
-    });
-  }
   // The served bytes change length, so the original Content-Length must go —
   // a stale length would truncate the stamped document. HTML also revalidates
   // by ETag, which only tracks the asset bytes: a deploy that bumps VERSION
@@ -184,18 +147,11 @@ async function stampedAssetResponse(assetResponse, env, path = "") {
 // borked / nothing works / says I'm offline" rot: old bytes that no deploy
 // could evict. Per-build URL: each document (no-store, always fresh) points
 // at ?v=BUILD — a build's bytes land at a URL the browser has never seen.
-// Relative module imports do NOT inherit the stamp: a relative reference
-// resolves against the module's own URL with the query DROPPED (WHATWG URL —
-// `new URL('./i18n.js', '/js/main.js?v=X')` → /js/i18n.js), so a stamped
-// entry in index.html alone would leave every other module at a FIXED url —
-// a browser holding a churn-era cache entry there replays old bytes across
-// deploys forever (live 2026-11-18: mixed module graph mid-boot → thrown
-// boot + i18n tails). The graph cascades instead because every module
-// response's relative import/export specifiers are SERVER-side rewritten to
-// stamped URLs (stampModuleImports below) — each build's graph lands at
-// unseen URLs. The assets binding ignores query strings when mapping, and
-// the API/CDN cache treats every build's URL as a distinct key. Old entries
-// expire by their own terms, unreachable and irrelevant.
+// Relative module imports inherit the stamp (import() resolves against the
+// module's own URL), so one query in index.html stamps the entire graph;
+// the assets binding ignores query strings when mapping, and the API/CDN
+// cache treats every build's URL as a distinct key. Old entries expire by
+// their own terms, unreachable and irrelevant.
 // Anchored on the src=/href= attributes of same-origin js/css references
 // only (api paths and external urls are never rewritten); a ?v already
 // present is left alone, so re-stamping an already-stamped document is a
@@ -206,27 +162,6 @@ function stampHtmlSubresources(html, build) {
     /((?:src|href)=")(\/(?:js\/[A-Za-z0-9_./-]+\.js|assets\/styles\.css|styles\.css))(")/g,
     (whole, open, url, close) =>
       url.includes("?") ? whole : `${open}${url}?v=${build}${close}`,
-  );
-}
-// Vendored-verbatim carve-out (byte-parity law): files under /js/vendor/ are
-// pinned as-shipped — NEVER import-stamped.
-const VENDOR_ASSET_PATH = "/js/vendor/";
-// Module-import stamping (v4.4): the server-side half of the cascade the
-// comment above describes. Anchored NARROWLY on the quote-delimited
-// relative-reference forms that can legally appear in a module graph:
-// `import ... from "./x.js"`, `export ... from "./x.js"`, the bare
-// side-effect `import "./x.js"`, and dynamic `import("./x.js")`. NEVER
-// touched: bare specifiers (none in the vanilla graph), .css/asset url
-// strings, files under /js/vendor/ (the carve-out above — checked per
-// specifier AND per served path), already-stamped (?v present) specifiers.
-function stampModuleImports(source, build) {
-  if (!build) return source;
-  return source.replace(
-    /((?:from\s*|import\s*(?:\(\s*)?))(["'])((?:\.\.?\/)[^"']+\.js)(\2)/g,
-    (whole, head, quote, specifier, closeQuote) =>
-      specifier.includes("?") || specifier.includes("/vendor/")
-        ? whole
-        : `${head}${quote}${specifier}?v=${build}${closeQuote}`,
   );
 }
 function escapeHtmlAttribute(value) {
@@ -265,17 +200,8 @@ const API_HANDLERS = [
   handleWsRoutes,
   handlePresenceRoutes,
   handleCoinRoutes,
-  handleCampfireRoutes,
-  handleJobsRoutes,
-  handleCapsuleRoutes,
-  handleSeasonRoutes,
   handleExpressionRoutes,
   handleSoundboardRoutes,
-  handleSoundPackRoutes,
-  handlePaperRoutes,
-  handleBookmarkRoutes,
-  handleWelcomeCardRoutes,
-  handleReactionTagRoutes,
   handleGifRoutes,
   handleAvatarRoutes,
   handleUploadRoutes,
@@ -312,30 +238,7 @@ export default {
     }
     if (!env.ASSETS) return json({ error: "Static assets are not configured." }, 503);
     try {
-      // The wedged-en law: the SPA fallback (not_found_handling =
-      // "single-page-application", GLOBAL — there is no per-path knob) answers
-      // a MISSING asset path with index.html at 200 text/html. For a locale
-      // bundle path that 200-HTML rides the loader's `!response.ok` guard,
-      // poisons the bundle cache, and paints key tails (2026-11-17: it did,
-      // for two hours, console-silent). A missing bundle is a plain 404 here —
-      // the loader's existing branch answers it; a real bundle (or any other
-      // path, documents included) rides the funnel exactly as before.
-      // The segment class is the seated bundle charset (BUNDLE_LANGS keys are
-      // loader-sanitized [a-z0-9-] — i18n.js setLang/storedLang), so a crafted
-      // segment (dots, escapes, traversal shapes) never enters the funnel: it
-      // rides the generic document leg like any other unknown path (T41).
-      if (/^\/locales\/[a-z0-9-]+\.json$/.test(url.pathname)) {
-        const asset = await env.ASSETS.fetch(unconditional(request));
-        const type = asset.status === 200 ? asset.headers.get("Content-Type") || "" : "";
-        if (asset.status !== 200 || type.includes("text/html")) {
-          return new Response("Locale bundle not found.", {
-            status: 404,
-            headers: { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-store" },
-          });
-        }
-        return secureResponse(await stampedAssetResponse(asset, env, url.pathname));
-      }
-      return secureResponse(await stampedAssetResponse(await env.ASSETS.fetch(unconditional(request)), env, url.pathname));
+      return secureResponse(await stampedAssetResponse(await env.ASSETS.fetch(unconditional(request)), env));
     } catch (error) {
       console.error("Static asset request failed:", error);
       return json({ error: "The requested page could not be loaded." }, 500);

@@ -1,0 +1,2 @@
+{"ts":"2026-11-18T13:34Z","session":"team-lead","kind":"ritual-run","item":"R8 0029+0030 remote apply FAILED (FK clean rollback)","cost_usd":null,"note":"schema-guardian patch lane in flight; retry after green"}
+2026-11-18T13:50Z ritual-run SUCCESS 0029-0033 owner-word patch-9060039 cost=subscription
