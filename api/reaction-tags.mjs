@@ -62,7 +62,7 @@ function isValidTagText(tagText) {
 // WHERE and the DO UPDATE arm its own, so a non-mod's write (or a PUT past
 // the map cap) makes zero changes either way. The UNIQUE (server_id, emoji)
 // pair is the conflict target; a re-PUT refreshes in place, never a second
-// row. Binds, textual order (11): server_id, emoji, tag_text, created_by,
+// row. Binds, textual order (10): server_id, emoji, tag_text, created_by,
 // created_at (5) | server_id, user_id, server_id (the insert arm's role +
 // cap), user_id, server_id (the update arm's role + cap, server_id resolved
 // against the target row). 10 binds, this order.

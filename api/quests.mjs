@@ -69,7 +69,7 @@ const QUEST_DAY_READ_SQL =
 // The claim mint. The goals ride as bound values and their own arms, so a
 // replay that races a rollback can never mint past completion; the
 // not-exists pair is the SAME daily slot the shop claim's statement
-// guards, and the ceiling is the caller's own tier. Sixteen binds,
+// guards, and the ceiling is the caller's own tier. Eighteen binds,
 // textual order: user, grant, now | user, day (not-exists) | user, day,
 // message goal | user, day, voice goal | user, day, earn goal | user,
 // day, grant, ceiling (the ceiling arm's sum).
