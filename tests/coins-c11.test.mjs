@@ -216,7 +216,7 @@ test("a legacy re-buy of an owned banner is the 409 own-verdict with balance and
   assert.deepEqual(await bodyOf(refused), { error: "You already own that cosmetic." });
   assert.equal(balanceOf(db), 500, "a refused re-buy never drains the coin");
   assert.equal(ledgerCount(db), rowsAfterBuy, "a refused re-buy never persists a spend row");
-  assert.deepEqual(ownedItems(db), ["banner", "flair"].slice(0, 1));
+  assert.deepEqual(ownedItems(db), ["banner"]);
 });
 
 test("a re-bought Goober+ pack is the 409 with no second drain (one batch, two ownership rows)", async () => {
