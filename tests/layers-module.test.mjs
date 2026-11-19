@@ -600,9 +600,11 @@ test("a layered create rides the extended INSERT with the category EXISTS rider"
   });
   const db = fakeDb([
     { test: SESSION_READ_TEST, first: async () => row },
+    // The create's id, PRE-READ (no id is ever derived INSIDE a batch).
+    { test: (sql) => sql.includes("AS next_channel_id"), first: async () => ({ next_channel_id: 90 }) },
     {
-      test: (sql) => sql.includes("INSERT INTO gc_channels (server_id, name, kind, position, created_at, category_id, slowmode_seconds)"),
-      run: () => ({ meta: { changes: 1, last_row_id: 90 } }),
+      test: (sql) => sql.includes("INSERT INTO gc_channels (id, server_id, name, kind, position, created_at, category_id, slowmode_seconds)"),
+      run: () => ({ meta: { changes: 1 } }),
     },
     {
       test: (sql) => sql.includes("SELECT id, name, kind, position FROM gc_channels WHERE id = ? AND server_id = ?"),
@@ -619,12 +621,12 @@ test("a layered create rides the extended INSERT with the category EXISTS rider"
     channel: { id: 90, name: "lounge", kind: "voice", position: 2, categoryId: 60, slowmodeSeconds: 900 },
   });
 
-  const insert = db.calls.find((entry) => entry.call === "run" && entry.sql.includes("category_id, slowmode_seconds"));
+  const insert = db.calls.find((entry) => entry.call === "batch").statements[0];
   // The same owner/role-bit/cap WHERE, plus the category rider.
   assert.match(insert.sql, /role IN \('owner','moderator'\)/);
   assert.match(insert.sql, /AND \(\? IS NULL OR EXISTS \(SELECT 1 FROM gc_channel_categories WHERE id = \? AND server_id = \?\)\)/);
-  assert.deepEqual(insert.bound.filter((value, index) => index !== 4), [
-    3, "lounge", "voice", 3, 60, 900,
+  assert.deepEqual(insert.bound.filter((value, index) => index !== 5), [
+    90, 3, "lounge", "voice", 3, 60, 900,
     3, USER_ID, 3, USER_ID,
     3, 60, 60, 3,
   ]);
@@ -636,9 +638,11 @@ test("the PRIVATE toggle writes the @everyone deny-VIEW plus one allow row per r
   });
   const db = fakeDb([
     { test: SESSION_READ_TEST, first: async () => row },
+    // The create's id, PRE-READ (no id is ever derived INSIDE a batch).
+    { test: (sql) => sql.includes("AS next_channel_id"), first: async () => ({ next_channel_id: 91 }) },
     {
-      test: (sql) => sql.includes("INSERT INTO gc_channels (server_id, name, kind, position, created_at)"),
-      run: () => ({ meta: { changes: 1, last_row_id: 91 } }),
+      test: (sql) => sql.includes("INSERT INTO gc_channels (id, server_id, name, kind, position, created_at)"),
+      run: () => ({ meta: { changes: 1 } }),
     },
     {
       test: (sql) => sql.includes("SELECT id, name, kind, position FROM gc_channels WHERE id = ? AND server_id = ?"),
@@ -652,12 +656,16 @@ test("the PRIVATE toggle writes the @everyone deny-VIEW plus one allow row per r
   });
 
   const batch = db.calls.find((entry) => entry.call === "batch");
-  assert.ok(batch, "the private toggle is the create's second batch");
-  assert.equal(batch.statements.length, 2);
-  const [everyone, roles] = batch.statements.map((statement) => statement);
-  // BOTH rows bind the LITERAL channel id (the create's own .run() verdict
-  // precedes the batch; last_insert_rowid() never rides a batch statement —
-  // remote D1 resets the rowid across a batch, the live-verified hazard).
+  assert.ok(batch, "the private toggle rides the CREATE batch itself (atomic)");
+  assert.equal(batch.statements.length, 3);
+  assert.equal(batch.statements[0].sql.startsWith("INSERT INTO gc_channels (id,"), true,
+    "the channel row rides the batch FIRST, bound its pre-read literal id");
+  assert.equal(batch.statements[0].bound[0], 91);
+  const [everyone, roles] = [batch.statements[1], batch.statements[2]];
+  // BOTH rows bind the LITERAL channel id (the create's own PRE-READ id —
+  // last_insert_rowid() never rides a batch statement and a last_row_id can
+  // only be read AFTER the batch answers: remote D1 resets the rowid across a
+  // batch, the live-verified hazard).
   assert.match(everyone.sql, /INSERT INTO gc_channel_overwrites \(channel_id, role_id, allow_mask, deny_mask\) VALUES \(\?, NULL, 0, \?\)/);
   assert.equal(everyone.sql.includes("last_insert_rowid"), false);
   assert.deepEqual(everyone.bound, [91, SP.VIEW]);

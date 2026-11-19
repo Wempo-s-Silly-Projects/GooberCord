@@ -372,9 +372,18 @@ test("GET /api/servers demands a signed-in session", async () => {
 // --- POST /api/servers/:id/channels ----------------------------------------------
 
 const CHANNEL_INSERT_TEST = (sql) =>
-  sql.includes("INSERT INTO gc_channels (server_id, name, kind, position, created_at)") &&
+  sql.includes("INSERT INTO gc_channels (id, server_id, name, kind, position, created_at)") &&
   sql.includes("FROM gc_server_members") &&
   sql.includes("COUNT(*)");
+
+// The create's id is PRE-READ before the insert batch (no id is ever derived
+// INSIDE a batch), and the guarded INSERT runs as the batch's first statement.
+function findBatchInsert(db) {
+  const batch = db.calls.find((call) => call.call === "batch");
+  return batch ? batch.statements.find((statement) => CHANNEL_INSERT_TEST(statement.sql)) : undefined;
+}
+
+const NEXT_CHANNEL_ID_TEST = (sql) => sql.includes("AS next_channel_id");
 
 const CHANNEL_RESELECT_TEST = (sql) =>
   sql.includes("SELECT id, name, kind, position FROM gc_channels WHERE id = ? AND server_id = ?");
@@ -390,6 +399,10 @@ function channelCapRoutes(role, existingChannels) {
   return {
     state,
     routes: [
+      {
+        test: NEXT_CHANNEL_ID_TEST,
+        first: async () => ({ next_channel_id: 90 }),
+      },
       {
         test: CHANNEL_INSERT_TEST,
         run: () => {
@@ -445,7 +458,7 @@ test("an owner appends a channel at the next position inside the guarded INSERT"
     channel: { id: 90, name: "voice-1", kind: "voice", position: 499 },
   });
 
-  const insert = db.calls.find((call) => call.call === "run" && CHANNEL_INSERT_TEST(call.sql));
+  const insert = findBatchInsert(db);
   assert.ok(insert);
   // The role precondition rides INSIDE the INSERT — no read-then-write gate.
   assert.match(insert.sql, /role IN \('owner','moderator'\)/);
@@ -457,16 +470,16 @@ test("an owner appends a channel at the next position inside the guarded INSERT"
     insert.sql,
     /\(SELECT COALESCE\(MAX\(position\), -1\) \+ 1 FROM gc_channels WHERE server_id = \?\)/,
   );
-  // Bindings: server id, name, kind, then the subquery's server id, then the
-  // created timestamp — never a client-supplied position. (The phase-3 role
-  // extension adds the manages OR-clause binds after the timestamp: the
-  // string-tier membership pair, then the H1 per-bit EXISTS pair, then the
-  // cap's server id.)
+  // Bindings: the PRE-READ id, server id, name, kind, then the subquery's
+  // server id, then the created timestamp — never a client-supplied position.
+  // (The phase-3 role extension adds the manages OR-clause binds after the
+  // timestamp: the string-tier membership pair, then the H1 per-bit EXISTS
+  // pair, then the cap's server id.)
   assert.deepEqual(
-    insert.bound.filter((value, index) => index !== 4),
-    [3, "voice-1", "voice", 3, 3, USER_ID, 3, USER_ID, 3],
+    insert.bound.filter((value, index) => index !== 5),
+    [90, 3, "voice-1", "voice", 3, 3, USER_ID, 3, USER_ID, 3],
   );
-  assert.equal(typeof insert.bound[4], "number");
+  assert.equal(typeof insert.bound[5], "number");
 });
 
 test("the channel create past the 500-channel cap 400s with the exact limit message", async () => {
@@ -485,7 +498,7 @@ test("the channel create past the 500-channel cap 400s with the exact limit mess
     error: "That server has reached its channel limit.",
   });
   assert.equal(state.channels, MAX_CHANNELS_PER_SERVER); // nothing was created
-  const insert = db.calls.find((call) => call.call === "run" && CHANNEL_INSERT_TEST(call.sql));
+  const insert = findBatchInsert(db);
   assert.ok(insert);
   assert.match(insert.sql, /INSERT INTO gc_channels/);
 });
@@ -503,7 +516,7 @@ test("a plain member's channel create 403s instead of the cap message", async ()
   });
   assert.equal(state.channels, 0);
   // The guarded insert ran (changes=0), then the role diagnostic classified it.
-  assert.ok(db.calls.find((call) => call.call === "run" && CHANNEL_INSERT_TEST(call.sql)));
+  assert.ok(findBatchInsert(db));
   assert.ok(db.calls.find((call) => MEMBERSHIP_ROLE_TEST(call.sql)));
 });
 
@@ -531,7 +544,7 @@ test("channel create rejects a non-text/voice kind with 400 before any write", a
     error: "Channel kind must be either text or voice.",
   });
   assert.equal(
-    db.calls.find((call) => CHANNEL_INSERT_TEST(call.sql)),
+    db.calls.find((call) => (call.call === "batch" ? (call.statements || []).some((s) => CHANNEL_INSERT_TEST(s.sql)) : false)),
     undefined,
   );
 });
@@ -547,7 +560,7 @@ test("channel create rejects a whitespace-only name with 400 before any write", 
     error: "Channel name must be between 1 and 100 characters.",
   });
   assert.equal(
-    db.calls.find((call) => CHANNEL_INSERT_TEST(call.sql)),
+    db.calls.find((call) => (call.call === "batch" ? (call.statements || []).some((s) => CHANNEL_INSERT_TEST(s.sql)) : false)),
     undefined,
   );
 });

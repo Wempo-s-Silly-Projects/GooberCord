@@ -1137,6 +1137,8 @@ test("the channel-create guard gains the gc_roles OR-clause beside the string ti
   const { row, call } = await authed("/api/servers/3/channels");
   const db = fakeDb([
     { test: SESSION_READ_TEST, first: async () => row },
+    // The create's id, PRE-READ (no id is ever derived INSIDE a batch).
+    { test: (sql) => sql.includes("AS next_channel_id"), first: async () => ({ next_channel_id: 90 }) },
     {
       test: CHANNEL_INSERT_TEST,
       run: async () => ({ meta: { changes: 1, last_row_id: 90 } }),
@@ -1152,7 +1154,8 @@ test("the channel-create guard gains the gc_roles OR-clause beside the string ti
   );
   assert.equal(response.status, 201);
 
-  const insert = db.calls.find((entry) => entry.call === "run" && CHANNEL_INSERT_TEST(entry.sql));
+  const batch = db.calls.find((entry) => entry.call === "batch");
+  const insert = batch.statements.find((statement) => CHANNEL_INSERT_TEST(statement.sql));
   // The string-tier precondition is UNCHANGED (the graceful default) — the
   // role-bit clause rides beside it as the H1 per-bit EXISTS.
   assert.match(insert.sql, /role IN \('owner','moderator'\)/);

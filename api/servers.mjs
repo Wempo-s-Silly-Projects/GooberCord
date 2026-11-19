@@ -811,8 +811,8 @@ function roleManageGuardSql(serverId, actorId, bits) {
 // category_id + slowmode_seconds) share the identical WHERE, so the extended
 // fields can only ever ride an already-authorized create.
 const CAP_CHANNEL_INSERT_SQL =
-  "INSERT INTO gc_channels (server_id, name, kind, position, created_at) " +
-    "SELECT ?, ?, ?, " +
+  "INSERT INTO gc_channels (id, server_id, name, kind, position, created_at) " +
+    "SELECT ?, ?, ?, ?, " +
     "(SELECT COALESCE(MAX(position), -1) + 1 FROM gc_channels WHERE server_id = ?), ? " +
     "WHERE (EXISTS (" +
       "SELECT 1 FROM gc_server_members WHERE server_id = ? AND user_id = ? " +
@@ -822,8 +822,8 @@ const CAP_CHANNEL_INSERT_SQL =
     (MAX_CHANNELS_PER_SERVER - 1);
 
 const LAYERED_CHANNEL_INSERT_SQL =
-  "INSERT INTO gc_channels (server_id, name, kind, position, created_at, category_id, slowmode_seconds) " +
-    "SELECT ?, ?, ?, " +
+  "INSERT INTO gc_channels (id, server_id, name, kind, position, created_at, category_id, slowmode_seconds) " +
+    "SELECT ?, ?, ?, ?, " +
     "(SELECT COALESCE(MAX(position), -1) + 1 FROM gc_channels WHERE server_id = ?), ?, ?, ? " +
     "WHERE (EXISTS (" +
       "SELECT 1 FROM gc_server_members WHERE server_id = ? AND user_id = ? " +
@@ -838,14 +838,17 @@ const LAYERED_CHANNEL_INSERT_SQL =
 
 // The PRIVATE-CHANNEL toggle (the filed how-to's creation shortcut — the UI
 // affordance over the layer, no new schema): one @everyone deny-VIEW row plus
-// one allow-VIEW row per gc_role. The channel's own INSERT is a SEPARATE
-// statement with its own changes verdict by the time this batch runs, so the
-// channel id binds as the LITERAL reselect id — the earlier
-// last_insert_rowid() inside the batch was the live D1 hazard: remote D1
-// resets the rowid across a batch()'s statements, so the overwrite rows were
-// born with a stale id (the same finding that forced the compensated server
-// create, live-verified e0bb49c). No inert arms are needed — a refused
-// create 404s/403s before this batch ever runs.
+// one allow-VIEW row per gc_role. BOTH rows ride the CREATE's own batch, bound
+// the create's PRE-READ literal id — the servers.mjs discipline (no id is ever
+// derived INSIDE a batch; the same 0005/0055 stale-rowid lesson that forced
+// the compensated server create, live-verified e0bb49c): last_insert_rowid()
+// never rides a batch statement and a last_row_id can only be read AFTER the
+// batch answers. So the id is pre-read (a rowid-alias table's next id IS
+// max(id) + 1, exactly what a bare INSERT allocates), and the private channel
+// plus its overwrites commits ATOMICALLY: a refused create can never leave
+// overwrite rows behind, nor a public channel that was meant private.
+const NEXT_CHANNEL_ID_SQL =
+  "SELECT COALESCE(MAX(id), 0) + 1 AS next_channel_id FROM gc_channels";
 const PRIVATE_EVERYONE_DENY_SQL =
   "INSERT INTO gc_channel_overwrites (channel_id, role_id, allow_mask, deny_mask) VALUES (?, NULL, 0, ?)";
 const PRIVATE_ROLE_ALLOWS_SQL =
@@ -893,22 +896,46 @@ async function handleCreateChannelRoute(request, env, serverId) {
   const privateChannel = body.private === true;
   const layered = categoryId !== null || slowmode !== 0;
 
-  const result = await env.GOOBER_DB.prepare(
-    layered ? LAYERED_CHANNEL_INSERT_SQL : CAP_CHANNEL_INSERT_SQL,
-  ).bind(
-    serverId, name, body.kind, serverId, now,
-    ...(layered
-      ? [categoryId !== null ? categoryId : null, slowmode]
-      : []),
-    // The owner/moderator tier pair, then the per-bit EXISTS pair.
-    serverId, userId, serverId, userId,
-    serverId,
-    ...(layered
-      ? [categoryId !== null ? categoryId : null, categoryId !== null ? categoryId : null, serverId]
-      : []),
-  ).run();
+  // The create's id, PRE-READ (the servers.mjs discipline: no id is ever
+  // derived INSIDE a batch) — the literal that binds the channel row AND,
+  // for a private create, its overwrite pair's channel_id.
+  const nextIdRow = await env.GOOBER_DB.prepare(NEXT_CHANNEL_ID_SQL).first();
+  const channelId = Number(nextIdRow?.next_channel_id);
+  if (!Number.isSafeInteger(channelId) || channelId < 1) {
+    throw new HttpError(500, "The channel could not be created. Please try again.");
+  }
 
-  if (Number(result.meta?.changes) !== 1) {
+  // ONE batch: the guarded channel row, then — only for a private create —
+  // its overwrite pair, bound the SAME literal id. A refusal in the first
+  // statement rolls the whole batch back: no overwrite rows behind a refused
+  // create (and no public channel that was meant private).
+  const createStatements = [
+    env.GOOBER_DB.prepare(
+      layered ? LAYERED_CHANNEL_INSERT_SQL : CAP_CHANNEL_INSERT_SQL,
+    ).bind(
+      channelId, serverId, name, body.kind, serverId, now,
+      ...(layered
+        ? [categoryId !== null ? categoryId : null, slowmode]
+        : []),
+      // The owner/moderator tier pair, then the per-bit EXISTS pair.
+      serverId, userId, serverId, userId,
+      serverId,
+      ...(layered
+        ? [categoryId !== null ? categoryId : null, categoryId !== null ? categoryId : null, serverId]
+        : []),
+    ),
+  ];
+  if (privateChannel) {
+    createStatements.push(
+      env.GOOBER_DB.prepare(PRIVATE_EVERYONE_DENY_SQL)
+        .bind(channelId, SERVER_PERMISSIONS.VIEW),
+      env.GOOBER_DB.prepare(PRIVATE_ROLE_ALLOWS_SQL)
+        .bind(channelId, SERVER_PERMISSIONS.VIEW, serverId),
+    );
+  }
+  const results = await env.GOOBER_DB.batch(createStatements);
+
+  if (Number(results[0]?.meta?.changes) !== 1) {
     // Diagnostic only: authority already rode the guarded INSERT. A member
     // with channel-managing authority anywhere (string tier or the role bit)
     // sees the cap message, everyone else — including non-members, so no
@@ -939,19 +966,7 @@ async function handleCreateChannelRoute(request, env, serverId) {
     throw new HttpError(403, "You do not have permission to do that.");
   }
 
-  const channelId = Number(result.meta.last_row_id);
-
-  // The private toggle's overwrite pair (same batch as the create, so an
-  // refused create can never leave overwrite rows behind).
-  if (privateChannel) {
-    await env.GOOBER_DB.batch([
-      env.GOOBER_DB.prepare(PRIVATE_EVERYONE_DENY_SQL)
-        .bind(channelId, SERVER_PERMISSIONS.VIEW),
-      env.GOOBER_DB.prepare(PRIVATE_ROLE_ALLOWS_SQL)
-        .bind(channelId, SERVER_PERMISSIONS.VIEW, serverId),
-    ]);
-  }
-
+  // The channel id is the pre-read literal already — no last_row_id re-derivation.
   const channel = await env.GOOBER_DB.prepare(
     "SELECT id, name, kind, position FROM gc_channels WHERE id = ? AND server_id = ? LIMIT 1",
   ).bind(channelId, serverId).first();
@@ -2404,7 +2419,10 @@ async function handleBanMemberRoute(request, env, serverId) {
   // -1-sentinel owner row would otherwise fall under the position rule — and
   // the moderation guard) and the kick-style fan-out, whose two deletes ride a
   // "ban row now exists" rider so a refused ban can never kick a member who
-  // stayed.
+  // stayed — and the SAME rider carries the boost strip (cycle-9: a banned
+  // booster's gc_server_boosts row leaves in-batch, before the member delete,
+  // or it keeps counting toward gc_servers.boosts and re-grants on rejoin).
+  // The recount derives from the stripped set in-batch LAST.
   const guard = moderationGuardSql(
     serverId, userId, targetUserId,
     [SERVER_PERMISSIONS.KICK_MEMBERS],
@@ -2422,6 +2440,10 @@ async function handleBanMemberRoute(request, env, serverId) {
       serverId, targetUserId, serverId, targetUserId, ...guard.params,
     ),
     env.GOOBER_DB.prepare(
+      "DELETE FROM gc_server_boosts WHERE server_id = ? AND user_id = ? AND " +
+        "EXISTS (SELECT 1 FROM gc_server_bans gb WHERE gb.server_id = ? AND gb.user_id = ?)",
+    ).bind(serverId, targetUserId, serverId, targetUserId),
+    env.GOOBER_DB.prepare(
       "DELETE FROM gc_server_members WHERE server_id = ? AND user_id = ? AND role <> 'owner' AND " +
         "EXISTS (SELECT 1 FROM gc_server_bans gb WHERE gb.server_id = ? AND gb.user_id = ?)",
     ).bind(serverId, targetUserId, serverId, targetUserId),
@@ -2429,6 +2451,7 @@ async function handleBanMemberRoute(request, env, serverId) {
       "DELETE FROM gc_member_roles WHERE server_id = ? AND user_id = ? AND " +
         "EXISTS (SELECT 1 FROM gc_server_bans gb WHERE gb.server_id = ? AND gb.user_id = ?)",
     ).bind(serverId, targetUserId, serverId, targetUserId),
+    env.GOOBER_DB.prepare(BOOST_RECOUNT_SQL).bind(serverId, serverId),
   ]);
 
   if (Number(results[0]?.meta?.changes) !== 1) {
@@ -2657,12 +2680,21 @@ async function handlePruneRoute(request, env, serverId) {
     return json({ dry_run: true, count: Number(row.count) }, 200);
   }
 
-  // Step 2: the batched kick. BOTH statements carry the identical candidate
+  // Step 2: the batched kick. ALL THREE deletes carry the identical candidate
   // set and guard; the assignments leave FIRST (their predicate joins the
-  // membership row, which the second statement's predicate would lose).
+  // membership row, which the aliased member statement's predicate would
+  // lose), and the boost strip rides the SAME shape — a pruned booster's
+  // gc_server_boosts row leaves in-batch (cycle-9: the orphan kept counting
+  // toward gc_servers.boosts and re-granted on rejoin) before the member
+  // delete refutes its EXISTS arm. The recount derives from the stripped set
+  // in-batch LAST.
   const results = await env.GOOBER_DB.batch([
     env.GOOBER_DB.prepare(
       "DELETE FROM gc_member_roles WHERE server_id = ? AND EXISTS (" +
+        "SELECT 1 FROM gc_server_members m WHERE " + candidateWhere + ")",
+    ).bind(serverId, ...candidateBinds),
+    env.GOOBER_DB.prepare(
+      "DELETE FROM gc_server_boosts WHERE server_id = ? AND EXISTS (" +
         "SELECT 1 FROM gc_server_members m WHERE " + candidateWhere + ")",
     ).bind(serverId, ...candidateBinds),
     env.GOOBER_DB.prepare(
@@ -2671,10 +2703,11 @@ async function handlePruneRoute(request, env, serverId) {
       // its predicate's alias rides the subquery).
       "DELETE FROM gc_server_members AS m WHERE " + candidateWhere,
     ).bind(...candidateBinds),
+    env.GOOBER_DB.prepare(BOOST_RECOUNT_SQL).bind(serverId, serverId),
   ]);
 
   return json(
-    { dry_run: false, kicked: Number(results[1]?.meta?.changes) || 0 },
+    { dry_run: false, kicked: Number(results[2]?.meta?.changes) || 0 },
     200,
   );
 }
