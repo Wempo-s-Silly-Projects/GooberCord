@@ -180,7 +180,8 @@ function envWithLimiters(db, overrides = {}) {
 // --- the SQL shapes the tests pin ------------------------------------------------
 
 const USER_ROW_READ_TEST = (sql) =>
-  sql.includes("FROM users WHERE") && (sql.includes("username = ?") || sql.includes("id = ?")) &&
+  sql.includes("FROM users WHERE") &&
+  (sql.includes("username_key = ?") || sql.includes("username = ?") || sql.includes("id = ?")) &&
   sql.includes("role");
 
 const FRIENDSHIP_READ_TEST = (sql) =>
@@ -1382,3 +1383,76 @@ test("a plain reaction never runs the plus read (the tier is set-membership, not
   assert.equal(callsOf(db).some((call) => PLUS_READ_TEST(call.sql)), false);
 });
 
+
+// --- the cycle-4 social pins (lookup normalization + the write-bucket walls) -------
+
+// The normalized identity column every other username lookup keys (login,
+// register's duplicate check, the coins ledger's address line): a request by
+// any casing of the name resolves the same one row.
+const USER_KEY_READ_TEST = (sql) =>
+  sql.includes("FROM users WHERE username_key = ? LIMIT 1") && sql.includes("role");
+
+test("POST /api/friends/requests resolves the target case-insensitively via username_key", async () => {
+  const row = (await session()).row;
+  const db = fakeDb([
+    { test: SESSION_READ_TEST, first: async () => row },
+    { test: USER_KEY_READ_TEST, first: async () => ({ id: TARGET_ID, username: "Ada", role: "member" }) },
+  ]);
+  const response = await dispatchSocial(
+    request("POST", "/api/friends/requests", { username: "  ADA  " }, (await session()).headers),
+    envWithLimiters(db),
+  );
+  assert.equal(response.status, 201);
+  const lookup = callsOf(db).find((call) => USER_KEY_READ_TEST(call.sql));
+  assert.ok(lookup, "the lookup rides the normalized username_key column");
+  assert.equal(lookup.bound[0], "ada", "the lookup key is trimmed + lowercased");
+  assert.equal((await bodyOf(response)).request.username, "Ada", "the display casing survives");
+});
+
+// The write-bucket walls: every mutating social route answers 429 through the
+// limiter BEFORE it touches the graph (the coins-module recording-limiter
+// convention — the call's key is the sha256 of the scope:family:actor shape).
+function envWithRecordingWriteLimiter(db, limitCalls) {
+  return envWithLimiters(db, {
+    GC_WRITE_RATE_LIMITER: {
+      limit: async ({ key }) => {
+        limitCalls.push(key);
+        return { success: true };
+      },
+    },
+  });
+}
+
+test("the cancel, unfriend, settings-upsert, and unblock routes carry the write-bucket rateLimit", async () => {
+  const row = (await session()).row;
+  const limitCalls = [];
+  const envWith = (routes) => envWithRecordingWriteLimiter(fakeDb(routes), limitCalls);
+  const sessionRoutes = [{ test: SESSION_READ_TEST, first: async () => row }];
+
+  await dispatchSocial(
+    request("DELETE", "/api/friends/requests/" + TARGET_ID, undefined, (await session()).headers),
+    envWith(sessionRoutes),
+  );
+  await dispatchSocial(
+    request("DELETE", "/api/friends/" + THIRD_ID, undefined, (await session()).headers),
+    envWith(sessionRoutes),
+  );
+  await dispatchSocial(
+    request("PUT", "/api/friends/settings", { acceptRequests: false }, (await session()).headers),
+    envWith(sessionRoutes),
+  );
+  // The unblock 404 (zero changes) still proves the wall stood first.
+  await dispatchSocial(
+    request("DELETE", "/api/blocks/" + TARGET_ID, undefined, (await session()).headers),
+    envWith([
+      { test: SESSION_READ_TEST, first: async () => row },
+      { test: BLOCK_DELETE_TEST, run: async () => ({ meta: { changes: 0 } }) },
+    ]),
+  );
+
+  assert.ok(limitCalls.includes(await sha256Hex("write:friend-request:" + USER_ID)), "cancel wall");
+  assert.ok(limitCalls.includes(await sha256Hex("write:friend:" + USER_ID)), "unfriend wall");
+  assert.ok(limitCalls.includes(await sha256Hex("write:settings:" + USER_ID)), "settings wall");
+  assert.ok(limitCalls.includes(await sha256Hex("write:block:" + USER_ID)), "unblock wall");
+  assert.equal(limitCalls.length, 4, "every wall once, keyed per route family");
+});
