@@ -551,6 +551,25 @@ async function messageBodyMax(env, userId, now) {
     : GC_FREE_MESSAGE_MAX;
 }
 
+// The grouped reaction reads' builder (the history page and the pins page
+// share it — one loop, never a drifted pair). The fx_burst echo (0057, the
+// cosmetics slate's Phase 3) rides ADDITIVELY: a flagged row's user entry
+// gains fxBurst, an unflagged row keeps the exact entry shape it always had.
+function groupReactionRows(rows, reactionGroupsByMessage) {
+  for (const row of rows) {
+    const messageId = Number(row.message_id);
+    const groups = reactionGroupsByMessage.get(messageId) || [];
+    const emoji = String(row.emoji);
+    const user = row.fx_burst
+      ? { id: Number(row.user_id), username: row.username, fxBurst: true }
+      : { id: Number(row.user_id), username: row.username };
+    const group = groups.find((entry) => entry.emoji === emoji);
+    if (group) group.users.push(user);
+    else groups.push({ emoji, users: [user] });
+    reactionGroupsByMessage.set(messageId, groups);
+  }
+}
+
 // Validation + filter gate shared by the send and the edit. The forum's
 // masking pass decides: a body that would mask is refused (FilterError), a
 // body that survives unchanged is stored verbatim.
@@ -1073,20 +1092,12 @@ async function handleListMessagesRoute(request, env, url, channelId) {
     // same IN-list discipline the attachments read rides above), each group
     // carrying the emoji's user list for the chip count + personal state.
     const reactions = (await env.GOOBER_DB.prepare(
-      "SELECT r.emoji AS emoji, r.user_id AS user_id, u.username AS username " +
+      "SELECT r.message_id AS message_id, r.emoji AS emoji, r.user_id AS user_id, u.username AS username, r.fx_burst AS fx_burst " +
         "FROM gc_message_reactions r JOIN users u ON u.id = r.user_id " +
         "WHERE r.message_id IN (" + messageIds.map(() => "?").join(",") + ") " +
         "ORDER BY r.created_at, r.user_id",
     ).bind(...messageIds).all()).results || [];
-    for (const row of reactions) {
-      const messageId = Number(row.message_id);
-      const groups = reactionGroupsByMessage.get(messageId) || [];
-      const emoji = String(row.emoji);
-      const group = groups.find((entry) => entry.emoji === emoji);
-      if (group) group.users.push({ id: Number(row.user_id), username: row.username });
-      else groups.push({ emoji, users: [{ id: Number(row.user_id), username: row.username }] });
-      reactionGroupsByMessage.set(messageId, groups);
-    }
+    groupReactionRows(reactions, reactionGroupsByMessage);
   }
 
   // Discord marks-on-read: the tail read IS the ack. The caller's own member
@@ -1538,20 +1549,12 @@ async function handleChannelPinsRoute(request, env, channelId) {
       attachmentIdsByMessage.set(Number(row.message_id), list);
     }
     const reactions = (await env.GOOBER_DB.prepare(
-      "SELECT r.message_id AS message_id, r.emoji AS emoji, r.user_id AS user_id, u.username AS username " +
+      "SELECT r.message_id AS message_id, r.emoji AS emoji, r.user_id AS user_id, u.username AS username, r.fx_burst AS fx_burst " +
         "FROM gc_message_reactions r JOIN users u ON u.id = r.user_id " +
         "WHERE r.message_id IN (" + messageIds.map(() => "?").join(",") + ") " +
         "ORDER BY r.created_at, r.user_id",
     ).bind(...messageIds).all()).results || [];
-    for (const row of reactions) {
-      const mid = Number(row.message_id);
-      const groups = reactionGroupsByMessage.get(mid) || [];
-      const emoji = String(row.emoji);
-      const group = groups.find((entry) => entry.emoji === emoji);
-      if (group) group.users.push({ id: Number(row.user_id), username: row.username });
-      else groups.push({ emoji, users: [{ id: Number(row.user_id), username: row.username }] });
-      reactionGroupsByMessage.set(mid, groups);
-    }
+    groupReactionRows(reactions, reactionGroupsByMessage);
   }
 
   return json({

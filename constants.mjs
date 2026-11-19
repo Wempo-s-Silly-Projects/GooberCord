@@ -154,7 +154,10 @@ export const GC_COSMETIC_FRAME_PRICE = 100;
 export const GC_COSMETIC_CHANNEL_BANNER_PRICE = 150;
 export const GC_COSMETIC_FX_BURST_USES = 5;
 // The SKU keys ARE the 0056 CHECK list (single source of truth: clients
-// import this, never re-declare).
+// import this, never re-declare). The effects slot's pack key (the 2026-11-19
+// slate's Phase 3): the reaction route's burst arm spends the EQUIPPED row
+// this key names — the one consumable the equip arm admits.
+export const GC_COSMETIC_FX_BURST_ITEM = "fx_burst_confetti";
 export const GC_COSMETIC_INVENTORY_SKUS = [
   { itemKey: "fx_burst_confetti", kind: "consumable" },
   { itemKey: "frame_gold", kind: "own" },
