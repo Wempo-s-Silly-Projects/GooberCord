@@ -1000,16 +1000,27 @@ function buildComposer(channelId, channel, column) {
   const doSend = async () => {
     const body = well.value.trim();
     if (!body || inFlight) return;
+    if (laneDoor) {
+      // The chunk act owns the composer (GO-HAYWIRE c21 F1) — an Enter beside
+      // an in-flight door would post body text-only and drop the committed
+      // staging onto a later message. The busy paint is the existing
+      // sending key; the strip's own slice count stays the truth.
+      errorLine.textContent = t("gc.chat.pending.hint");
+      return;
+    }
     inFlight = true;
     send.disabled = true;
     errorLine.textContent = "";
     const file = pendingImage;
+    const sentLane = pendingLane;
     try {
-      await sendToChannel(channelId, body, { imageFile: file || undefined, attachmentId: pendingLane?.attachmentId || null });
+      await sendToChannel(channelId, body, { imageFile: file || undefined, attachmentId: sentLane?.attachmentId || null });
       well.value = "";
       try { sessionStorage.removeItem(draftKey); } catch { /* quiet */ }
       pendingImage = null;
-      pendingLane = null;
+      // The cleanup only drops the lane act it actually sent — a
+      // settled-in-window attach keeps its id, never silently re-linked.
+      if (pendingLane === sentLane) pendingLane = null;
       imageSeat.replaceChildren();
       syncMeter();
       refreshColumn(column, channelId);

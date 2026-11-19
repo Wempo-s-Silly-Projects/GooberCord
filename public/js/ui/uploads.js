@@ -115,7 +115,11 @@ export function openChunkedUpload(file) {
   const cancel = async () => {
     cancelled = true;
     controller.abort(); // the wire dies before the DELETE — no part can 201 after the abandon
-    await abandonUpload();
+    // The abandon DELETE is flaky-network-proof (GO-HAYWIRE c21 F2): its own
+    // failure stays in the door — a rejection never reaches the composer's
+    // remove arms (`await laneDoor.cancel()` in chat.js), the same shape the
+    // refusal arm above already rides.
+    await abandonUpload().catch(() => null);
   };
 
   return { send, cancel, totalParts };

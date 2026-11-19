@@ -151,7 +151,7 @@ test("cancel and refusal are their own acts; the abandon never rides a refusal",
   assert.match(UPLOADS_UI, /const abandonUpload = async \(\) => \{/);
   assert.match(UPLOADS_UI, /if \(id === null \|\| !UPLOAD_ID_OK_RE\.test\(id\)\) return;/,
     "a never-opened door abandons nothing — no oracle on a nonexistent token");
-  assert.match(UPLOADS_UI, /const cancel = async \(\) => \{[\s\S]{0,200}abandonUpload\(\)/,
+  assert.match(UPLOADS_UI, /const cancel = async \(\) => \{[\s\S]{0,400}abandonUpload\(\)/,
     "the cancel act fires its own explicit DELETE");
   assert.match(UPLOADS_UI, /catch \(error\) \{[\s\S]{0,400}await abandonUpload\(\)\.catch\(\(\) => null\);[\s\S]{0,200}throw error;/,
     "a refused part paints verbatim upward; the door's act is the one abandon");
@@ -164,8 +164,8 @@ test("cancel and refusal are their own acts; the abandon never rides a refusal",
   assert.match(UPLOADS_UI, /signal: controller\.signal/,
     "the chunk POST arm is abortable (core/api.js passes signal through to fetch)");
   assert.match(UPLOADS_UI,
-    /const cancel = async \(\) => \{\s*cancelled = true;\s*controller\.abort\(\);[\s\S]{0,120}?await abandonUpload\(\);/,
-    "the cancel act aborts the wire FIRST, then fires its explicit DELETE");
+    /const cancel = async \(\) => \{\s*cancelled = true;\s*controller\.abort\(\);[\s\S]{0,400}?await abandonUpload\(\)\.catch\(\(\) => null\);/,
+    "the cancel act aborts the wire FIRST, then fires its explicit DELETE (flaky-network-proof, c21 F2)");
   assert.match(UPLOADS_UI,
     /if \(cancelled\) \{\s*await abandonUpload\(\);[\s\S]{0,120}?return null;\s*\}/,
     "the cancelled return between parts fires its own abandon — no orphan staging");
@@ -229,8 +229,8 @@ test("the send flow rides attach-by-id — the committed row links without re-ri
     /body: \{ body, clientMessageId: clientMessageId_, attachmentId \},/,
     "the JSON send arm carries attachmentId (api/messages.mjs:1181 referenceFromBody)");
   assert.match(CHAT,
-    /\{ imageFile: file \|\| undefined, attachmentId: pendingLane\?\.attachmentId \|\| null \}\)/,
-    "doSend passes the lane id beside its preview file; the multipart arm stays single-shot-only");
+    /const sentLane = pendingLane;\s*try \{[\s\S]{0,200}?\{ imageFile: file \|\| undefined, attachmentId: sentLane\?\.attachmentId \|\| null \}\)/,
+    "doSend passes the lane id (read at call time) beside its preview file; the multipart arm stays single-shot-only");
   assert.match(CHAT,
     /\{ imageFile: row\.localFile \|\| undefined, attachmentId: row\.laneAttachmentId \|\| null \}\)/,
     "retryFailed re-carries the id — a lane retry never re-uploads single-shot");
@@ -244,6 +244,26 @@ test("the single-shot flow stays byte-shaped (no neighboring refactor rode along
     "the 20 MiB standalone intake arm keeps its shape");
   const multipartSeats = CHAT.match(/data\.append\("image", imageFile\);/g)?.length ?? 0;
   assert.equal(multipartSeats, 1, "the multipart send-with-image arm is untouched");
+});
+
+// --- the c21 audit fixes (GO-HAYWIRE) ---------------------------------------
+
+test("the lane door gates doSend — an Enter beside an in-flight act posts nothing", () => {
+  assert.match(CHAT,
+    /if \(!body \|\| inFlight\) return;\s*if \(laneDoor\) \{[\s\S]{0,400}?errorLine\.textContent = t\("gc\.chat\.pending\.hint"\);\s*return;\s*\}/,
+    "an Enter beside an open door paints the existing sending key and returns — a body text-only send can never ride an in-flight act, and no new i18n key is minted");
+  assert.match(CHAT,
+    /const sentLane = pendingLane;[\s\S]{0,300}?attachmentId: sentLane\?\.attachmentId \|\| null/,
+    "the id doSend passes is the settled lane read at call time, not mutated by the await");
+  assert.match(CHAT,
+    /if \(pendingLane === sentLane\) pendingLane = null;/,
+    "the success cleanup only drops the lane act it actually sent — a settled-in-window attach keeps its id");
+});
+
+test("cancel() cannot reject through to the composer's click handlers", () => {
+  assert.match(UPLOADS_UI,
+    /const cancel = async \(\) => \{\s*cancelled = true;\s*controller\.abort\(\);[\s\S]{0,400}?await abandonUpload\(\)\.catch\(\(\) => null\);/,
+    "a network-flaky abandon DELETE stays in the door — the remove arms' `await laneDoor.cancel()` never fires an unhandled rejection");
 });
 
 // --- the sink + tier gates (payload-truth) ----------------------------------
