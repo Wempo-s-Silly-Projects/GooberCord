@@ -71,6 +71,14 @@ export async function loadMineReactionTags(serverId) {
   return store.get(mineKey(serverId));
 }
 
+// The mod tag write is the change point: the settings-side mod panel's
+// successful PUT (upsert) or DELETE (unmap) invalidates THIS server's two
+// lanes (seated undefined), so the next member-panel open in the same client
+// re-pulls fresh truth instead of painting the pre-write map/mine face.
+export function invalidateReactionTagLanes(serverId) {
+  store.set({ [mapKey(serverId)]: undefined, [mineKey(serverId)]: undefined });
+}
+
 // POST /api/servers/:serverId/reaction-tags/:tagId/opt — the opt act. The
 // route is idempotent (a repeat answers { opted: true, duplicate: true }).
 export async function optInTag(serverId, tagId) {

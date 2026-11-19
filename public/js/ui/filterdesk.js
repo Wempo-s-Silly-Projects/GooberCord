@@ -62,9 +62,15 @@ function deskPanel() {
   const errorLine = h("p", { class: "form-error", role: "alert", "aria-live": "polite" });
   const countLine = h("p", { class: "muted count-line" });
   const resultLine = h("p", { class: "muted count-line" });
+  const sourceLine = h("p", { class: "muted source-line" });
+  const updatedLine = h("p", { class: "muted updated-line" });
 
   // The one explicit submit — ONE entry per act; the backend's own 400/413
-  // copies are the truth after any client slip (no client oracle).
+  // copies are the truth after any client slip (no client oracle). The
+  // POST's answer paints the result/count lines; the STATE face (source,
+  // updatedAt) is GET-only in the backend's envelope, so its repaint rides
+  // the submit's own follow-up GET — one extra ride behind one explicit
+  // act, never a poll (the defaults law).
   const entryBox = createInput(document, {
     id: "filter-entry", label: t("gc.filterdesk.entryLabel"),
     description: t("gc.filterdesk.entryHelp"),
@@ -82,25 +88,30 @@ function deskPanel() {
       });
       countLine.textContent = t("gc.filterdesk.stateEntries", { total: answer.totalEntries });
       errorLine.textContent = "";
+      refreshState();
     } catch (error) {
       errorLine.textContent = error.message; // the 400 / 413 / staff-gate 403 verbatim
     }
   });
 
   panel.append(h("h3", { text: t("gc.filterdesk.heading") }),
-    countLine, entryBox, submitButton, resultLine, errorLine);
+    countLine, entryBox, submitButton, resultLine, errorLine,
+    sourceLine, updatedLine);
 
   // The defaults law: the desk GET rides its own open — one auto-load per
-  // visit, its answer the state's paint source, no refresh loop.
-  api("/api/admin/filter", { method: "GET" }).then((state) => {
-    countLine.textContent = t("gc.filterdesk.stateEntries", { total: state.totalEntries });
-    panel.append(
-      h("p", { class: "muted", text: t("gc.filterdesk.stateSource", { source: state.source }) }),
-      h("p", { class: "muted", text: state.updatedAt
+  // visit, its answer the state's paint source, no refresh loop. The SAME
+  // one state face re-paints from the explicit submit's follow-up GET above.
+  function refreshState() {
+    api("/api/admin/filter", { method: "GET" }).then((state) => {
+      countLine.textContent = t("gc.filterdesk.stateEntries", { total: state.totalEntries });
+      sourceLine.textContent = t("gc.filterdesk.stateSource", { source: state.source });
+      updatedLine.textContent = state.updatedAt
         ? t("gc.filterdesk.stateUpdated", { at: state.updatedAt })
-        : t("gc.filterdesk.stateNeverUpdated") }));
-  }).catch((error) => {
-    errorLine.textContent = error.message; // the staff-gate 403 verbatim
-  });
+        : t("gc.filterdesk.stateNeverUpdated");
+    }).catch((error) => {
+      errorLine.textContent = error.message; // the staff-gate 403 verbatim
+    });
+  }
+  refreshState();
   return panel;
 }

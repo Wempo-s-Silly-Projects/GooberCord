@@ -559,7 +559,7 @@
   "gc.filterdesk.stateUpdated": "Última actualización de la lista: {{at}}",
   "gc.filterdesk.stateNeverUpdated": "El escritorio aún no ha actualizado la lista.",
   "gc.filterdesk.entryLabel": "Añadir una entrada",
-  "gc.filterdesk.entryHelp": "Una palabra o frase que el filtro deba bloquear. Los duplicados se omiten.",
+  "gc.filterdesk.entryHelp": "Una entrada o un lote separado por comas. Las comas dividen entradas.",
   "gc.filterdesk.submit": "Añadir entrada",
   "gc.filterdesk.result": "{{added}} añadidas — se omitieron {{skipped}} ya presentes. La lista ahora tiene {{total}} entradas."
 }

@@ -558,7 +558,7 @@
   "gc.filterdesk.stateUpdated": "Liste zuletzt aktualisiert: {{at}}",
   "gc.filterdesk.stateNeverUpdated": "Der Schreibtisch hat die Liste noch nicht aktualisiert.",
   "gc.filterdesk.entryLabel": "Einen Eintrag hinzufügen",
-  "gc.filterdesk.entryHelp": "Ein Wort oder Ausdruck, den der Filter blockieren soll. Duplikate werden übersprungen.",
+  "gc.filterdesk.entryHelp": "Ein Eintrag oder ein kommaseparierter Batch. Kommas trennen Einträge.",
   "gc.filterdesk.submit": "Eintrag hinzufügen",
   "gc.filterdesk.result": "{{added}} hinzugefügt — {{skipped}} bereits vorhandene übersprungen. Die Liste enthält jetzt {{total}} Einträge."
 }

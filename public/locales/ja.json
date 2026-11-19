@@ -558,7 +558,7 @@
   "gc.filterdesk.stateUpdated": "リストの最終更新: {{at}}",
   "gc.filterdesk.stateNeverUpdated": "デスクはまだリストを更新していません。",
   "gc.filterdesk.entryLabel": "エントリーを 1 件追加",
-  "gc.filterdesk.entryHelp": "フィルターにブロックさせたい語句を 1 つ入力します。重複はスキップされます。",
+  "gc.filterdesk.entryHelp": "1 エントリー、またはカンマ区切りによるまとめ入力。カンマでエントリーが分割されます。",
   "gc.filterdesk.submit": "エントリーを追加",
   "gc.filterdesk.result": "{{added}} 件追加 — 既存のため {{skipped}} 件スキップ。リストは現在 {{total}} 件です。"
 }

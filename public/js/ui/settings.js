@@ -41,7 +41,7 @@ import { rosterOf, loadRoster } from "./members.js";
 // The wave-13 mirrors live in the ONE reaction-tags module (G-4: never
 // re-declared) — this import is function-level in use, so the shell cycle
 // stays a no-op at module-eval time.
-import { UI_REACTION_TAGS_MAX, UI_REACTION_TAG_TEXT_MAX, UI_REACTION_TAG_EMOJI_MAX } from "./reaction-tags.js";
+import { UI_REACTION_TAGS_MAX, UI_REACTION_TAG_TEXT_MAX, UI_REACTION_TAG_EMOJI_MAX, invalidateReactionTagLanes } from "./reaction-tags.js";
 import { t } from "../i18n.js";
 
 // --- mirrored constants (G-4: pinned against constants.mjs / the contract) ----
@@ -296,6 +296,7 @@ function reactionTagsPanel(serverId) {
                 t("gc.settings.reactionTags.deleteNote"), t("gc.chat.row.delete"), async () => {
                   try {
                     await api(`/api/servers/${serverId}/reaction-tags`, { method: "DELETE", body: { emoji: row.emoji } });
+                    invalidateReactionTagLanes(serverId); // the mod act IS the change point
                     await fetchTable();
                   } catch (error) {
                     errorLine.textContent = error.message; // shared 404 verbatim
@@ -331,6 +332,7 @@ function reactionTagsPanel(serverId) {
         { class: "button button-primary", text: t("gc.settings.reactionTags.save"), onPress: async () => {
           try {
             await api(`/api/servers/${serverId}/reaction-tags`, { method: "PUT", body: { emoji, tag } });
+            invalidateReactionTagLanes(serverId); // the mod act IS the change point
             errorLine.textContent = "";
             note.textContent = t("gc.settings.reactionTags.saved");
             await fetchTable();

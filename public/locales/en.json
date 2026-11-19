@@ -558,7 +558,7 @@
   "gc.filterdesk.stateUpdated": "List last updated: {{at}}",
   "gc.filterdesk.stateNeverUpdated": "The desk has not updated the list yet.",
   "gc.filterdesk.entryLabel": "Add one entry",
-  "gc.filterdesk.entryHelp": "One word or phrase the filter should block. Duplicates are skipped.",
+  "gc.filterdesk.entryHelp": "One entry, or a comma-separated batch. Commas split entries.",
   "gc.filterdesk.submit": "Add entry",
   "gc.filterdesk.result": "Added {{added}} — skipped {{skipped}} already on the list. The list now holds {{total}} entries."
 }

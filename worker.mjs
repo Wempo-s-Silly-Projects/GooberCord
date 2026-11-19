@@ -50,7 +50,10 @@ import { handleCapsuleRoutes } from "./api/capsules.mjs";
 import { handleBookmarkRoutes } from "./api/bookmarks.mjs";
 import { handleWelcomeCardRoutes } from "./api/welcome-card.mjs";
 import { handleBoostTierRoutes } from "./api/boost-tier.mjs";
-import { ensureFilterWords } from "./api/filterstore.mjs";
+// One import for the filter module: the route-priming seat plus the desk's
+// admin route handler (GET /api/admin/filter + POST /api/admin/filter/entries,
+// the byte-frozen PUT riding the same module untouched).
+import { ensureFilterWords, handleFilterAdminRoutes } from "./api/filterstore.mjs";
 import { HttpError, json, rateLimit, secureResponse, unconditional } from "./api/core/http.mjs";
 // The ONE error classifier and the dispatch chain come from the vendored
 // HTTP framework (core re-exports both). worker.mjs carries no second copy
@@ -226,6 +229,12 @@ const API_HANDLERS = [
   handleBookmarkRoutes,
   handleWelcomeCardRoutes,
   handleBoostTierRoutes,
+  // The staff filter desk (the wave-16 backend finally live on its chain
+  // seat): a platform-staff route owner like the account family — its
+  // exact two-path head guard ("/api/admin/filter" +
+  // "/api/admin/filter/entries") cannot shadow any sibling arm, so the seat
+  // rides at the family-lane tail beside the desk route owners.
+  handleFilterAdminRoutes,
 ];
 // The chain is built once, from the vendor's dispatch() instead of an inlined
 // handlers-for-loop.

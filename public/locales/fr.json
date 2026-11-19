@@ -567,7 +567,7 @@
   "gc.filterdesk.stateUpdated": "Dernière mise à jour de la liste : {{at}}",
   "gc.filterdesk.stateNeverUpdated": "Le bureau n'a pas encore mis la liste à jour.",
   "gc.filterdesk.entryLabel": "Ajouter une entrée",
-  "gc.filterdesk.entryHelp": "Un mot ou une expression que le filtre doit bloquer. Les doublons sont ignorés.",
+  "gc.filterdesk.entryHelp": "Une entrée ou un lot séparé par des virgules. Les virgules séparent les entrées.",
   "gc.filterdesk.submit": "Ajouter l'entrée",
   "gc.filterdesk.result": "{{added}} ajoutées — {{skipped}} déjà présentes ignorées. La liste compte désormais {{total}} entrées."
 }

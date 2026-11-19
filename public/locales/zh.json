@@ -558,7 +558,7 @@
   "gc.filterdesk.stateUpdated": "列表最后更新：{{at}}",
   "gc.filterdesk.stateNeverUpdated": "桌面尚未更新过列表。",
   "gc.filterdesk.entryLabel": "添加一个条目",
-  "gc.filterdesk.entryHelp": "输入一条过滤器应屏蔽的词语或短语。重复项会被跳过。",
+  "gc.filterdesk.entryHelp": "一条词条，或以逗号分隔的一批词条。逗号用于分隔词条。",
   "gc.filterdesk.submit": "添加条目",
   "gc.filterdesk.result": "已添加 {{added}} 条 — 跳过 {{skipped}} 条已存在。列表现有 {{total}} 条。"
 }

@@ -572,7 +572,7 @@
   "gc.filterdesk.stateUpdated": "آخر تحديث للقائمة: {{at}}",
   "gc.filterdesk.stateNeverUpdated": "لم يحدّث المكتب القائمة بعد.",
   "gc.filterdesk.entryLabel": "إضافة قيمة واحدة",
-  "gc.filterdesk.entryHelp": "كلمة أو عبارة واحدة يجب على المرشح حظرها. يُتخطى ما يتكرر.",
+  "gc.filterdesk.entryHelp": "قيمة واحدة أو مجموعة مفصولة بفواصل. الفواصل تُقسّم القيم.",
   "gc.filterdesk.submit": "إضافة القيمة",
   "gc.filterdesk.result": "أُضيفت {{added}} — وتخطي {{skipped}} موجودة مسبقًا. تحوي القائمة الآن {{total}} من القيم."
 }

@@ -567,7 +567,7 @@
   "gc.filterdesk.stateUpdated": "Última atualização da lista: {{at}}",
   "gc.filterdesk.stateNeverUpdated": "A mesa ainda não atualizou a lista.",
   "gc.filterdesk.entryLabel": "Adicionar uma entrada",
-  "gc.filterdesk.entryHelp": "Uma palavra ou frase que o filtro deva bloquear. Duplicados são ignorados.",
+  "gc.filterdesk.entryHelp": "Uma entrada ou um lote separado por vírgulas. Vírgulas separam entradas.",
   "gc.filterdesk.submit": "Adicionar entrada",
   "gc.filterdesk.result": "{{added}} adicionadas — {{skipped}} já existentes ignoradas. A lista agora tem {{total}} entradas."
 }

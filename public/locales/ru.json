@@ -575,7 +575,7 @@
   "gc.filterdesk.stateUpdated": "Список обновлён: {{at}}",
   "gc.filterdesk.stateNeverUpdated": "Стол ещё не обновлял список.",
   "gc.filterdesk.entryLabel": "Добавить одну запись",
-  "gc.filterdesk.entryHelp": "Одно слово или фраза, которые фильтр должен блокировать. Дубликаты пропускаются.",
+  "gc.filterdesk.entryHelp": "Одна запись или список через запятую. Запятые разделяют записи.",
   "gc.filterdesk.submit": "Добавить запись",
   "gc.filterdesk.result": "Добавлено {{added}} — пропущено {{skipped}} уже имеющихся. Теперь в списке {{total}} записей."
 }
