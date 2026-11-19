@@ -5,7 +5,7 @@ workers_dev = true
 
 [vars]
 TURNSTILE_HOSTNAMES = "goobercord.itswempo.workers.dev"
-VERSION = "0.1.0"
+VERSION = "prototype"
 
 [assets]
 directory = "./public"
