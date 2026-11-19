@@ -549,3 +549,11 @@ export const GC_AVATAR_OBJECT_PREFIX = "avatars/";
 // (emoji, soundboard, soundpacks): snowflake-shaped row ids stop below this
 // house bound, so one number seats all three.
 export const GC_EXPRESSION_ID_CEILING = 1_000_000_000_000;
+
+// The per-body expression-token cap (GO-HAYWIRE cycle-6 FIX 2): the send and
+// edit gates bind EVERY unique emoji/sticker id of one message body into ONE
+// IN (...) SELECT per kind — D1's 100-bind per-query limit sits at 100, so a
+// crafted 4000-char body (500+ distinct ids) answers 500 today. 90 unique ids
+// is the statement's ceiling; a body over the cap is REFUSED (a 400 at the
+// gate), never bound — its over-cap tokens are never resolved.
+export const GC_EXPRESSION_TOKENS_MAX = 90;
