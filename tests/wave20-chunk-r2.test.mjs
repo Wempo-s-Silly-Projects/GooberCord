@@ -662,7 +662,7 @@ test("chat.js's lane-bound refusal paints the mirror's arithmetic", () => {
 // the source pins carry the freeze.
 test("freeze: every module outside the wave's touched set stays byte-identical", () => {
   const LANE_BASE = "2c2c428";
-  const LANE_TIP = "LANE_TIP";
+  const LANE_TIP = "8b58b69";
   const tip = LANE_TIP === "LANE_TIP" ? LANE_BASE : LANE_TIP;
   let touched;
   try {
