@@ -541,5 +541,15 @@
   "gc.tags.mineCount": "You have opted into {{count}} of {{total}} tags.",
   "gc.tags.optIn": "Opt in",
   "gc.tags.optOut": "Opt out",
-  "gc.tags.loadFailed": "The tags failed to load."
+  "gc.tags.loadFailed": "The tags failed to load.",
+  "gc.anniversary.heading": "Anniversary",
+  "gc.anniversary.description": "One month-day anniversary for yourself. Only the month and the day are stored — a year is never asked for and never kept. Members of a server see you in that server's Morning Paper on this date.",
+  "gc.anniversary.monthLabel": "Month",
+  "gc.anniversary.monthOption": "Month {{number}}",
+  "gc.anniversary.dayLabel": "Day",
+  "gc.anniversary.unset": "Not set",
+  "gc.anniversary.save": "Save",
+  "gc.anniversary.clear": "Clear",
+  "gc.anniversary.current": "Saved: month {{month}}, day {{day}}.",
+  "gc.anniversary.empty": "You have no anniversary saved."
 }

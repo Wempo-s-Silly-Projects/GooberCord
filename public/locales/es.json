@@ -542,5 +542,15 @@
   "gc.tags.mineCount": "Has optado por {{count}} de {{total}} etiquetas.",
   "gc.tags.optIn": "Participar",
   "gc.tags.optOut": "Dejar de participar",
-  "gc.tags.loadFailed": "No se pudieron cargar las etiquetas."
+  "gc.tags.loadFailed": "No se pudieron cargar las etiquetas.",
+  "gc.anniversary.heading": "Aniversario",
+  "gc.anniversary.description": "Un aniversario de mes y día para ti. Solo se guardan el mes y el día — nunca se pide ni se conserva un año. Los miembros de un servidor te ven en el papel matutino de ese servidor en esta fecha.",
+  "gc.anniversary.monthLabel": "Mes",
+  "gc.anniversary.monthOption": "Mes {{number}}",
+  "gc.anniversary.dayLabel": "Día",
+  "gc.anniversary.unset": "Sin fijar",
+  "gc.anniversary.save": "Guardar",
+  "gc.anniversary.clear": "Borrar",
+  "gc.anniversary.current": "Guardado: mes {{month}}, día {{day}}.",
+  "gc.anniversary.empty": "No tienes ningún aniversario guardado."
 }

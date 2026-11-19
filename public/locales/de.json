@@ -541,5 +541,15 @@
   "gc.tags.mineCount": "Du bist bei {{count}} von {{total}} Tags dabei.",
   "gc.tags.optIn": "Mitmachen",
   "gc.tags.optOut": "Zurückziehen",
-  "gc.tags.loadFailed": "Die Tags konnten nicht geladen werden."
+  "gc.tags.loadFailed": "Die Tags konnten nicht geladen werden.",
+  "gc.anniversary.heading": "Jahrestag",
+  "gc.anniversary.description": "Ein Monats-Tag-Jahrestag für dich. Nur Monat und Tag werden gespeichert — nach einem Jahr wird nie gefragt und nichts aufbewahrt. Mitglieder eines Servers sehen dich im Morgenpapier des Servers an diesem Datum.",
+  "gc.anniversary.monthLabel": "Monat",
+  "gc.anniversary.monthOption": "Monat {{number}}",
+  "gc.anniversary.dayLabel": "Tag",
+  "gc.anniversary.unset": "Nicht gesetzt",
+  "gc.anniversary.save": "Speichern",
+  "gc.anniversary.clear": "Löschen",
+  "gc.anniversary.current": "Gespeichert: Monat {{month}}, Tag {{day}}.",
+  "gc.anniversary.empty": "Du hast keinen Jahrestag gespeichert."
 }

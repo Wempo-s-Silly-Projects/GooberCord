@@ -550,5 +550,15 @@
   "gc.tags.mineCount": "Vous participez à {{count}} tags sur {{total}}.",
   "gc.tags.optIn": "Participer",
   "gc.tags.optOut": "Se retirer",
-  "gc.tags.loadFailed": "Le chargement des tags a échoué."
+  "gc.tags.loadFailed": "Le chargement des tags a échoué.",
+  "gc.anniversary.heading": "Anniversaire",
+  "gc.anniversary.description": "Un anniversaire mois-jour pour vous. Seuls le mois et le jour sont conservés — une année n'est jamais demandée ni gardée. Les membres d'un serveur vous voient dans le papier du matin de ce serveur à cette date.",
+  "gc.anniversary.monthLabel": "Mois",
+  "gc.anniversary.monthOption": "Mois {{number}}",
+  "gc.anniversary.dayLabel": "Jour",
+  "gc.anniversary.unset": "Non défini",
+  "gc.anniversary.save": "Enregistrer",
+  "gc.anniversary.clear": "Effacer",
+  "gc.anniversary.current": "Enregistré : mois {{month}}, jour {{day}}.",
+  "gc.anniversary.empty": "Vous n'avez aucun anniversaire enregistré."
 }

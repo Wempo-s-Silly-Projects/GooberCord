@@ -555,5 +555,15 @@
   "gc.tags.mineCount": "شاركت في {{count}} من {{total}} وسوم.",
   "gc.tags.optIn": "المشاركة",
   "gc.tags.optOut": "الانسحاب",
-  "gc.tags.loadFailed": "تعذر تحميل الوسوم."
+  "gc.tags.loadFailed": "تعذر تحميل الوسوم.",
+  "gc.anniversary.heading": "الذكرى",
+  "gc.anniversary.description": "ذكرى شهر ويوم خاصة بك. يُحفظ الشهر واليوم فقط — لا يُطلب سنة ولا يُحفظ أبدًا. يراك أعضاء الخادم في ورقة الصباح الخاصة بالخادم في هذا التاريخ.",
+  "gc.anniversary.monthLabel": "الشهر",
+  "gc.anniversary.monthOption": "الشهر {{number}}",
+  "gc.anniversary.dayLabel": "اليوم",
+  "gc.anniversary.unset": "غير محدد",
+  "gc.anniversary.save": "حفظ",
+  "gc.anniversary.clear": "مسح",
+  "gc.anniversary.current": "محفوظ: الشهر {{month}}، اليوم {{day}}.",
+  "gc.anniversary.empty": "لا توجد ذكرى محفوظة لديك."
 }

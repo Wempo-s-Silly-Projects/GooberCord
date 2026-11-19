@@ -550,5 +550,15 @@
   "gc.tags.mineCount": "Aderiu a {{count}} de {{total}} tags.",
   "gc.tags.optIn": "Aderir",
   "gc.tags.optOut": "Retirar adesão",
-  "gc.tags.loadFailed": "O carregamento das tags falhou."
+  "gc.tags.loadFailed": "O carregamento das tags falhou.",
+  "gc.anniversary.heading": "Aniversário",
+  "gc.anniversary.description": "Um aniversário de mês e dia para você. Apenas o mês e o dia são guardados — um ano nunca é pedido nem conservado. Os membros de um servidor veem você no papel da manhã desse servidor nesta data.",
+  "gc.anniversary.monthLabel": "Mês",
+  "gc.anniversary.monthOption": "Mês {{number}}",
+  "gc.anniversary.dayLabel": "Dia",
+  "gc.anniversary.unset": "Não definido",
+  "gc.anniversary.save": "Salvar",
+  "gc.anniversary.clear": "Limpar",
+  "gc.anniversary.current": "Salvo: mês {{month}}, dia {{day}}.",
+  "gc.anniversary.empty": "Você não tem nenhum aniversário salvo."
 }

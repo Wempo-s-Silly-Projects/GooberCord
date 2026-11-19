@@ -558,5 +558,15 @@
   "gc.tags.mineCount": "Вы участвуете в {{count}} из {{total}} тегов.",
   "gc.tags.optIn": "Участвовать",
   "gc.tags.optOut": "Выйти",
-  "gc.tags.loadFailed": "Не удалось загрузить теги."
+  "gc.tags.loadFailed": "Не удалось загрузить теги.",
+  "gc.anniversary.heading": "Годовщина",
+  "gc.anniversary.description": "Годовщина по месяцу и дню для вас. Сохраняются только месяц и день — год никогда не запрашивается и не хранится. Участники сервера видят вас в утреннем дайджесте этого сервера в этот день.",
+  "gc.anniversary.monthLabel": "Месяц",
+  "gc.anniversary.monthOption": "Месяц {{number}}",
+  "gc.anniversary.dayLabel": "День",
+  "gc.anniversary.unset": "Не задано",
+  "gc.anniversary.save": "Сохранить",
+  "gc.anniversary.clear": "Очистить",
+  "gc.anniversary.current": "Сохранено: месяц {{month}}, день {{day}}.",
+  "gc.anniversary.empty": "У вас нет сохранённой годовщины."
 }

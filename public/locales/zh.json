@@ -541,5 +541,15 @@
   "gc.tags.mineCount": "你已参与 {{total}} 个标签中的 {{count}} 个。",
   "gc.tags.optIn": "参与",
   "gc.tags.optOut": "退出",
-  "gc.tags.loadFailed": "标签加载失败。"
+  "gc.tags.loadFailed": "标签加载失败。",
+  "gc.anniversary.heading": "纪念日",
+  "gc.anniversary.description": "属于你自己的“月+日”纪念日。只保存月份和日期——从不询问、也不保存年份。服务器的成员在这一天会在该服务器的晨报里看到你。",
+  "gc.anniversary.monthLabel": "月份",
+  "gc.anniversary.monthOption": "{{number}} 月",
+  "gc.anniversary.dayLabel": "日期",
+  "gc.anniversary.unset": "未设置",
+  "gc.anniversary.save": "保存",
+  "gc.anniversary.clear": "清除",
+  "gc.anniversary.current": "已保存:{{month}} 月 {{day}} 日。",
+  "gc.anniversary.empty": "你还没有保存纪念日。"
 }
