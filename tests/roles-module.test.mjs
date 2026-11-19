@@ -890,7 +890,7 @@ const KICK_MEMBERS_DELETE_TEST = (sql) =>
 const KICK_ROLES_DELETE_TEST = (sql) =>
   sql.startsWith("DELETE FROM gc_member_roles WHERE server_id = ? AND user_id = ?");
 
-test("a kick is ONE batch: the membership row and the assignments leave under the same guard", async () => {
+test("a kick is ONE batch: roles + boost strips, member row, recount — the same guard", async () => {
   const { row, call } = await authed("/api/servers/3/members/" + TARGET_ID);
   const db = fakeDb([
     { test: SESSION_READ_TEST, first: async () => row },
@@ -901,8 +901,24 @@ test("a kick is ONE batch: the membership row and the assignments leave under th
 
   const batch = db.calls.find((entry) => entry.call === "batch");
   assert.ok(batch);
-  assert.equal(batch.statements.length, 2);
-  const [membership, assignments] = batch.statements.map((stmt) => stmt.sql);
+  assert.equal(batch.statements.length, 4);
+  // Batch ORDER: [roles strip, boost strip, member DELETE, recount] — the
+  // strips ride BEFORE the member row (their membership-EXISTS arms die the
+  // moment it fires) and the recount rides LAST, in-batch (the leave shape).
+  assert.match(batch.statements[0].sql, /^DELETE FROM gc_member_roles/);
+  assert.match(batch.statements[1].sql, /^DELETE FROM gc_server_boosts/);
+  assert.match(batch.statements[2].sql, /^DELETE FROM gc_server_members/);
+  assert.match(batch.statements[3].sql, /^UPDATE gc_servers SET boosts =/);
+  // The strips carry the target's membership-EXISTS + role <> 'owner' arm
+  // (a refused kick — owner target included — strips nothing) plus the SAME
+  // guard the member DELETE wore.
+  for (const index of [0, 1]) {
+    assert.match(
+      batch.statements[index].sql,
+      /EXISTS \(SELECT 1 FROM gc_server_members ks WHERE ks\.server_id = \? AND ks\.user_id = \? AND ks\.role <> 'owner'\)/,
+    );
+  }
+  const [assignments, boosts, membership, recount] = batch.statements.map((stmt) => stmt.sql);
   // The owner row can never be kicked away.
   assert.match(membership, /DELETE FROM gc_server_members WHERE server_id = \? AND user_id = \? AND role <> 'owner' AND/);
   // The RBAC audit's H1 repair: the exact-KICK test is the per-bit EXISTS.
@@ -911,18 +927,25 @@ test("a kick is ONE batch: the membership row and the assignments leave under th
   assert.match(membership, /\(SELECT COALESCE\(MAX\(hr\.position\), -1\) FROM gc_member_roles hmr[\s\S]*>[\s\S]*\(SELECT COALESCE\(MAX\(hr\.position\), -1\)/);
   // IDENTICAL guard on the assignment half — a refused kick can never strip
   // a member who stayed.
-  assert.match(assignments, /DELETE FROM gc_member_roles WHERE server_id = \? AND user_id = \? AND \(/);
-  assert.equal(
-    batch.statements[0].sql.includes(batch.statements[1].sql.slice(0, 60)),
-    false,
-  );
-  // Both statements carry the KICK-membership guard (the per-bit EXISTS pair)
-  // plus the actor/target position compares.
-  for (const statement of batch.statements) {
-    assert.deepEqual(statement.bound, [
-      3, TARGET_ID, 3, USER_ID, 3, USER_ID, 3, USER_ID, 3, USER_ID, 3, TARGET_ID,
-    ]);
+  // IDENTICAL guard on the assignment half — a refused kick can never strip
+  // a member who stayed (the strip's tail is the guard's OWNER-or-KICK arm
+  // closing; the membership arm sits ahead of it).
+  assert.match(assignments, /DELETE FROM gc_member_roles WHERE server_id = \? AND user_id = \?/);
+  assert.match(assignments, /EXISTS \(SELECT 1 FROM gc_server_members ks WHERE ks\.server_id = \? AND ks\.user_id = \? AND ks\.role <> 'owner'\) AND \(EXISTS/);
+  assert.equal(recount.includes("DELETE"), false);
+  // Each guarded statement carries the KICK-membership guard (the per-bit
+  // EXISTS pair) plus the position compares; the strips prepend their own
+  // (serverId, targetId) pair, and the recount binds (serverId, serverId).
+  const guardBinds = [
+    3, USER_ID, 3, USER_ID, 3, USER_ID, 3, USER_ID, 3, TARGET_ID,
+  ];
+  for (const statement of batch.statements.slice(0, 3)) {
+    assert.deepEqual(statement.bound.slice(-10), guardBinds);
   }
+  assert.deepEqual(batch.statements[0].bound.slice(0, 4), [3, TARGET_ID, 3, TARGET_ID]);
+  assert.deepEqual(batch.statements[1].bound.slice(0, 4), [3, TARGET_ID, 3, TARGET_ID]);
+  assert.deepEqual(batch.statements[2].bound.slice(0, 2), [3, TARGET_ID]);
+  assert.deepEqual(batch.statements[3].bound, [3, 3]);
 });
 
 test("a refused kick 403s without a diagnostic read (no existence oracle)", async () => {

@@ -2309,24 +2309,49 @@ async function handleKickMemberRoute(request, env, serverId, targetUserId) {
   const session = await requireUser(request, env);
   const userId = Number(session.user.id);
 
-  // ONE batch with the SAME moderation guard on both statements: the
-  // membership row and the member's role assignments leave together, and a
-  // refused guard never strips assignments from a member who stayed.
+  await rateLimit(request, env, "write", "servers-kick:" + serverId + ":" + userId);
+
+  // ONE batch mirroring leave's cycle-7 shape with the kick guard: the
+  // member's role assignments, the kicked booster's gc_server_boosts row, and
+  // the membership row leave together, and the boost recount rides in-batch
+  // last. ORDER IS LOAD-BEARING (D1's batch is one sequential transaction —
+  // the same class leave's strips rely on): the strips ride BEFORE the
+  // member-row delete, because their membership-EXISTS arms go false the
+  // moment that delete fires — a member-first batch commits them as refuted
+  // zero-changes no-ops, and the surviving boost row would keep counting
+  // toward the boost level (the caps the kicked booster grants) and re-grant
+  // on rejoin via the guarded boost INSERT's DO NOTHING. Each strip carries
+  // the SAME arm (the target's membership-EXISTS with the role <> 'owner'
+  // rider — kick's mirror of the timeout routes' arm: one clause that is
+  // both the membership arm the ordering needs and the owner immunity a
+  // refused kick needs) plus the SAME moderation guard, so a refused kick —
+  // an owner target included — strips nothing. The verdict reads the
+  // member-row delete's changes (results[2]); the race path is intact — a
+  // vanished row refutes the strips at batch start AND deletes 0, and the
+  // shared 403 answers as before.
   const guard = moderationGuardSql(
     serverId, userId, targetUserId,
     [SERVER_PERMISSIONS.KICK_MEMBERS],
   );
   const results = await env.GOOBER_DB.batch([
     env.GOOBER_DB.prepare(
+      "DELETE FROM gc_member_roles WHERE server_id = ? AND user_id = ? " +
+        "AND EXISTS (SELECT 1 FROM gc_server_members ks " +
+          "WHERE ks.server_id = ? AND ks.user_id = ? AND ks.role <> 'owner') AND " + guard.sql,
+    ).bind(serverId, targetUserId, serverId, targetUserId, ...guard.params),
+    env.GOOBER_DB.prepare(
+      "DELETE FROM gc_server_boosts WHERE server_id = ? AND user_id = ? " +
+        "AND EXISTS (SELECT 1 FROM gc_server_members ks " +
+          "WHERE ks.server_id = ? AND ks.user_id = ? AND ks.role <> 'owner') AND " + guard.sql,
+    ).bind(serverId, targetUserId, serverId, targetUserId, ...guard.params),
+    env.GOOBER_DB.prepare(
       "DELETE FROM gc_server_members WHERE server_id = ? AND user_id = ? " +
         "AND role <> 'owner' AND " + guard.sql,
     ).bind(serverId, targetUserId, ...guard.params),
-    env.GOOBER_DB.prepare(
-      "DELETE FROM gc_member_roles WHERE server_id = ? AND user_id = ? AND " + guard.sql,
-    ).bind(serverId, targetUserId, ...guard.params),
+    env.GOOBER_DB.prepare(BOOST_RECOUNT_SQL).bind(serverId, serverId),
   ]);
 
-  if (Number(results[0]?.meta?.changes) !== 1) {
+  if (Number(results[2]?.meta?.changes) !== 1) {
     throw new HttpError(403, "You do not have permission to do that.");
   }
 
@@ -2357,6 +2382,10 @@ function banReasonFrom(value) {
 async function handleBanMemberRoute(request, env, serverId) {
   const session = await requireUser(request, env);
   const userId = Number(session.user.id);
+
+  // The write wall keyed caller-first (the leave/transfer idiom): a
+  // bad-shaped body spends the same bucket, the shared-bucket lesson.
+  await rateLimit(request, env, "write", "servers-ban:" + serverId + ":" + userId);
   const body = await readJson(request);
 
   // No coercion: a string "22" is a request-shape error, not a user id.
@@ -2434,6 +2463,8 @@ async function handleUnbanMemberRoute(request, env, serverId, targetUserId) {
   const session = await requireUser(request, env);
   const userId = Number(session.user.id);
 
+  await rateLimit(request, env, "write", "servers-unban:" + serverId + ":" + userId);
+
   // The guarded DELETE: owner OR KICK_MEMBERS. Un-banning is not bound by the
   // position rule (a banned account is not a member to outrank anymore), and
   // not-banned refusals share the one 403 with refused authority — no oracle.
@@ -2465,6 +2496,8 @@ async function handleUnbanMemberRoute(request, env, serverId, targetUserId) {
 async function handleSetTimeoutRoute(request, env, serverId, targetUserId) {
   const session = await requireUser(request, env);
   const userId = Number(session.user.id);
+
+  await rateLimit(request, env, "write", "servers-timeout:" + serverId + ":" + userId);
   const body = await readJson(request);
 
   if (!TIMEOUT_MINUTE_CHOICES.includes(body.minutes)) {
@@ -2494,6 +2527,8 @@ async function handleSetTimeoutRoute(request, env, serverId, targetUserId) {
 async function handleRemoveTimeoutRoute(request, env, serverId, targetUserId) {
   const session = await requireUser(request, env);
   const userId = Number(session.user.id);
+
+  await rateLimit(request, env, "write", "servers-untimeout:" + serverId + ":" + userId);
 
   const guard = moderationGuardSql(
     serverId, userId, targetUserId,
