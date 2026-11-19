@@ -38,6 +38,10 @@ import * as router from "../core/router.js";
 import { renderShell, refreshServers } from "./shell.js";
 import { guardRulesGate } from "./rules-gate.js";
 import { rosterOf, loadRoster } from "./members.js";
+// The wave-13 mirrors live in the ONE reaction-tags module (G-4: never
+// re-declared) — this import is function-level in use, so the shell cycle
+// stays a no-op at module-eval time.
+import { UI_REACTION_TAGS_MAX, UI_REACTION_TAG_TEXT_MAX, UI_REACTION_TAG_EMOJI_MAX } from "./reaction-tags.js";
 import { t } from "../i18n.js";
 
 // --- mirrored constants (G-4: pinned against constants.mjs / the contract) ----
@@ -235,6 +239,110 @@ function boostTierPanel(serverId) {
 }
 // --- E1: the server settings page ---------------------------------------------
 
+// The reaction tags (wave-13): the tag table's mod door over the LIVE,
+// byte-frozen backend (api/reaction-tags.mjs). ONE auto-GET per visit paints
+// the table (the defaults law: the panel's own open rides its one read);
+// the add/edit well PUTs ONE pair behind ONE confirm (the welcome-card
+// idiom — the dialog body paints the member-native strings verbatim through
+// its own textContent seat, never t()'d, never interpolated); each row's
+// edit pre-fills the well (the PUT's upsert refreshes the pair in place),
+// each row's unmap rides THE one confirmDialog; the caps ride the mirrors
+// imported from reaction-tags.js (G-4), and every refusal paints the
+// server's string verbatim (G-2).
+function reactionTagsPanel(serverId) {
+  const errorLine = inlineError();
+  const note = h("p", { class: "muted", "aria-live": "polite" });
+  const panel = h("div", { class: "panel" },
+    h("h3", { text: t("gc.settings.reactionTags.heading") }), note, errorLine);
+  const tableSeat = h("div", { class: "tag-table" });
+  // The table's one paint: the count line rides the rows painted against the
+  // mirror, the tag/emoji strings paint verbatim through their own seats
+  // (server-native text, never t()'d).
+  const paintTable = (payload) => {
+    const rows = payload?.tags || [];
+    tableSeat.replaceChildren(h("div", { class: "manage-list" },
+      h("p", { class: "muted count-line",
+        text: t("gc.settings.reactionTags.count", { count: rows.length, max: UI_REACTION_TAGS_MAX }) }),
+      rows.length === 0
+        ? h("p", { class: "empty-state", text: t("gc.settings.reactionTags.empty") })
+        : h("div", { class: "manage-list" }, ...rows.map((row) => h("div", { class: "manage-row tag-row" },
+          h("span", { class: "manage-name" },
+            h("span", { class: "tag-emoji", text: row.emoji }),
+            h("span", { class: "tag-text", text: row.tag })),
+          h("span", { class: "row-controls" },
+            h("button", {
+              class: "row-quiet-control", type: "button", text: t("gc.chat.row.edit"),
+              onclick: () => {
+                // Edit pre-fills the well — the PUT is the upsert arm that
+                // refreshes the pair in place (route arms at 68-85).
+                form.querySelector("#reaction-tag-emoji").value = row.emoji;
+                form.querySelector("#reaction-tag-text").value = row.tag;
+              },
+            }),
+            h("button", {
+              class: "row-quiet-control row-quiet-danger", type: "button", text: t("gc.chat.row.delete"),
+              onclick: () => confirmDialog(
+                t("gc.settings.reactionTags.deleteConfirm", { emoji: row.emoji }),
+                t("gc.settings.reactionTags.deleteNote"), t("gc.chat.row.delete"), async () => {
+                  try {
+                    await api(`/api/servers/${serverId}/reaction-tags`, { method: "DELETE", body: { emoji: row.emoji } });
+                    await fetchTable();
+                  } catch (error) {
+                    errorLine.textContent = error.message; // shared 404 verbatim
+                  }
+                }),
+            })))))));
+  };
+  const fetchTable = () => api(`/api/servers/${serverId}/reaction-tags`).then(paintTable);
+  const emojiSeat = createInput(document, {
+    id: "reaction-tag-emoji", label: t("gc.settings.reactionTags.emojiLabel"),
+    maxLength: UI_REACTION_TAG_EMOJI_MAX,
+  });
+  const tagSeat = createInput(document, {
+    id: "reaction-tag-text", label: t("gc.settings.reactionTags.tagLabel"),
+    maxLength: UI_REACTION_TAG_TEXT_MAX, description: t("gc.settings.reactionTags.tagHelp"),
+  });
+  const form = createForm(document, "reaction-tag", [emojiSeat, tagSeat],
+    t("gc.settings.reactionTags.save"));
+  form.addEventListener("submit", (event) => {
+    event.preventDefault();
+    const emoji = form.querySelector("#reaction-tag-emoji").value;
+    const tag = form.querySelector("#reaction-tag-text").value;
+    // One explicit confirm step (the defaults law) before the single PUT.
+    // The dialog's body is the pair's own strings — member-native text
+    // painted verbatim through its own textContent seat, never t()'d.
+    const confirmBody = h("p", { class: "gate-copy" });
+    confirmBody.textContent = `${emoji} — ${tag}`;
+    openDialog(document, {
+      heading: t("gc.settings.reactionTags.confirmHeading"),
+      body: confirmBody,
+      modalOnly: true,
+      actions: [
+        { class: "button button-primary", text: t("gc.settings.reactionTags.save"), onPress: async () => {
+          try {
+            await api(`/api/servers/${serverId}/reaction-tags`, { method: "PUT", body: { emoji, tag } });
+            errorLine.textContent = "";
+            note.textContent = t("gc.settings.reactionTags.saved");
+            await fetchTable();
+          } catch (error) {
+            errorLine.textContent = error.message; // cap 400 / shared 404 verbatim
+          }
+        } },
+        { class: "button button-quiet", text: t("gc.controls.keep") },
+      ],
+    });
+  });
+  panel.append(form, tableSeat);
+  // The panel's one auto-GET per visit (the defaults law); the 400/404
+  // family paints verbatim.
+  fetchTable().catch((error) => {
+    errorLine.textContent = error.message;
+  });
+  return panel;
+}
+
+// --- E1: the server settings page ---------------------------------------------
+
 export function renderServerSettings(route, mount) {
   const serverId = Number(route.params.serverId);
   manageGate(mount, serverId, t("gc.settings.heading"), (server) => {
@@ -242,6 +350,9 @@ export function renderServerSettings(route, mount) {
     // The boost tier joins the member-facing build (wave-12) — riding AFTER the
     // base panels, BEFORE the owner-only seats (the nodes.push registration idiom).
     nodes.push(boostTierPanel(serverId));
+    // The reaction tags join the mod-facing build (wave-13) — the same
+    // additive registration, still before the owner-only seats.
+    nodes.push(reactionTagsPanel(serverId));
     if (server.role === "owner") nodes.push(deletePanel(serverId), transferPanel(serverId));
     return nodes;
   });

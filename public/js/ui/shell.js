@@ -52,6 +52,7 @@ import { serverAdminRights } from "./settings.js";
 import { wempoAccountsSignOutUrl } from "./landing.js";
 import { renderBookmarksPanel } from "./bookmarks.js";
 import { renderCapsulesPanel } from "./capsules.js";
+import { renderReactionTagsPanel } from "./reaction-tags.js";
 
 // The bookmarks panel: its route registers here (the shell owns the nav
 // entry AND its door; main.js's route table stays untouched).
@@ -60,6 +61,10 @@ router.addRoute("/bookmarks", "bookmarks", renderBookmarksPanel);
 // The capsules panel: the server-scoped page rides the same shell-owned
 // wire (the wave-11 slate; main.js's route table stays untouched).
 router.addRoute("/s/:serverId/capsules", "server-capsules", renderCapsulesPanel);
+
+// The reaction-tags member panel: the server-scoped page rides the same
+// shell-owned wire (the wave-13 slate; main.js's route table stays untouched).
+router.addRoute("/s/:serverId/tags", "server-tags", renderReactionTagsPanel);
 
 // AGPL §13's source-offer rides the shell's user footer: every signed-in
 // screen carries the quiet anchor next to sign-out, pointing at the repo.
@@ -313,6 +318,11 @@ function channelRail() {
     rail.append(h("a", { class: "channel-row capsules-item", href: `/s/${server.id}/capsules`,
       "aria-label": t("gc.shell.nav.capsules") },
     h("span", { class: "channel-hash", text: "✉" }), t("gc.shell.nav.capsules")));
+    // The reaction-tags door: the active server's own member opts page
+    // (reaction-tags.js owns it) — the same text-and-label grammar.
+    rail.append(h("a", { class: "channel-row tags-item", href: `/s/${server.id}/tags`,
+      "aria-label": t("gc.shell.nav.tags") },
+    h("span", { class: "channel-hash", text: "⚑" }), t("gc.shell.nav.tags")));
   }
 
   if (server && Array.isArray(server.channels)) {
