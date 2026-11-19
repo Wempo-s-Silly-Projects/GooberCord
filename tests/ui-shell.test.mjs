@@ -113,3 +113,220 @@ test("the three-pane grid at the brief's sizes", () => {
   assert.match(CSS, /grid-template-columns: 72px 250px minmax\(0, 1fr\) 240px;/);
   assert.match(CSS, /--button-radius: 0\.45rem 0\.65rem 0\.4rem 0\.55rem;/);
 });
+
+// --- the social-lane live repaint (the frozen-paint pins) --------------------
+//
+// The signed-in boot paints the shell BEFORE the /api/conversations payload
+// lands; the receipt (spot-result.json) held the store's conversations at an
+// array while the DM seat still read "Fetching" seconds later — nothing in
+// the client subscribed to the social keys. These pins follow the
+// connection-strip subscriber idiom (renderShell's one live seat) and the
+// i18n binding pass (initI18n resolution → applyDom's sweep) for the
+// humanized-tail pre-catalog paint.
+//
+// ORDER CONTRACT: the i18n catalog is module state — the pre-catalog pin
+// below must run before any other test in this file seats a bundle.
+
+// A faithful-enough rail stub: reparenting append/remove, replaceWith swaps
+// in place, and className matches answer querySelector so the repaint's
+// node-local edits are observable headlessly.
+class RailStubNode {
+  constructor(tag) {
+    this.tag = tag;
+    this.children = [];
+    this.className = "";
+    this.textContent = "";
+    this.attributes = new Map();
+    this.dataset = {};
+    this.parentNode = null;
+  }
+  append(...kids) {
+    for (const kid of kids) {
+      if (!kid || typeof kid !== "object") continue;
+      if (kid.parentNode) {
+        const sibs = kid.parentNode.children;
+        const at = sibs.indexOf(kid);
+        if (at >= 0) sibs.splice(at, 1);
+      }
+      kid.parentNode = this;
+      this.children.push(kid);
+    }
+  }
+  remove() {
+    if (this.parentNode) {
+      const sibs = this.parentNode.children;
+      const at = sibs.indexOf(this);
+      if (at >= 0) sibs.splice(at, 1);
+      this.parentNode = null;
+    }
+  }
+  replaceWith(kid) {
+    if (!this.parentNode) return;
+    const at = this.parentNode.children.indexOf(this);
+    this.parentNode.children[at] = kid;
+    kid.parentNode = this.parentNode;
+    this.parentNode = null;
+  }
+  setAttribute(name, value) { this.attributes.set(name, String(value)); }
+  getAttribute(name) { return this.attributes.has(name) ? this.attributes.get(name) : null; }
+  addEventListener(type, fn) {
+    (this.listeners ??= new Map()).set(type, [...(this.listeners?.get(type) ?? []), fn]);
+  }
+  querySelector(selector) {
+    return railStub(this, selector)[0] ?? null;
+  }
+  querySelectorAll(selector) {
+    return railStub(this, selector);
+  }
+}
+
+function railStub(node, selector) {
+  const name = String(selector);
+  const found = [];
+  const match = (candidate) => {
+    if (name.startsWith(".")) {
+      return String(candidate.className).split(/\s+/).includes(name.slice(1));
+    }
+    const attr = name.replace(/^\[/, "").replace(/\]$/, "");
+    return candidate.attributes?.has(attr) ?? false;
+  };
+  const walk = (walked) => {
+    if (match(walked)) found.push(walked);
+    for (const kid of walked.children ?? []) walk(kid);
+  };
+  for (const kid of node.children ?? []) walk(kid);
+  return found;
+}
+
+function textOf(node) {
+  let text = node.textContent ?? "";
+  for (const kid of node.children ?? []) text += textOf(kid);
+  return text;
+}
+
+const EN_BUNDLE = {
+  "gc.shell.social.fetching": "Fetching conversations…",
+  "gc.shell.social.none": "No conversations yet — start one from a member card.",
+  "gc.shell.nav.dm": "Direct messages",
+  "gc.shell.social.friendsRequests": "Friends & requests",
+  "gc.shell.mentions.loading": "…",
+};
+
+const store = (await import("../public/js/core/store.js")).default;
+const shell = await import("../public/js/ui/shell.js");
+
+function installShellStubs({ enBundle = null } = {}) {
+  const previous = {
+    node: globalThis.Node,
+    document: globalThis.document,
+    fetch: globalThis.fetch,
+    localStorage: globalThis.localStorage,
+  };
+  const holder = Object.assign(new RailStubNode("#document"), {
+    createElement: (tag) => new RailStubNode(tag),
+    createElementNS: (ns, tag) => new RailStubNode(tag),
+  });
+  holder.createTextNode = (text) => { const node = new RailStubNode("#text"); node.textContent = String(text); return node; };
+  holder.documentElement = new RailStubNode("html");
+  holder.body = new RailStubNode("body");
+  globalThis.Node = RailStubNode;
+  globalThis.document = holder;
+  globalThis.localStorage = {
+    map: new Map(),
+    getItem(key) { return this.map.has(key) ? this.map.get(key) : null; },
+    setItem(key, value) { this.map.set(key, String(value)); },
+    removeItem(key) { this.map.delete(key); },
+  };
+  globalThis.fetch = async (path) => {
+    const url = String(path);
+    if (url.startsWith("/locales/en.json")) {
+      return enBundle
+        ? new Response(JSON.stringify(enBundle), { status: 200 })
+        : new Response("Not found.", { status: 404 });
+    }
+    if (url.startsWith("/api/servers")) {
+      return new Response(JSON.stringify({ servers: [] }), { status: 200 });
+    }
+    // /api/mentions and /api/conversations stay unanswered: the DM seat must
+    // hold its pre-arrival paint, the ARRIVAL step is what drives the pin.
+    return new Response("Not found.", { status: 404 });
+  };
+  store.reset();
+  return () => {
+    globalThis.Node = previous.node;
+    globalThis.document = previous.document;
+    globalThis.fetch = previous.fetch;
+    globalThis.localStorage = previous.localStorage;
+  };
+}
+
+function dmSeatText(frame) {
+  return textOf(frame.querySelector(".dm-section") ?? frame);
+}
+
+function seatLoader(frame) {
+  // The DM seat's loader/empty-state node (the rail's own p, never the pane's)
+  return frame.querySelector(".dm-section")?.querySelector(".empty-state") ?? null;
+}
+
+test("the pre-catalog DM seat repaints when initI18n resolves (the humanized-tail pin)", async () => {
+  // Catalog EMPTY at paint: t() renders the humanized key tail — then the
+  // bundle's resolve (the loader's own applyDom sweep) repaints the seat.
+  const restore = installShellStubs({ enBundle: EN_BUNDLE });
+  try {
+    const { initI18n } = await import("../public/js/i18n.js");
+    store.set({ servers: [], user: null });
+    const frame = shell.renderShell({ name: "home", params: {} }, null);
+    globalThis.document.append(frame);
+    assert.equal(seatLoader(frame)?.textContent, "Fetching", "the pre-catalog paint is the humanized key tail");
+    await initI18n(); // the boot's unawaited lane resolves — the sweep repaints
+    assert.match(seatLoader(frame)?.textContent ?? "", /Fetching conversations…/,
+      "initI18n's resolution repaints the t()-direct painted node");
+  } finally {
+    restore();
+  }
+});
+
+test("a conversations arrival repaints the DM seat away from 'Fetching'", async () => {
+  const restore = installShellStubs({ enBundle: EN_BUNDLE });
+  try {
+    const { initI18n } = await import("../public/js/i18n.js");
+    await initI18n(); // the catalog seats before paint (the healthy-catalog case)
+    store.set({ servers: [], user: null });
+    const frame = shell.renderShell({ name: "home", params: {} }, null);
+    await new Promise((resolve) => setTimeout(resolve, 0)); // the boot loads settle
+    assert.match(dmSeatText(frame), /Fetching conversations…/, "no arrivals yet: the seat paints its pre-arrival state");
+    store.set({
+      conversations: [{
+        id: 7,
+        name: "Ada",
+        unread: 2,
+        members: [{ userId: 1, username: "Ada" }, { userId: 2, username: "Bob" }],
+      }],
+    });
+    assert.doesNotMatch(dmSeatText(frame), /Fetching conversations…/, "the arrival repainted the seat through the store subscription, no route re-render");
+    assert.ok(frame.querySelector(".dm-row"), "the thread's row paints from the store truth");
+    assert.match(dmSeatText(frame), /Ada/, "the DM seat carries the thread's label");
+    assert.match(dmSeatText(frame), /2/, "the unread pill paints");
+  } finally {
+    restore();
+  }
+});
+
+test("an empty conversations arrival renders the empty state, not 'Fetching'", async () => {
+  const restore = installShellStubs({ enBundle: EN_BUNDLE });
+  try {
+    const { initI18n } = await import("../public/js/i18n.js");
+    await initI18n(); // seat the en floor for the assertions' copy
+    store.set({ servers: [], user: null });
+    const frame = shell.renderShell({ name: "home", params: {} }, null);
+    await new Promise((resolve) => setTimeout(resolve, 0)); // the boot loads settle
+    assert.match(dmSeatText(frame), /Fetching conversations…/, "the uninitialized key holds the seat");
+    store.set({ conversations: [] }); // the receipt's array(0) landing
+    assert.doesNotMatch(dmSeatText(frame), /Fetching conversations…/, "the empty list repaints the seat");
+    assert.match(dmSeatText(frame), /No conversations yet/, "the empty state paints, never the loader");
+    assert.equal(frame.querySelector(".dm-row"), null, "an empty list paints no thread rows");
+  } finally {
+    restore();
+  }
+});

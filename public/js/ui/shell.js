@@ -157,6 +157,13 @@ export function serverPlaceholder(route, mount) {
 // the unsubscribe).
 let connectionStripUnsub = null;
 
+// The social lanes' seat (the same one-live-per-page idiom): the signed-in
+// boot paints the rails BEFORE the /api payloads land, and the payloads'
+// arrival must repaint — the store's whole purpose, wired. One subscription
+// per lane key, node-local edits inside the live frame (chat.js's roster
+// repaint idiom), never a route re-render.
+let laneUnsub = null;
+
 export function renderShell(route, paneOverride = null) {
   const frame = h("div", { class: "shell", "data-testid": "app-shell" });
   frame.append(serverRail(), channelRail());
@@ -182,6 +189,19 @@ export function renderShell(route, paneOverride = null) {
   paintConnectionStrip();
   if (connectionStripUnsub) connectionStripUnsub();
   connectionStripUnsub = store.subscribe("connection", paintConnectionStrip);
+  // The social lanes' live repaint: servers repaint the two rails, the
+  // conversation/friend lanes repaint the DM seat (the frozen-paint fix —
+  // the payload's arrival is the paint moment, the store's subscriber).
+  if (laneUnsub) laneUnsub();
+  const paintLanes = (_state, key) => {
+    if (key === "servers") {
+      frame.querySelector(".rail-servers")?.replaceWith(serverRail());
+      frame.querySelector(".rail-channels")?.replaceWith(channelRail());
+    } else {
+      frame.querySelector(".dm-section")?.replaceWith(dmSection());
+    }
+  };
+  laneUnsub = store.subscribe(["conversations", "servers", "friends"], paintLanes);
   loadServers();
   // The social lanes hydrate alongside (fire-and-forget; each re-render
   // paints from the store once its payload lands).
@@ -306,13 +326,19 @@ function channelRail() {
 // activity first; unread rides the server's `unread` per row — pills only
 // for unread truth, never decoration.
 function dmSection() {
+  // The loader-lane texts ride the i18n binding pass (data-i18n): a
+  // pre-catalog paint humanizes the key's tail, and initI18n's resolution
+  // sweep repaints it — the loader never stays frozen (visible-garbage law's
+  // repaint half; the sweep sets textContent only, never a markup parse).
   const fragment = h("div", { class: "dm-section" },
-    h("h3", { class: "rail-section" }, t("gc.shell.nav.dm")),
-    h("a", { class: "control-quiet dm-friends-link", href: "/friends", text: t("gc.shell.social.friendsRequests") }));
+    h("h3", { class: "rail-section", "data-i18n": "gc.shell.nav.dm", text: t("gc.shell.nav.dm") }),
+    h("a", { class: "control-quiet dm-friends-link", href: "/friends",
+      "data-i18n": "gc.shell.social.friendsRequests", text: t("gc.shell.social.friendsRequests") }));
   const conversations = store.get("conversations");
   if (Array.isArray(conversations)) {
     if (conversations.length === 0) {
-      fragment.append(h("p", { class: "empty-state", text: t("gc.shell.social.none") }));
+      fragment.append(h("p", { class: "empty-state", "data-i18n": "gc.shell.social.none",
+        text: t("gc.shell.social.none") }));
     }
     for (const thread of conversations) {
       const others = thread.members
@@ -325,7 +351,8 @@ function dmSection() {
         thread.unread ? h("span", { class: "count-pill", text: String(thread.unread) }) : null));
     }
   } else {
-    fragment.append(h("p", { class: "empty-state", text: t("gc.shell.social.fetching") }));
+    fragment.append(h("p", { class: "empty-state", "data-i18n": "gc.shell.social.fetching",
+      text: t("gc.shell.social.fetching") }));
   }
   return fragment;
 }

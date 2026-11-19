@@ -101,6 +101,13 @@ export async function initI18n() {
   lang = storedLang() || navigatorLang() || "en";
   if (lang === "en") {
     setHtmlLang("en");
+    // The paint-swap floor (T29): painters run against the EMPTY catalog
+    // while this lane is still resolving; on the en seat this return was
+    // the last stop, so the bound copy stayed humanized tails until the
+    // next route render. One sweep here clears the race the moment the en
+    // bundle lands (non-en seats already repaint below). Node (no document)
+    // sweeps nothing.
+    applyDom(typeof document === "undefined" ? null : document);
     return lang;
   }
   try {
