@@ -285,7 +285,7 @@ const STANDALONE_ROW_DELETE_SQL =
 // 404s, and a reviewer's reject removes). No R2 delete fires for the
 // rolled-back row: a put that threw almost certainly left nothing behind.
 // Returns the inserted row's id; each caller keeps its own wire shape.
-export async function insertStandaloneAttachment(env, uploaderId, prepared, now, saveFailedCopy) {
+export async function insertStandaloneAttachment(env, uploaderId, prepared, now, failedInsertErrorCopy) {
   if (env.GC_MEDIA) {
     const results = await env.GOOBER_DB.batch([
       env.GOOBER_DB.prepare(ATTACHMENT_INSERT_SQL)
@@ -293,7 +293,7 @@ export async function insertStandaloneAttachment(env, uploaderId, prepared, now,
     ]);
     const id = Number(results[0]?.meta?.last_row_id);
     if (!Number.isInteger(id) || id < 1) {
-      throw new HttpError(500, saveFailedCopy);
+      throw new HttpError(500, failedInsertErrorCopy);
     }
     try {
       await putAttachmentObject(env, id, prepared.bytes);
@@ -310,7 +310,7 @@ export async function insertStandaloneAttachment(env, uploaderId, prepared, now,
   );
   const id = Number(results[0]?.meta?.last_row_id);
   if (!Number.isInteger(id) || id < 1) {
-    throw new HttpError(500, saveFailedCopy);
+    throw new HttpError(500, failedInsertErrorCopy);
   }
   return id;
 }
