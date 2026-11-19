@@ -282,15 +282,15 @@ test("the backend stays byte-frozen against the wave", () => {
 // --- diff scope (wave-9 freeze idiom) ------------------------------------------
 
 // The freeze is the WAVE-10 lane contract, so the fingerprint is the lane's
-// own committed range (base b38c794 .. the wave tip) — the wave-9 freeze
-// pin's lesson (a HEAD anchor would break on every later audit fix; a
-// porcelain parse only holds while the lane is uncommitted). The range
-// spans exactly the wave-10 commit.
+// own committed range (base b38c794 .. the wave tip d54b770) — the wave-9
+// freeze pin's lesson. The old HEAD-open leg broke on the FIRST post-wave
+// audit fix (c15's emoji headroom ride, api/emoji.mjs) — later cycles own
+// their own api/ surfaces; this pin holds the wave's own two commits only.
 test("diff scope: the lane touches NO backend file and no core wire", () => {
   let touched;
   try {
     touched = execFileSync("git", [
-      "diff", "--name-only", "b38c794", "HEAD", "--", ...FROZEN_WAVE10_PATHS,
+      "diff", "--name-only", "b38c794", "d54b770", "--", ...FROZEN_WAVE10_PATHS,
     ], { cwd: ROOT, encoding: "utf8" }).trim();
   } catch {
     // A non-git run (an exported tree) cannot answer — the other source-read
