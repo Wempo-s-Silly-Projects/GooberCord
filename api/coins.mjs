@@ -521,7 +521,7 @@ function publicCosmeticItems(ownedItems, perks, inventoryRows = []) {
       plusPrice: GC_COSMETIC_PACK_PRICE, // flat — the pack never discounts
       cost: GC_COSMETIC_PACK_PRICE,
       plusOnly: true,
-      owned: owned("banner") && owned("flair"),
+      owned: owned("banner") || owned("flair"),
     },
     // The 0056 inventory SKUs (the 2026-11-19 slate's recurring sink): the
     // same both-prices shape, plus the kind and the caller's OWN state —

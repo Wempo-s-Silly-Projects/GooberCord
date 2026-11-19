@@ -330,7 +330,12 @@ test("POST /api/coins/cosmetics buys banner in an atomic batch: the negative row
     items: [
       { item: "banner", price: 100, plusPrice: 50, cost: 100, owned: true },
       { item: "flair", price: 100, plusPrice: 50, cost: 100, owned: false },
-      { item: "pack", price: 250, plusPrice: 250, cost: 250, plusOnly: true, owned: false },
+      // GO-HAYWIRE cycle-14: the pack's payload flag rides the spend
+      // guard's own predicate (any-owned) — the caller just bought the
+      // banner standalone, so they are the guard's 409 refusal class and
+      // the flag says owned (the old all-owned flag advertised the buy
+      // that the guard refuses).
+      { item: "pack", price: 250, plusPrice: 250, cost: 250, plusOnly: true, owned: true },
       { item: "fx_burst_confetti", price: 50, plusPrice: 25, cost: 50, owned: false, kind: "consumable", qty: 0 },
       { item: "frame_gold", price: 100, plusPrice: 50, cost: 100, owned: false, kind: "own", equipped: false },
       { item: "frame_neon", price: 100, plusPrice: 50, cost: 100, owned: false, kind: "own", equipped: false },
