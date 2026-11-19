@@ -99,6 +99,29 @@ export function currentTheme() {
   return document.documentElement.dataset.theme === "light" ? "light" : "dark";
 }
 
+// The pinned chrome pair (the engine config's brand colors, vendored-privately
+// computed): a runtime pin re-paints the media'd <meta name="theme-color">
+// pair with the media attributes dropped, so the browser chrome follows the
+// pin at once instead of the system query.
+const PINNED_CHROME = { light: "#f7efdc", dark: "#131b27" };
+
+// The color-scheme contract: the <meta name="color-scheme"> hint is the
+// runtime source and styles.css maps it back to the property with :has().
+// Kit's engine is vendored and meta-blind, so the shell's toggle seat — the
+// only non-vendored runtime write — syncs the hint (pinned, "light"/"dark")
+// alongside the chrome pair. The boot paint needs no sync: theme-preload.js
+// already settled the hint from the same storage read.
+export function syncColorSchemeContract(doc, theme) {
+  const color = PINNED_CHROME[theme];
+  if (!color) return;
+  const schemeMeta = doc.querySelector('meta[name="color-scheme"]');
+  if (schemeMeta) schemeMeta.content = theme;
+  for (const meta of doc.querySelectorAll('meta[name="theme-color"]')) {
+    meta.removeAttribute("media");
+    meta.content = color;
+  }
+}
+
 // The initials on a server tile: up to two characters, Space Grotesk 700.
 export function tileLabel(name) {
   return String(name || "?").trim().slice(0, 2).toUpperCase() || "?";
@@ -440,6 +463,9 @@ function userBlock() {
         const next = currentTheme() === "dark" ? "light" : "dark";
         // Kit's engine: attribute, browser chrome, storage — in one call.
         appearance.setThemeChoice(document, localStorage, next);
+        // The meta-blind engine can't see the hint: the color-scheme seat
+        // rides right behind it (the runtime contract, wave-24).
+        syncColorSchemeContract(document, next);
         event.currentTarget.textContent = next === "dark" ? t("gc.shell.theme.light") : t("gc.shell.theme.dark");
       },
     }),

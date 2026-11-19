@@ -14,6 +14,10 @@
        re-paints both metas through the Kit appearance engine. -->
   <meta name="theme-color" content="#f7efdc" media="(prefers-color-scheme: light)">
   <meta name="theme-color" content="#131b27" media="(prefers-color-scheme: dark)">
+  <!-- The color-scheme hint is the runtime source ("light dark" = follow the
+       system; theme-preload pins it from the stored choice). styles.css maps
+       the hint back to the property — CSS never hardcodes a pin. -->
+  <meta name="color-scheme" content="light dark">
   <!-- Skin before first paint (CSP-safe: same-origin script, no inline).
        Settles the document's data-theme from the stored preference. -->
   <script src="/js/theme-preload.js"></script>

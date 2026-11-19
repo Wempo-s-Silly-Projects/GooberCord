@@ -32,9 +32,13 @@ see <https://www.gnu.org/licenses/>
    forum's, verbatim. theme-preload.js sets data-theme before first paint,
    and the Kit appearance engine re-applies it at boot always — so the
    unattr :root below only ever shows for the pre-paint beat (storage
-   blocked), which is exactly the dark default. */
+   blocked), which is exactly the dark default. PALETTE stays keyed on
+   data-theme; the color-scheme PROPERTY rides the <meta> hint instead
+   (the dark-mode-toggle guide): :root keeps the system hint "light dark"
+   and the :has() mappings follow the hint, so a pin never has to be
+   hardcoded in CSS (and never wins while JS is down). */
 :root {
-  color-scheme: dark;
+  color-scheme: light dark;
   --button-radius: 0.45rem 0.65rem 0.4rem 0.55rem;
   accent-color: var(--green);
   font-family: "Trebuchet MS", "Segoe UI", sans-serif;
@@ -74,8 +78,18 @@ see <https://www.gnu.org/licenses/>
   --coin: #d9a621;
 }
 
-:root[data-theme="light"] {
+/* The meta hint mapped back to the property (flat selectors — the guide's
+   cascade contract; the authored declarations above used to pin the scheme,
+   which made any meta update a no-op). */
+:root:has(> head > meta[name="color-scheme"][content="dark"]) {
+  color-scheme: dark;
+}
+
+:root:has(> head > meta[name="color-scheme"][content="light"]) {
   color-scheme: light;
+}
+
+:root[data-theme="light"] {
   --paper: #fffaf0;
   --paper-shadow: #e5d7bc;
   --desk: #f7efdc;
