@@ -159,8 +159,16 @@ test("the equip face is kind-generic; the unequip control rides ONLY the served 
     "the unequip control paints ONLY on the row the backend's unequip arm serves (a never-served act never paints — the equipped pack rides the equipped span alone)");
   assert.match(row, /h\("span", \{ class: "muted item-equipped", text: t\("gc\.economy\.items\.equipped"\) \}\)/,
     "the equipped paint is the SAME span the own rows paint");
-  assert.match(row, /equipButton\(item, errorLine\)/);
-  assert.match(row, /unequipButton\(item, errorLine\)/);
+  // The c24 audit's latent guard: the equip ACT paints only where the
+  // backend's equip arm serves — own-kind rows and the effects slot's
+  // admitted pack. A future non-burst consumable's row never paints a
+  // button whose route always 400s.
+  assert.match(row, /if \(item\.kind === "own" \|\| item\.item === FX_BURST_ITEM_MIRROR\) \{[\s\S]*?equipButton\(item, errorLine\)/,
+    "the unequipped arm's equip act carries the served-set guard (own kind + the admitted pack)");
+  assert.match(row, /FX_BURST_ITEM_MIRROR/,
+    "the guard rides the client MIRROR, never a bare itemKey hardcode at the call site");
+  assert.match(row, /unequipButton\(item, errorLine\)\);/,
+    "the unequip control rides only the served arm");
 });
 
 test("the unequipped own rows and the unowned rows keep today's shape (regression guard)", () => {
@@ -278,6 +286,15 @@ test("freeze: api/coins.mjs is byte-identical across LANE_BASE..LANE_TIP (the wa
 });
 
 // --- the i18n sweep ------------------------------------------------------------
+
+test("the c24 latent guard's mirror rides the backend's own constant (computed equality, both ways)", () => {
+  const mirror = read("public/js/ui/economy.js").match(/const FX_BURST_ITEM_MIRROR = "([^"]+)";/);
+  assert.ok(mirror, "the client mirror is declared");
+  const backend = read("constants.mjs").match(/export const GC_COSMETIC_FX_BURST_ITEM = "([^"]+)";/);
+  assert.ok(backend, "the backend constant is declared");
+  assert.equal(mirror[1], backend[1],
+    "the mirror equals the backend's admitted pack (the wave-14 C1 lesson: computed equality, never an invented literal)");
+});
 
 test("every wave key is en-seated real copy", () => {
   for (const key of NEW_KEYS) {

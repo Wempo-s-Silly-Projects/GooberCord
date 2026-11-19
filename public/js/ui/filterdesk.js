@@ -65,12 +65,13 @@ function deskPanel() {
   const sourceLine = h("p", { class: "muted source-line" });
   const updatedLine = h("p", { class: "muted updated-line" });
 
-  // The one explicit submit — ONE entry per act; the backend's own 400/413
-  // copies are the truth after any client slip (no client oracle). The
-  // POST's answer paints the result/count lines; the STATE face (source,
-  // updatedAt) is GET-only in the backend's envelope, so its repaint rides
-  // the submit's own follow-up GET — one extra ride behind one explicit
-  // act, never a poll (the defaults law).
+  // One explicit submit per act — the body may carry ONE entry or a
+  // comma-separated batch (the backend's own splitFilterEntries is the
+  // splitter, the 400/413 copies are the truth after any client slip; no
+  // client oracle). The POST's answer paints the result/count lines; the
+  // STATE face (source, updatedAt) is GET-only in the backend's envelope,
+  // so its repaint rides the submit's own follow-up GET — one extra ride
+  // behind one explicit act, never a poll (the defaults law).
   const entryBox = createInput(document, {
     id: "filter-entry", label: t("gc.filterdesk.entryLabel"),
     description: t("gc.filterdesk.entryHelp"),

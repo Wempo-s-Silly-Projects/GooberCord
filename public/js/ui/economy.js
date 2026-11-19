@@ -352,6 +352,12 @@ function claimPanel(payload) {
 // label, never the humanized key tail).
 const QUEST_KIND_KEYS = { earn: "gc.economy.quests.earned" };
 
+// The burst item's client mirror: the c24 audit's LOW-1 latent guard rides
+// it — the equip act paints ONLY where the backend's equip arm actually
+// serves (own-kind rows, and the effects slot's admitted pack). The pin
+// asserts this mirror equals the backend's own constant (both ways).
+const FX_BURST_ITEM_MIRROR = "fx_burst_confetti";
+
 function questKindKey(kind) {
   return QUEST_KIND_KEYS[kind] ?? "gc.economy.quests.other";
 }
@@ -543,11 +549,19 @@ function inventoryRow(item, errorLine) {
       nodes.push(h("span", { class: "muted item-equipped", text: t("gc.economy.items.equipped") }));
       // The unequip arm is OWN-KIND ONLY in the frozen backend (the burst
       // pack keeps its equip arm for the effects slot — the designed shape):
-      // a never-served act never paints. The equipped pack's un-equip path
-      // is re-equipping, not this control.
+      // a never-served act never paints. The equipped pack keeps spending
+      // its uses until it drains — the bursts ride the equipped row, and no
+      // unequip control serves it.
       if (item.kind === "own") nodes.push(unequipButton(item, errorLine));
     } else {
-      nodes.push(equipButton(item, errorLine));
+      // The equip act paints ONLY where the backend's equip arm serves:
+      // own-kind rows, and the effects slot's admitted pack (the c24
+      // audit's latent guard — a future non-burst consumable would hit the
+      // arm's 400, so its equip button never paints; the row keeps its
+      // uses/use/buy faces, no invented label for the dead arm).
+      if (item.kind === "own" || item.item === FX_BURST_ITEM_MIRROR) {
+        nodes.push(equipButton(item, errorLine));
+      }
     }
   } else {
     nodes.push(shopBuyButton(item, errorLine));
