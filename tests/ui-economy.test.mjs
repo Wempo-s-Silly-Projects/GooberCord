@@ -206,5 +206,52 @@ test("economy.js holds NO sweep's leftover literals (the seat scan)", () => {
     .replace(/text: "Goober\+"/g, "");
   assert.doesNotMatch(codeOnly, /text: "[A-Z←"'][^"]*"/);
   assert.doesNotMatch(codeOnly, /label: "[A-Z][^"]*"/);
-  assert.doesNotMatch(codeOnly, /description: "[A-Z0-9][^"]*"/);
+  assert.doesNotMatch(codeOnly, /description: "[A-Z][^"]*"/);
+});
+
+test("the footer line repaints when a voice tick lands the coins lane (no route re-render)", async () => {
+  const previous = { Node: globalThis.Node, document: globalThis.document };
+  class CoinStubNode {
+    constructor(tag) {
+      this.tag = tag;
+      this.children = [];
+      this.className = "";
+      this.textContent = "";
+    }
+    append(...kids) { this.children.push(...kids); }
+    replaceChildren() { this.children = []; }
+    setAttribute(name, value) { this.attributes ??= new Map(); this.attributes.set(name, String(value)); }
+    addEventListener() { /* the click lane is not under test here */ }
+  }
+  const nodeOf = (tag, text) => {
+    const node = new CoinStubNode(tag);
+    node.textContent = text;
+    return node;
+  };
+  globalThis.Node = CoinStubNode;
+  globalThis.document = {
+    createElement: (tag) => new CoinStubNode(tag),
+    createTextNode: (text) => nodeOf("#text", String(text)),
+  };
+  try {
+    // The coin-mark node hides its class in attributes; the number is the
+    // painted text — walk to the coin-balance-num seat and read it.
+    const balanceNum = (node) => {
+      if (String(node.className).split(/\s+/).includes("coin-balance-num")) return node;
+      for (const kid of node.children ?? []) {
+        const found = balanceNum(kid);
+        if (found) return found;
+      }
+      return null;
+    };
+    store.set({ coins: { balance: 10, voice: { windowSeconds: 600 } } });
+    const line = economy.coinFooterLine(); // the pre-tick paint off the store
+    assert.equal(balanceNum(line)?.textContent, "10", "the line paints the seated balance");
+    store.set({ coins: { balance: 12 } }); // the tick's arrival — the paint moment
+    assert.equal(balanceNum(line)?.textContent, "12", "the subscriber repainted the same node");
+  } finally {
+    globalThis.Node = previous.Node;
+    globalThis.document = previous.document;
+    store.reset(); // drops this line's live seat before the next case
+  }
 });

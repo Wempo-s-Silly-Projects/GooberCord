@@ -416,10 +416,14 @@ function ledgerRow(entry) {
 
 // --- the rail footer's ambient line ---------------------------------------------
 
-// The balance is AMBIENT: the footer line hydrates ITSELF off the store (a
-// node-local paint — never a route re-render, which would drop mid-edit form
-// state); a refusal leaves the line quiet (the shop route owns the errors,
+// The balance is AMBIENT: the footer line hydrates ITSELF off the store AND
+// stays live (a node-local paint — never a route re-render, which would drop
+// mid-edit form state): the voice-tick loop's balance arrival is a paint
+// moment (the shell's one-live-seat idiom — each line drops its predecessor's
+// seat). A refusal leaves the line quiet (the shop route owns the errors,
 // the footer never nags).
+let coinLineUnsub = null;
+
 export function coinFooterLine() {
   const line = h("span", { class: "coin-line" });
   const paint = (coins) => {
@@ -451,5 +455,7 @@ export function coinFooterLine() {
     // Hydrate once off the shell's own lane; the line fills silently.
     loadCoins().then(paint).catch(() => { /* the line stays quiet */ });
   }
+  if (coinLineUnsub) coinLineUnsub();
+  coinLineUnsub = store.subscribe("coins", (state) => paint(state.coins));
   return line;
 }
