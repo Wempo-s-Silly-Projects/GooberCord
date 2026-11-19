@@ -419,6 +419,8 @@ export function userAccentColorTagline(row) {
 
 async function handleProfilePatchRoute(request, env) {
   const session = await requireUser(request, env);
+  const userId = Number(session.user.id);
+  await rateLimit(request, env, "write", "profile:" + userId);
   const body = await readJson(request);
 
   // SET clauses built only from the fields the request actually carries —
@@ -448,7 +450,6 @@ async function handleProfilePatchRoute(request, env) {
     }
   }
 
-  const userId = Number(session.user.id);
   if (sets.length > 0) {
     await env.GOOBER_DB.prepare(
       "UPDATE users SET " + sets.join(", ") + " WHERE id = ?",
@@ -465,17 +466,24 @@ async function handleProfilePatchRoute(request, env) {
 
 // The Goober+ cosmetics PATCH (the 2026-11-17 Nitro-perks contract; migration
 // 0013's table). Write path only — reads fold into /api/me and stay public.
-// The gate rides the STRICT perk predicate (grace = perks off), before any
-// validation: a grace member gets the same refusal as a non-buyer, never a
-// "your accent color was invalid" oracle.
+// The gate rides the STRICT perk predicate (grace = perks off) and fires only
+// on a non-null SET: a lapsed term must still be able to CLEAR its own
+// banner/flair (the filed contract's "clearing stays always-legal"), while an
+// equip still gets the same refusal as a non-buyer — and never a
+// "your banner color was invalid" oracle, since the gate precedes every
+// validator.
 async function handleCosmeticsPatchRoute(request, env) {
   const session = await requireUser(request, env);
   const userId = Number(session.user.id);
   await rateLimit(request, env, "write", "cosmetics:" + userId);
-  if (!(await plusPerkActive(env, userId, nowSeconds()))) {
+  const body = await readJson(request);
+  if (
+    ((body.banner !== undefined && body.banner !== null) ||
+      (body.flair !== undefined && body.flair !== null)) &&
+    !(await plusPerkActive(env, userId, nowSeconds()))
+  ) {
     throw new HttpError(403, "Those are Goober+ perks. Get Goober+ in the coin shop to use them.");
   }
-  const body = await readJson(request);
 
   // SET clauses built only from the fields the request actually carries —
   // an absent key keeps the stored value without ever reading it first;
@@ -775,6 +783,7 @@ async function handleLogoutRoute(request, env) {
 // takeover primitive.
 async function handleAdminResetPasswordRoute(request, env) {
   const session = await requireUser(request, env);
+  await rateLimit(request, env, "write", "admin-reset:" + Number(session.user.id));
   if (session.user.role !== "owner") {
     throw new HttpError(403, "Only the owner can reset a password.");
   }
@@ -787,6 +796,19 @@ async function handleAdminResetPasswordRoute(request, env) {
   const relayed = await relaySet(env, username, password);
   if (!relayed) {
     throw new HttpError(503, "Password reset relay is not available. Try again shortly.");
+  }
+  // Stolen-session containment (haywire-4 auth): the reset must not leave the
+  // victim's other sessions alive for their full 30-day TTL. The acting
+  // owner's OWN token is spared (token_hash <>) so the admin isn't logged out
+  // mid-operation; a victim who has the owner's reset flow open in another tab
+  // (reset target = own account) keeps exactly that one session too. No
+  // Set-Cookie rides this route for the victim — the server-side DELETE is the
+  // revocation, and the victim's next request 401s.
+  const victim = await userByUsernameKey(env, username.toLowerCase());
+  if (victim) {
+    await env.GOOBER_DB.prepare(
+      "DELETE FROM sessions WHERE user_id = ? AND token_hash <> ?",
+    ).bind(Number(victim.id), session.tokenHash).run();
   }
   return json({ reset: true, user: relayed.user });
 }
