@@ -423,7 +423,6 @@ export const GC_BOOKMARKS_LIST_MAX = 100;
 // the card is GC's own surface).
 export const GC_WELCOME_CARD_BLURB_MAX = 300;
 
-
 // R2 object keys (the shared wempos-forum-r2 bucket, binding GC_MEDIA): the
 // GC attachment images live under gc-attachments/<attachment id> and the
 // shared users table's approved avatars under avatars/<user id> — the key

@@ -136,8 +136,6 @@ async function run(method, path, routes = [], payload, viewerId = USER_ID) {
   return { db, response, body: await bodyOf(response) };
 }
 
-
-
 test("bookmark save answers the saved shape with the statement gate", async () => {
   const { db, response, body } = await run("POST", "/api/messages/101/bookmark", [
     { test: BOOKMARK_SAVE_TEST, run: () => ({ meta: { changes: 1, last_row_id: 3 } }) },
@@ -192,6 +190,8 @@ test("bookmark list answers the caller's own pointers newest-first", async () =>
   ]);
   const list = db.calls.find((call) => BOOKMARK_LIST_TEST(call.sql));
   assert.equal(list.bound[0], USER_ID, "the list read is owner-scoped");
+  assert.match(list.sql, /ORDER BY saved_at DESC, id DESC/,
+    "newest-first ordering lives in the read, not the mapper");
   assert.match(list.sql, new RegExp("LIMIT " + GC_BOOKMARKS_LIST_MAX));
 });
 

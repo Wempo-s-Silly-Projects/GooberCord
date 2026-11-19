@@ -126,8 +126,8 @@ export async function handleBookmarkRoutes(request, env, url, path, method, ctx)
   void url;
   void ctx;
 
-  // DELETE before the list read: /api/bookmarks/:id contains the list path,
-  // so the delete match rides first.
+  // The arms are disjoint by method and path (DELETE with an id, GET for the
+  // bare list) — the delete arm rides first by convention only.
   const deleteMatch = method === "DELETE"
     ? path.match(/^\/api\/bookmarks\/(0|[1-9][0-9]*)$/)
     : null;
