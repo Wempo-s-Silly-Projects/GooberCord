@@ -179,8 +179,15 @@ test("msg persists through the send primitive and spreads to the other sockets, 
 });
 
 test("typing broadcasts to the others without persisting anything", async () => {
+  // The frame now walks the same fan-in re-check the msg frame walks, so the
+  // fixture carries a member-passing channel row like the other gates' tests.
   const records = [];
-  const env = envWithSender(records);
+  const env = envWithSender(records, null, {
+    GOOBER_DB: fanInDb({
+      channel: { id: CHANNEL_ID, server_id: 1, kind: "text" },
+      members: [1, 2],
+    }),
+  });
   const { room, ctx } = makeRoom(env);
   const alice = await connect(room, ctx, { userId: 1, username: "alice", channelKind: "text" });
   const bob = await connect(room, ctx, { userId: 2, username: "bob", channelKind: "dm" });
@@ -565,4 +572,127 @@ test("ws route rejects a missing or malformed channel id with 400 before any ses
   const response = await dispatch(new Request(`${ORIGIN}/api/ws`, { headers }), env);
   assert.equal(response.status, 400);
   assert.deepEqual(env.ROOMS.names, []);
+});
+
+// --- GO-HAYWIRE cycle-4: typing fan-out floor + member re-check gate ---------------
+// The floor mirrors the voice TTL-cache pattern (per-(channel,user) window in
+// a bounded Map) — repeats inside GC_TYPING_FLOOR_SECONDS (2s, constants.mjs)
+// are dropped without an error frame or a close. The gate rides the SAME
+// fan-in re-check the msg frame walks, so a kicked socket fans out nothing.
+
+test("typing repeats inside the per-user floor are dropped; the next frame past the window relays", async () => {
+  const records = [];
+  const env = envWithSender(records, null, {
+    GOOBER_DB: fanInDb({
+      channel: { id: CHANNEL_ID, server_id: 1, kind: "text" },
+      members: [1, 2],
+    }),
+  });
+  const { room, ctx } = makeRoom(env);
+  const alice = await connect(room, ctx, { userId: 1, username: "alice", channelKind: "text" });
+  const bob = await connect(room, ctx, { userId: 2, username: "bob", channelKind: "dm" });
+  clearFrames(alice);
+  clearFrames(bob);
+
+  // The floor is a wall-clock window (Date.now, the voice cache's clock):
+  // pin it so the test cannot flake on scheduling.
+  const realNow = Date.now;
+  let now = 1_700_000_000_000;
+  Date.now = () => now;
+  try {
+    await room.webSocketMessage(alice, JSON.stringify({ type: "typing" })); // accepted
+    await room.webSocketMessage(alice, JSON.stringify({ type: "typing" })); // inside the window: dropped
+    now += 2100; // past the 2s floor
+    await room.webSocketMessage(alice, JSON.stringify({ type: "typing" })); // accepted again
+    // Bob's floor is his own: alice's warm window never mutes him.
+    await room.webSocketMessage(bob, JSON.stringify({ type: "typing" }));
+  } finally {
+    Date.now = realNow;
+  }
+
+  assert.deepEqual(sentFrames(bob), [
+    { type: "broadcast", kind: "typing", userId: 1 },
+    { type: "broadcast", kind: "typing", userId: 1 },
+  ]);
+  // A floored repeat is dropped WITHOUT an error frame and WITHOUT closing
+  // the socket — the client keeps throttling, the DO stops amplifying.
+  assert.deepEqual(sentFrames(alice), [
+    { type: "broadcast", kind: "typing", userId: 2 },
+  ]);
+  assert.deepEqual(records, []);
+  assert.deepEqual(ctx.getWebSockets(), [alice, bob]);
+});
+
+test("typing rides the member re-check: a kicked socket fans out nothing and stays connected", async () => {
+  const records = [];
+  const env = envWithSender(records, null, {
+    GOOBER_DB: fanInDb({
+      channel: { id: CHANNEL_ID, server_id: 1, kind: "text" },
+      members: [2], // alice (1) was kicked; bob keeps his seat
+    }),
+  });
+  const { room, ctx } = makeRoom(env);
+  const alice = await connect(room, ctx, { userId: 1, username: "alice", channelKind: "text" });
+  const bob = await connect(room, ctx, { userId: 2, username: "bob", channelKind: "dm" });
+  clearFrames(alice);
+  clearFrames(bob);
+
+  await room.webSocketMessage(alice, JSON.stringify({ type: "typing" }));
+
+  // Silent drop, the voice door's shape: no relay, no error frame, no close.
+  assert.deepEqual(sentFrames(bob), []);
+  assert.deepEqual(sentFrames(alice), []);
+  assert.deepEqual(records, []);
+  assert.deepEqual(ctx.getWebSockets(), [alice, bob]);
+});
+
+// -- Lead deslop F1 (floor peek): a repeat inside the window must drop BEFORE
+// the gate's D1 reads — the floor armed only after a passing gate, so a
+// wire-rate repeater converted the fan-out amplifier into a D1 amplifier.
+
+// The fan-in fixture, wrapped with a read counter so a single frame's query
+// cost is observable.
+function countingFanInDb(fixture) {
+  const base = fanInDb(fixture);
+  const db = { readCount: 0 };
+  db.prepare = (sql) => {
+    db.readCount += 1;
+    return base.prepare(sql);
+  };
+  return db;
+}
+
+test("a floor-repeat typing frame costs zero DB reads (the peek precedes the gate)", async () => {
+  const records = [];
+  const db = countingFanInDb({
+    channel: { id: CHANNEL_ID, server_id: 1, kind: "text" },
+    members: [1, 2],
+  });
+  const env = envWithSender(records, null, { GOOBER_DB: db });
+  const { room, ctx } = makeRoom(env);
+  const alice = await connect(room, ctx, { userId: 1, username: "alice", channelKind: "text" });
+  const bob = await connect(room, ctx, { userId: 2, username: "bob", channelKind: "dm" });
+  clearFrames(alice);
+  clearFrames(bob);
+
+  const realNow = Date.now;
+  let now = 1_700_000_000_000;
+  Date.now = () => now;
+  try {
+    // The arming frame still pays the gate's reads, then sets its slot.
+    await room.webSocketMessage(alice, JSON.stringify({ type: "typing" }));
+    assert.equal(bob.sent.length, 1);
+
+    const readsBeforeRepeat = db.readCount;
+    await room.webSocketMessage(alice, JSON.stringify({ type: "typing" }));
+    // The repeat is a pure in-memory peek-drop: no channel row, no
+    // membership read, no bits walk — and still no fan-out, no error
+    // frame, no close.
+    assert.equal(db.readCount, readsBeforeRepeat);
+    assert.equal(bob.sent.length, 1);
+    assert.deepEqual(sentFrames(alice), []);
+    assert.deepEqual(ctx.getWebSockets(), [alice, bob]);
+  } finally {
+    Date.now = realNow;
+  }
 });

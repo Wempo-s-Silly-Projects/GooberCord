@@ -31,7 +31,7 @@
 // pair (the hub owns presence, the rooms own fan-out), and the auto-response
 // pair pinned at construction means WS pings on the hub's sockets, if ever
 // added later, are answered at the edge without waking the instance.
-import { json, HttpError } from "./core/http.mjs";
+import { json, HttpError, readJson } from "./core/http.mjs";
 import { requireSignedInRead, requireUser } from "./core/auth.mjs";
 import { nowSeconds } from "./core/crypto.mjs";
 
@@ -86,6 +86,14 @@ export class PresenceHub extends (workerd?.DurableObject ?? DurableObjectBase) {
     // userId → {username, lastSeen, statusText, statusUntil, channelLabel,
     //           voiceChannel}
     this.presence = new Map();
+    // userId → live-socket count (GO-HAYWIRE cycle-4). Every room DO
+    // forwards one connect per accepted socket, so the hub is the ONE
+    // instance that can count a user's sockets across rooms; a leave drops
+    // the roster entry only when that count reaches zero, or a second
+    // channel's close flickered the user out of the roster while their
+    // other socket was still live. DO-internal scratch state: an eviction
+    // resets counts together with the presence map itself.
+    this.connectCounts = new Map();
     if (typeof state?.setWebSocketAutoResponse === "function") {
       try {
         state.setWebSocketAutoResponse(
@@ -114,13 +122,28 @@ export class PresenceHub extends (workerd?.DurableObject ?? DurableObjectBase) {
     if (type === "connect" || type === "heartbeat") {
       if (Number.isInteger(frame.userId)) {
         if (type === "heartbeat") await this.overlayStatus(frame.userId, frame.username);
-        else this.upsert(frame.userId, frame.username);
+        else {
+          // The count arm: one connect per accepted socket, never on the
+          // client-driven 60s beats.
+          this.connectCounts.set(frame.userId, (this.connectCounts.get(frame.userId) ?? 0) + 1);
+          this.upsert(frame.userId, frame.username);
+        }
       }
       return json(this.snapshot());
     }
 
     if (type === "leave") {
-      if (Number.isInteger(frame.userId)) this.presence.delete(frame.userId);
+      if (Number.isInteger(frame.userId)) {
+        const remaining = (this.connectCounts.get(frame.userId) ?? 0) - 1;
+        if (remaining > 0) {
+          this.connectCounts.set(frame.userId, remaining);
+        } else {
+          // The last socket (or a leave for a user the hub never counted —
+          // the announce route's heartbeat-only path): drop them for real.
+          this.connectCounts.delete(frame.userId);
+          this.presence.delete(frame.userId);
+        }
+      }
       return json(this.snapshot());
     }
 
@@ -253,7 +276,11 @@ export async function handlePresenceRoutes(request, env, url, path, method, ctx)
 
   if (method === "PATCH" && path === "/api/me/status") {
     const session = await requireUser(request, env);
-    const body = await request.json().catch(() => null);
+    // The shared bounded read (GO-HAYWIRE cycle-4): request.json() read the
+    // body with no cap, the one route on this file off the readJson path.
+    // Over-cap answers the shared 413, garbage the shared 400 — the row's
+    // own shape check below stays.
+    const body = await readJson(request);
     if (!body || typeof body !== "object" || Array.isArray(body)) {
       throw new HttpError(400, "That status is invalid.");
     }
