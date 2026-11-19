@@ -60,7 +60,10 @@ if [ -n "$alert" ]; then
   fi
   ALERT_FILE="$STATE_DIR/ALERT-$(date -u +%Y%m%dT%H%M%SZ).md"
   printf '# Fleet watchdog alert %s\n\n%s\n\n- gc build: %s\n- index: %s\n- forum: %s\n' "$NOW" "$alert" "$GC_BUILD" "$GC_INDEX" "$FORUM_VERSION" > "$ALERT_FILE"
-  osascript -e "display notification \"Fleet watchdog: $alert\" with title \"GooberCord fleet\"" >/dev/null 2>&1 &
+  # ecc-security LOW rider (2026-11-19): the alert text may carry raw probe
+  # bodies — quote/backslash characters never ride the AppleScript string.
+  SAFE_ALERT="$(printf '%s' "$alert" | tr -d '"\\')"
+  osascript -e "display notification \"Fleet watchdog: $SAFE_ALERT\" with title \"GooberCord fleet\"" >/dev/null 2>&1 &
 else
   printf ' OK\n' >> "$LOG_FILE"
   if [ -n "$GC_BUILD" ]; then
@@ -71,27 +74,40 @@ fi
 # Cost-activity canary (cost-monitor rider, 2026-11-19): token spend is NOT
 # CLI-observable — the owner alone reads the true number against the $1000
 # ceiling from claude.ai. This guard correlates observable fleet motion
-# (.team/cost.log lines in the tick's machine-parsable shape, the FLEET TICK
-# being the single writer) and flags a spike so the owner knows to go look;
-# it never halts, never blocks, never writes cost.log. A spike fires when
-# any of deploys/lanes/suites/seats exceeds max(prev 3) * 2 + 1 — the +1
-# floor stops the idle->first-activity 0->1 crossing from crying wolf.
+# (.team/cost.log lines in the machine-parsable shape that scripts/
+# fleet-cost-line.sh writes — that script is the repo's CANARY WRITER; the
+# FLEET TICK and the lead ritual are its callers) and flags a spike so the
+# owner knows to go look; it never halts, never blocks, never writes
+# cost.log. A spike fires when any of deploys/lanes/suites/seats exceeds
+# max(prev 3) * 2 + 1 — the +1 floor stops the idle->first-activity 0->1
+# crossing from crying wolf.
 COST_LOG="$STATE_DIR/cost.log"
 TODAY="$(date -u +%F)"
 if [ -f "$COST_LOG" ]; then
-  # Only conforming lines (day= + numeric metrics) count; prose lines are inert.
-  LINES_TODAY="$(grep 'day=' "$COST_LOG" | grep "day=$TODAY" | wc -l | tr -d ' ')"
+  # Only conforming lines (day= <date> + numeric metrics) count; the prose
+  # history is inert and the line shape is pinned by scripts/fleet-cost-line.sh.
+  TODAY_LINES()(
+    grep 'day=' "$COST_LOG" | grep "day=$TODAY" | grep -E "deploys=[0-9]+.*lanes=[0-9]+.*suites=[0-9]+"
+  )
+  LINES_TODAY="$(TODAY_LINES | wc -l | tr -d ' ')"
   if [ "$LINES_TODAY" -ge 4 ]; then
     spike_alert=""
     for METRIC in deploys lanes suites seats; do
-      EXPR="s/^.*[[:space:]]${METRIC}=\([0-9]*\).*/\1/p"
-      C="$(printf '%s\n' "$(grep 'day=' "$COST_LOG" | grep "day=$TODAY" | tail -1)" | sed -n "$EXPR")"
+      EXPR="s/^\(.*[[:space:]]\)\{0,1\}${METRIC}=\([0-9]*\).*/\2/p"
+      C="$(TODAY_LINES | tail -1 | sed -n "$EXPR")"
       [ -n "$C" ] || continue
       P_MAX=0
-      for PREV_LINE in $(grep 'day=' "$COST_LOG" | grep "day=$TODAY" | tail -n 4 | head -n 3 | tr '\n' '|' | tr -d "'"); do
-        P="$(printf '%s' "$PREV_LINE" | sed -n "$EXPR")"
+      # newline-preserving loop over the previous 3 lines (a for-loop word-
+      # splits and a tr-collapse makes sed's greedy .* read only the LAST
+      # prev line — the code-review fix)
+      PREV_LINES="$(TODAY_LINES | tail -n 4 | head -n 3)"
+      while IFS= read -r PREV_LINE; do
+        [ -n "$PREV_LINE" ] || continue
+        P="$(printf '%s\n' "$PREV_LINE" | sed -n "$EXPR")"
         [ -n "$P" ] && [ "$P" -gt "$P_MAX" ] && P_MAX="$P"
-      done
+      done <<EOF
+$PREV_LINES
+EOF
       THRESHOLD=$(( P_MAX * 2 + 1 ))
       if [ "$C" -ge "$THRESHOLD" ] && [ "$C" -gt 1 ]; then
         spike_alert="COST-ACTIVITY-SPIKE: $METRIC=$C vs last-3 max=$P_MAX"
