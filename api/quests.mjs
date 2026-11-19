@@ -35,6 +35,7 @@
 import { requireSignedInRead, requireUser } from "./core/auth.mjs";
 import { nowSeconds } from "./core/crypto.mjs";
 import { HttpError, json, rateLimit } from "./core/http.mjs";
+import { dayFloor } from "./core/time.mjs";
 import { plusPerkActive } from "./plus.mjs";
 import {
   GC_COIN_DAILY_CEILING,
@@ -45,13 +46,6 @@ import {
   GC_QUEST_GOAL_MESSAGES,
   GC_QUEST_GOAL_VOICE,
 } from "../constants.mjs";
-
-// UTC day floor — the same boundary coins.mjs rides: "today" is one thing
-// everywhere.
-function dayFloor(now) {
-  return now - (now % 86400);
-}
-
 // The one self-scoped read: the day's three progress counts and the
 // claim-state pair. Eight binds, textual order: user, day (message),
 // user, day (voice), user, day (earned), user, day (claimed).
