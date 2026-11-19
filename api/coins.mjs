@@ -281,6 +281,22 @@ const COSMETIC_OWNERSHIP_INSERT_SQL =
     "SELECT 1 FROM gc_cosmetic_ownership ow WHERE ow.user_id = ? AND ow.item = ?" +
   ")";
 
+// The legacy shop's spend is the GUARDED CLAIM (the c11 fix): the NOT-
+// EXISTS-ownership arm rides INSIDE the INSERT — the same idiom the 0056
+// inventory spend uses — because zero-changes does NOT abort a D1 batch.
+// On the unguarded statement a re-buy minted its spend row anyway (the
+// ownership INSERT's own NOT EXISTS silently answered changes = 0) and the
+// 409 drained the coin. A refused re-buy now loses its race IN the spend:
+// nothing drains, nothing persists, and the ownership INSERT — a fingerprint
+// consumer of the spend row — mints nothing off a spend that never landed.
+const COSMETIC_LEGACY_SPEND_HEAD_SQL =
+  "INSERT INTO gc_coin_ledger (user_id, delta, source, created_at, spend_nonce) " +
+  "SELECT ?, ?, ?, ?, ? " +
+  "WHERE (SELECT COALESCE(SUM(le4.delta), 0) FROM gc_coin_ledger le4 " +
+    "WHERE le4.user_id = ?) >= ? " +
+  "AND NOT EXISTS (" +
+    "SELECT 1 FROM gc_cosmetic_ownership ow WHERE ow.user_id = ? AND ow.item IN (";
+
 const OWNERSHIP_READ_SQL =
   "SELECT item FROM gc_cosmetic_ownership WHERE user_id = ?";
 
@@ -779,10 +795,14 @@ async function handleCosmeticBuyRoute(request, env) {
   const nonce = randomToken(SPEND_NONCE_BYTES);
 
   const results = await env.GOOBER_DB.batch([
-    env.GOOBER_DB.prepare(COSMETIC_LEDGER_SPEND_SQL).bind(
+    env.GOOBER_DB.prepare(
+      COSMETIC_LEGACY_SPEND_HEAD_SQL + items.map(() => "?").join(", ") + ")) LIMIT 1",
+    ).bind(
       userId, -price, source, now, nonce,
       userId,
       price,
+      userId,
+      ...items,
     ),
     ...items.map((owned) =>
       env.GOOBER_DB.prepare(COSMETIC_OWNERSHIP_INSERT_SQL).bind(
@@ -794,9 +814,13 @@ async function handleCosmeticBuyRoute(request, env) {
 
   const bought = results.slice(1).every((r) => Number(r?.meta?.changes) === 1);
   if (!bought) {
-    // Classified after the fact, one probe: insufficient coins is the spend
-    // refusal's copy, anything else is the ownership one (the batch is
-    // atomic, so nothing persisted either way).
+    // Classified after the fact, one probe: the classify reads the standing
+    // state a refused batch NEVER moved — insufficient coins is the spend
+    // refusal's copy, anything else is the ownership one. The batch is not
+    // "atomic by abort": zero-changes does NOT abort a D1 batch — the LAW is
+    // that the spend itself is the refused claim, so the drain-and-classify
+    // order the unguarded statement relied on cannot mislabel a real D1 run
+    // (the probe's balance is the standing, undrained one).
     const balanceRow = await env.GOOBER_DB.prepare(BALANCE_READ_SQL).bind(userId).first();
     if ((Number(balanceRow?.balance) || 0) < price) {
       throw new HttpError(400, "Not enough Goober Coins for that.");
@@ -971,6 +995,13 @@ async function handleCosmeticConsumeRoute(request, env) {
   const body = await readJson(request);
   const sku = typeof body?.itemKey === "string" ? inventoryShape(body.itemKey) : null;
   if (!sku) throw new HttpError(400, "That cosmetic is not in the shop.");
+  // The kind gate (the c11 fix): only 'consumable' rows ride the use arm —
+  // an 'own' SKU's consume would ride the UPDATE's kind = 'consumable' arm
+  // to changes = 0 and the post-hoc probe would mislabel it the empty-pack
+  // 409. The copy is the kind's own shape, the equip/unequip arms' register.
+  if (sku.kind !== "consumable") {
+    throw new HttpError(400, "That cosmetic is not a consumable pack.");
+  }
 
   const result = await env.GOOBER_DB
     .prepare(INVENTORY_CONSUME_SQL)

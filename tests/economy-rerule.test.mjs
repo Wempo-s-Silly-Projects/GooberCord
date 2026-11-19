@@ -343,9 +343,12 @@ test("POST /api/coins/cosmetics buys banner in an atomic batch: the negative row
   assert.ok(batch);
   const [spend, ownership] = batch.statements;
   // The ledger row: -100 at the caller's own tier, the fingerprint's binds.
+  // The c11 fix carries the NOT-EXISTS-ownership arm INSIDE the spend (the
+  // same idiom the 0056 inventory spend uses) — a re-buy loses its race in
+  // the spend itself, so the 409 can never drain the coin.
   assert.equal(spend.bound[1], -100);
   assert.equal(spend.bound[2], "cosmetic");
-  assert.match(spend.sql, /WHERE \(SELECT COALESCE\(SUM\(le4\.delta\), 0\) FROM gc_coin_ledger le4 WHERE le4\.user_id = \?\) >= \? LIMIT 1$/);
+  assert.match(spend.sql, /WHERE \(SELECT COALESCE\(SUM\(le4\.delta\), 0\) FROM gc_coin_ledger le4 WHERE le4\.user_id = \?\) >= \? AND NOT EXISTS \(SELECT 1 FROM gc_cosmetic_ownership ow WHERE ow\.user_id = \? AND ow\.item IN \(\?(?:, \?)?\)\) LIMIT 1$/);
   // The ownership row guards on THIS batch's spend fingerprint (the spend's
   // own nonce — 0058, so a same-second refusal echoes nothing) AND its own
   // NOT EXISTS.
