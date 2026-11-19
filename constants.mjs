@@ -146,6 +146,31 @@ export const GC_COSMETIC_BANNER_PRICE = 100;
 export const GC_COSMETIC_FLAIR_PRICE = 100;
 export const GC_PLUS_SINK_DISCOUNT_PERCENT = 50;
 
+// The COMMUNITY SEATS (2026-11-18 re-code wave): the Morning Paper's and the
+// community anniversaries' numbers, plus the campfire books' window. Every
+// window bound and section cap is a named import at the route — no magic
+// numbers there.
+//
+// The paper's UTC day key: one day, and the "previous paper" re-derives the
+// window this many day-keys back (a bounded tail of ONE full day — no
+// per-issue archive exists anywhere, the derivation IS the history).
+export const GC_PAPER_DAY_SECONDS = 86400;
+export const GC_PAPER_YESTERDAY_KEYS = 1;
+// Section caps: each aggregate section cuts at its own read-time LIMIT; the
+// numbers are GC-shaped (no Discord source) and sized against the read-page
+// idiom (25 default, 10 for the big-window day sections).
+export const GC_PAPER_CHANNELS_MAX = 10;
+export const GC_PAPER_REACTIONS_MAX = 10;
+export const GC_PAPER_ANNIVERSARIES_MAX = 25;
+// The anniversary's structural bounds: month 0-11 (the UTC month index the
+// celebrant join binds), day 1-31 — no per-month day counts, no leap math.
+export const GC_USER_ANNIVERSARY_MONTH_MAX = 11;
+export const GC_USER_ANNIVERSARY_DAY_MAX = 31;
+// The campfire books' trailing window (30 days): the server's economy
+// aggregate over the gc_coin_ledger rows the economy already mints — a READ
+// window, never a table.
+export const GC_CAMPFIRE_LEDGER_WINDOW_SECONDS = 2592000;
+
 // The SERVER BOOST LEVELS (2026-11-17 matrix): per-server perk numbers keyed
 // on the boost count, carried FULLY on each level (the matrix's "level N
 // plus" inheritances are spelled out so one lookup answers everything). The
