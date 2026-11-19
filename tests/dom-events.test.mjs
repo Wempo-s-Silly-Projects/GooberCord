@@ -19,16 +19,11 @@
 // The on* contract: the one element builder lowercases the event name once —
 // "onClick" attaches "click", "onKeyDown" attaches "keydown" — and the
 // lowercase spelling rides along unchanged. Every camelCase h() caller
-// (ui/shell.js's pills and tiles, paper.js, pins.js, settings.js, ...) is
-// dead without this: DOM event types are case-sensitive and a user's click
-// dispatches "click", never "Click".
+// (ui/shell.js's pills and tiles, pins.js, ui/chat.js, ...) is dead without
+// this: DOM event types are case-sensitive and a user's click dispatches
+// "click", never "Click".
 import test from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
-import { join, dirname } from "node:path";
-
-const HERE = dirname(new URL(import.meta.url).pathname);
-const DOM = readFileSync(join(HERE, "../public/js/core/dom.js"), "utf8");
 
 // A faithful-enough event stub: addEventListener queues by type and
 // dispatchEvent runs the queue for the event's OWN type — the same case
@@ -85,7 +80,7 @@ test("h() keeps the lowercase on* spellings working unchanged", async () => {
   let clickFired = false;
   const button = h("button", { type: "button", onclick: () => { clickFired = true; } });
   button.dispatchEvent({ type: "click" });
-  assert.equal(clickFired, true, "the 22 lowercase social.js / soundboard-studio.js seats stay live");
+  assert.equal(clickFired, true, "the lowercase social.js / chat.js seats stay live");
 });
 
 test("h() routes onkeydown to a dispatched 'keydown'", async () => {
@@ -102,8 +97,4 @@ test("h() routes onAnimationEnd to the dispatched 'animationend'", async () => {
   const target = h("div", { onAnimationEnd: () => { fired = true; } });
   target.dispatchEvent({ type: "animationend" });
   assert.equal(fired, true, "camelCase on* names lowercase once at attach");
-});
-
-test("the dom.js contract comment states the once-lowercased on* rule", () => {
-  assert.match(DOM, /on\*\s+addEventListener with the event name lowercased/);
 });

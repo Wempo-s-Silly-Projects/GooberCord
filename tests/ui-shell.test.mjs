@@ -209,7 +209,6 @@ const EN_BUNDLE = {
   "gc.shell.social.none": "No conversations yet — start one from a member card.",
   "gc.shell.nav.dm": "Direct messages",
   "gc.shell.social.friendsRequests": "Friends & requests",
-  "gc.shell.mentions.loading": "…",
 };
 
 const store = (await import("../public/js/core/store.js")).default;

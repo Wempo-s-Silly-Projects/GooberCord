@@ -161,7 +161,8 @@ let connectionStripUnsub = null;
 // boot paints the rails BEFORE the /api payloads land, and the payloads'
 // arrival must repaint — the store's whole purpose, wired. One subscription
 // per lane key, node-local edits inside the live frame (chat.js's roster
-// repaint idiom), never a route re-render.
+// repaint idiom), never a route re-render. The DM seat reads no friends
+// truth, so the friends lane keeps its own page's render.
 let laneUnsub = null;
 
 export function renderShell(route, paneOverride = null) {
@@ -190,8 +191,8 @@ export function renderShell(route, paneOverride = null) {
   if (connectionStripUnsub) connectionStripUnsub();
   connectionStripUnsub = store.subscribe("connection", paintConnectionStrip);
   // The social lanes' live repaint: servers repaint the two rails, the
-  // conversation/friend lanes repaint the DM seat (the frozen-paint fix —
-  // the payload's arrival is the paint moment, the store's subscriber).
+  // conversations lane repaints the DM seat (the frozen-paint fix — the
+  // payload's arrival is the paint moment, the store's subscriber).
   if (laneUnsub) laneUnsub();
   const paintLanes = (_state, key) => {
     if (key === "servers") {
@@ -201,7 +202,7 @@ export function renderShell(route, paneOverride = null) {
       frame.querySelector(".dm-section")?.replaceWith(dmSection());
     }
   };
-  laneUnsub = store.subscribe(["conversations", "servers", "friends"], paintLanes);
+  laneUnsub = store.subscribe(["conversations", "servers"], paintLanes);
   loadServers();
   // The social lanes hydrate alongside (fire-and-forget; each re-render
   // paints from the store once its payload lands).
