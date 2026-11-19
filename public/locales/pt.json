@@ -495,6 +495,7 @@
   "gc.capsules.row.delete": "Eliminar",
   "gc.capsules.delete.confirmHeading": "Eliminar esta carta selada?",
   "gc.capsules.stamp": "Carimbada {{when}}",
+  "gc.capsules.more": "As {{shown}} cartas seladas",
   "gc.bookmarks.more": "{{shown}} mais guardadas",
   "gc.chat.row.save": "Guardar",
   "gc.chat.row.unsave": "Remover",

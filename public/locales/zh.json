@@ -486,6 +486,7 @@
   "gc.capsules.row.delete": "删除",
   "gc.capsules.delete.confirmHeading": "删除这封封存的信件？",
   "gc.capsules.stamp": "邮戳 {{when}}",
+  "gc.capsules.more": "已显示的 {{shown}} 封封存信件",
   "gc.bookmarks.more": "还有 {{shown}} 条已保存",
   "gc.chat.row.save": "保存",
   "gc.chat.row.unsave": "移除",

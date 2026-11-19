@@ -115,7 +115,12 @@ test("the store lane mirrors the GET list — one shape, no client recount", () 
   // these shapes were the raw `store.set({ bookmarks:` spellings before it).
   assert.match(BOOKMARKS_UI, /store\.set\(\{ \[BOOKMARKS_LANE\]:/,
     "the GET list lands in the store's bookmarks lane (the chat row's saved state)");
-  assert.match(BOOKMARKS_UI, /store\.set\(\{ \[BOOKMARKS_LANE\]: \[\.\.\.store\.get\(BOOKMARKS_LANE\) \|\| \[\],/);
+  // TEST-MOVE (c17 LOW-1, lane-c17-caps): the save now PREPENDS its fresh
+  // pointer (the capped read's newest-first parity, the statement's own
+  // ORDER BY saved_at DESC) and caps the lane at the UIBOOKMARKS_LIST_MAX
+  // mirror — the old append-tail shape painted the fresh row at the END and
+  // could push a truncated lane past the cap, so this pin followed the fix.
+  assert.match(BOOKMARKS_UI, /store\.set\(\{\n\s*\[BOOKMARKS_LANE\]: \[freshRow, \.\.\.\(store\.get\(BOOKMARKS_LANE\) \|\| \[\]\)\]/);
   assert.match(BOOKMARKS_UI, /store\.set\(\{\s*\[BOOKMARKS_LANE\]: \(store\.get\(BOOKMARKS_LANE\) \|\| \[\]\)\.filter\(/);
 });
 

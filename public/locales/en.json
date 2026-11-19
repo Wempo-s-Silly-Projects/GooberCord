@@ -486,6 +486,7 @@
   "gc.capsules.row.delete": "Delete",
   "gc.capsules.delete.confirmHeading": "Delete this sealed letter?",
   "gc.capsules.stamp": "Postmarked {{when}}",
+  "gc.capsules.more": "Showing the {{shown}} sealed letters",
   "gc.bookmarks.more": "{{shown}} more saved",
   "gc.chat.row.save": "Save",
   "gc.chat.row.unsave": "Unsave",

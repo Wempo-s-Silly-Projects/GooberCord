@@ -486,6 +486,7 @@
   "gc.capsules.row.delete": "削除",
   "gc.capsules.delete.confirmHeading": "この封印された手紙を削除しますか？",
   "gc.capsules.stamp": "消印 {{when}}",
+  "gc.capsules.more": "封印された手紙 {{shown}} 件を表示中",
   "gc.bookmarks.more": "他に{{shown}}件保存済み",
   "gc.chat.row.save": "保存",
   "gc.chat.row.unsave": "削除",

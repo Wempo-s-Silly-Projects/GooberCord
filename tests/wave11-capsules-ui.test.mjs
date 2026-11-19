@@ -212,7 +212,12 @@ test("the letter is member-composed text — never t()'d, never interpolated", (
 });
 
 test("the delete door rides the own PRE-reveal rows only — the refusals paint verbatim", () => {
-  assert.match(CAPSULES_UI, /row\.sealed === true/, "the delete affordance gates on the sealed (pre-reveal) row");
+  // TEST-MOVE (c17 LOW-2, lane-c17-caps): the painted sealed fact now
+  // derives from revealAt at PAINT time (the backend's own per-row
+  // recompute idiom) — the payload's stored `row.sealed === true` flag was
+  // the aged-mirror seat and is retired, not kept as a second arm.
+  assert.match(CAPSULES_UI, /Number\(row\.revealAt\) > Math\.floor\(Date\.now\(\) \/ 1000\)/,
+    "the delete affordance gates on the pre-reveal fact recomputed at paint time");
   assert.match(CAPSULES_UI, /errorLine\.textContent = error\.message;/,
     "404/409 server copy paints verbatim (no re-worded client side)");
   assert.doesNotMatch(CAPSULES_UI, /t\([^)]*error/, "no t() wrap of a server error");

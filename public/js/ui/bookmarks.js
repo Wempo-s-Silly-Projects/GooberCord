@@ -39,6 +39,12 @@ import { t } from "../i18n.js";
 // rider): the chat save lane keeps reading the pointer array, untouched.
 const BOOKMARKS_LANE = "bookmarks";
 
+// G-4 mirror: GC_BOOKMARKS_LIST_MAX (constants.mjs) — the read cap the
+// backend's capped list enforces (api/bookmarks.mjs BOOKMARK_LIST_SQL seats
+// it at 100). The store lane caps at the same mirror and evicts from the
+// OLDEST end, matching the read's newest-first page.
+const UI_BOOKMARKS_LIST_MAX = 100;
+
 export async function loadBookmarks() {
   const payload = await api("/api/bookmarks");
   store.set({ [BOOKMARKS_LANE]: Array.isArray(payload?.bookmarks) ? payload.bookmarks : [] });
@@ -53,8 +59,21 @@ export async function loadBookmarks() {
 export async function saveBookmark(messageId) {
   const result = await api(`/api/messages/${Number(messageId)}/bookmark`, { method: "POST" });
   if (result?.id) {
-    store.set({ [BOOKMARKS_LANE]: [...store.get(BOOKMARKS_LANE) || [],
-      { id: Number(result.id), messageId: Number(messageId), savedAt: Number(result.savedAt) }] });
+    // The fresh pointer PREPENDS — the capped read's own newest-first parity
+    // (the statement's ORDER BY saved_at DESC, id DESC): an appended tail
+    // painted the fresh row at the bottom until the next load. The lane
+    // caps at the list mirror, evicting the OLDEST end — an append on a
+    // truncated lane pushed the painted count past the cap and made the
+    // truncated line lie. The truncated flag stays as the last load said.
+    const freshRow = {
+      id: Number(result.id),
+      messageId: Number(messageId),
+      savedAt: Number(result.savedAt),
+    };
+    store.set({
+      [BOOKMARKS_LANE]: [freshRow, ...(store.get(BOOKMARKS_LANE) || [])]
+        .slice(0, UI_BOOKMARKS_LIST_MAX),
+    });
   }
   return result;
 }

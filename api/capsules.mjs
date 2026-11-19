@@ -40,6 +40,7 @@ import {
   GC_CAPSULE_MAX_AHEAD_SECONDS,
   GC_CAPSULE_MIN_AHEAD_SECONDS,
   GC_CAPSULES_MAX_OPEN_PER_MEMBER,
+  GC_CAPSULES_MINE_LIST_MAX,
 } from "../constants.mjs";
 import { channelForUser, enforceChannelBits } from "./messages.mjs";
 
@@ -49,9 +50,23 @@ const MEMBERSHIP_READ_SQL =
 // The member's OWN list: the author seat rides INSIDE the read (no
 // cross-member row is reachable by construction), and one indexed WHERE
 // answers the whole page. No body column — the surprise stays sealed here.
+// The read CAPS at the constant: revealed rows are undeletable by law and
+// accumulate forever, and the open-envelope cap covers only reveal_at >
+// now rows — past it this page would be unbounded on the wire. The order
+// is UNCHANGED (reveal_at ASC); only the LIMIT seat is additive.
 const CAPSULES_MINE_SQL =
   "SELECT id, channel_id, reveal_at FROM gc_time_capsules " +
-    "WHERE author_id = ? AND server_id = ? ORDER BY reveal_at ASC";
+    "WHERE author_id = ? AND server_id = ? ORDER BY reveal_at ASC LIMIT " + GC_CAPSULES_MINE_LIST_MAX;
+
+// The mine page's "more" probe: the bookmarks idiom (BOOKMARKS_LIST_PROBE_SQL
+// at api/bookmarks.mjs) — the D1-cheapest over-extension signal, one indexed
+// one-row read bounded by OFFSET + 1 entries past the cap. A COUNT behind
+// the same WHERE would scan the whole author index span (unbounded in N).
+// The probe adds a boolean seat to the answer; the capped statement's shape
+// stays untouched.
+const CAPSULES_MINE_PROBE_SQL =
+  "SELECT 1 AS one FROM gc_time_capsules WHERE author_id = ? AND server_id = ? " +
+    "ORDER BY reveal_at ASC LIMIT 1 OFFSET " + GC_CAPSULES_MINE_LIST_MAX;
 
 // The author read: the delete route's pre-check and the reveal gate's author
 // arm. No body column — the letter stays sealed even from its writer. The
@@ -119,14 +134,16 @@ async function channelTargetGate(env, channelId, serverId, userId) {
 }
 
 function publicCapsule(row, body = undefined) {
-  const capsule = {
-    id: Number(row.id),
-    channelId: row.channel_id === null || row.channel_id === undefined
-      ? null
-      : Number(row.channel_id),
-    revealAt: Number(row.reveal_at),
-    sealed: true,
-  };
+  // The id seat rides ONLY a real row id: a create whose meta carries no
+  // last_row_id (c17 LOW-4) ships NO id at all — Number(null) is 0, and an
+  // id of 0 is a lie, not a seat.
+  const capsule = {};
+  if (row.id !== undefined && row.id !== null) capsule.id = Number(row.id);
+  capsule.channelId = row.channel_id === null || row.channel_id === undefined
+    ? null
+    : Number(row.channel_id);
+  capsule.revealAt = Number(row.reveal_at);
+  capsule.sealed = true;
   if (body !== undefined) {
     capsule.sealed = false;
     capsule.body = body;
@@ -169,11 +186,17 @@ async function handleCapsuleCreateRoute(request, env, serverId, clock) {
   if (Number(result.meta?.changes) !== 1) {
     throw new HttpError(409, "Too many open capsules — let one reveal before you seal another.");
   }
-  return json(publicCapsule({
-    id: result.meta?.last_row_id ?? null,
+  // The envelope's id seat rides ONLY a real integer last_row_id (c17
+  // LOW-4): Number(null) is 0, so the old ?? null painted id: 0 — a lie.
+  // The seat is additive-safe: no client consumer reads it (the panel
+  // reloads its own lane).
+  const lastRowId = result.meta?.last_row_id;
+  const created = {
     channel_id: channelId,
     reveal_at: revealAt,
-  }), 201);
+  };
+  if (Number.isInteger(lastRowId)) created.id = lastRowId;
+  return json(publicCapsule(created), 201);
 }
 
 async function handleCapsuleMineRoute(request, env, serverId, clock) {
@@ -182,12 +205,18 @@ async function handleCapsuleMineRoute(request, env, serverId, clock) {
   const now = clock();
   const page = (await env.GOOBER_DB.prepare(CAPSULES_MINE_SQL)
     .bind(userId, serverId).all()).results || [];
+  // The additive "more" seat (the bookmarks list idiom): the author's row
+  // past the cap is no longer dropped silently — the probe answers whether
+  // rows exist past the cap.
+  const overCap = await env.GOOBER_DB.prepare(CAPSULES_MINE_PROBE_SQL)
+    .bind(userId, serverId).first();
   // sealed recomputes per row against now — no stored state, no timers.
   return json({
     capsules: page.map((row) => ({
       ...publicCapsule(row),
       sealed: Number(row.reveal_at) > now,
     })),
+    truncated: Boolean(overCap),
   });
 }
 

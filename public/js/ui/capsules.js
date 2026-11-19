@@ -42,10 +42,14 @@ import { t } from "../i18n.js";
 // roster:${serverId}): a flat lane set on one server's visit could be read
 // on another's render — server 1's roster painting under server 2's URL.
 const mineKey = (serverId) => `mineCapsules:${serverId}`;
+// The mine envelope's truncated seat rides its own quiet lane key — keyed
+// PER-SERVER like the pointer lane above (the bookmarksTruncated idiom).
+const mineTruncatedKey = (serverId) => `mineTruncated:${serverId}`;
 
 export async function loadMineCapsules(serverId) {
   const payload = await api(`/api/servers/${serverId}/capsules/mine`);
   store.set({ [mineKey(serverId)]: Array.isArray(payload?.capsules) ? payload.capsules : [] });
+  store.set({ [mineTruncatedKey(serverId)]: payload?.truncated === true });
   return store.get(mineKey(serverId));
 }
 
@@ -183,9 +187,21 @@ function capsuleRows(rows, serverId) {
     return h("p", { class: "empty-state", text: t("gc.capsules.empty") });
   }
   const errorLine = h("p", { class: "form-error", role: "alert", "aria-live": "polite" });
+  // The shown count rides the rows actually painted; the payload's own
+  // truncated flag is the only seat that turns the line on (the
+  // gc.bookmarks.more idiom — presence, never an invented total).
+  const truncated = store.get(mineTruncatedKey(serverId)) === true;
+  const truncatedRow = h("p", { class: "muted count-line", text: t("gc.capsules.more", { shown: rows.length }) });
+  const tail = truncated === true ? [truncatedRow, errorLine] : [errorLine];
   const list = h("div", { class: "capsule-rows" });
   for (const row of rows) {
-    if (row.sealed === true) {
+    // The sealed fact recomputes at PAINT time from revealAt against now —
+    // exactly the backend's own per-row recompute idiom (the mine route's
+    // sealed seat). A lane mirror that crossed its postmark since the load
+    // paints the revealed state; never a session-stale delete door (the
+    // route's 409 stays the raced backstop).
+    const paintSealed = Number(row.revealAt) > Math.floor(Date.now() / 1000);
+    if (paintSealed) {
       // The delete door rides the own PRE-reveal row only — the route's
       // 409 revealed-locked answer is the raced backstop, verbatim.
       list.append(h("div", { class: "capsule-row capsule-row-sealed" },
@@ -249,7 +265,7 @@ function capsuleRows(rows, serverId) {
     });
     list.append(h("div", { class: "capsule-row" }, whenLine, openButton, letterSeat));
   }
-  return h("div", { class: "capsule-list" }, list, errorLine);
+  return h("div", { class: "capsule-list" }, list, ...tail);
 }
 
 // The reveal_at is unix seconds (capsules.mjs writes nowSeconds()): the

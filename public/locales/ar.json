@@ -500,6 +500,7 @@
   "gc.capsules.row.delete": "حذف",
   "gc.capsules.delete.confirmHeading": "أتحذف هذه الرسالة المختومة؟",
   "gc.capsules.stamp": "خُتمت {{when}}",
+  "gc.capsules.more": "الرسائل المختومة {{shown}}",
   "gc.bookmarks.more": "{{shown}} محفوظة إضافية",
   "gc.chat.row.save": "حفظ",
   "gc.chat.row.unsave": "إزالة",

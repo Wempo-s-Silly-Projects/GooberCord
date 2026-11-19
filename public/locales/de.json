@@ -486,6 +486,7 @@
   "gc.capsules.row.delete": "Löschen",
   "gc.capsules.delete.confirmHeading": "Diesen versiegelten Brief löschen?",
   "gc.capsules.stamp": "Poststempel: {{when}}",
+  "gc.capsules.more": "Die {{shown}} versiegelten Briefe",
   "gc.bookmarks.more": "{{shown}} weitere gespeichert",
   "gc.chat.row.save": "Speichern",
   "gc.chat.row.unsave": "Entfernen",
