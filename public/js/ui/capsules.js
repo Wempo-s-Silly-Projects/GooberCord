@@ -48,7 +48,10 @@ const mineTruncatedKey = (serverId) => `mineTruncated:${serverId}`;
 
 export async function loadMineCapsules(serverId) {
   const payload = await api(`/api/servers/${serverId}/capsules/mine`);
-  store.set({ [mineKey(serverId)]: Array.isArray(payload?.capsules) ? payload.capsules : [] });
+  // A malformed (server-broken) answer seats the lane NULL, never [] —
+  // the empty state is the VALID empty schedule's paint alone; a broken
+  // answer paints the failed-load face instead (lane-c18-fix F3).
+  store.set({ [mineKey(serverId)]: Array.isArray(payload?.capsules) ? payload.capsules : null });
   store.set({ [mineTruncatedKey(serverId)]: payload?.truncated === true });
   return store.get(mineKey(serverId));
 }
@@ -99,7 +102,17 @@ export function renderCapsulesPanel(route, mount) {
   mount.append(renderShell(route, h("section", { class: "pane-main task-main" },
     h("div", { class: "pane-body" }, body, panel))));
   const lane = store.get(mineKey(serverId));
-  if (!Array.isArray(lane)) {
+  // A NULL lane is the malformed-load seat: paint the failed-load face
+  // (the errorLine idiom's class), never the empty state, and never a
+  // second load — a broken answer must not loop the wire.
+  if (lane === null) {
+    panel.append(h("p", {
+      class: "form-error", role: "alert", "aria-live": "polite",
+      text: t("gc.capsules.loadFailed"),
+    }));
+    return;
+  }
+  if (lane === undefined) {
     loadMineCapsules(serverId).then(() => router.renderCurrent()).catch((error) => {
       panel.append(h("p", { class: "form-error", text: error.message })); // G-2 verbatim
     });

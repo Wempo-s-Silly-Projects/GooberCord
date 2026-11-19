@@ -556,11 +556,12 @@ export const GC_CAPSULES_MAX_OPEN_PER_MEMBER = 10;
 // at the bookmarks list cap's seat, the same capped-list family beside it
 // below). Revealed rows are undeletable by law and accumulate forever, so
 // the read MUST cap: past the open-envelope cap above (which covers only
-// reveal_at > now) the mine page is unbounded. Direction note (deslop-c17
-// MEDIUM, parked follow-up): the statement's pinned ORDER BY reveal_at ASC
-// means the capped answer is the SOONEST-revealing 100, not a newest-first
-// page — an author past the cap sees the actionable open rows fall to the
-// truncated side until the order law is revisited.
+// reveal_at > now) the mine page is unbounded. Direction law (deslop-c17
+// MEDIUM, revisited by lane-c18-fix): the statements ride
+// "ORDER BY reveal_at DESC", so the capped answer is a NEWEST-first page —
+// the actionable open rows (latest postmarks) paint first, and the oldest
+// revealed rows truncate harmlessly on the far side (pointer rows, no
+// body; the reveal route answers them regardless of list position).
 export const GC_CAPSULES_MINE_LIST_MAX = 100;
 
 // Bookmarks (lane2-lifecycle recode, migration 0053): the private reading

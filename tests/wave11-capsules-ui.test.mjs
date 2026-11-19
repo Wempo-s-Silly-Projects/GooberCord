@@ -112,7 +112,10 @@ test("the capsules panel module exists and wires the four LIVE doors", () => {
 test("the store lane mirrors the GET list — one lane per server, one shape", () => {
   assert.match(CAPSULES_UI, /const mineKey = \(serverId\) => `mineCapsules:\$\{serverId\}`;/,
     "the rosterKey/expressionsKey idiom (members.js:39, expressions.js:50)");
-  assert.match(CAPSULES_UI, /store\.set\(\{ \[mineKey\(serverId\)\]: Array\.isArray\(payload\?\.capsules\) \? payload\.capsules : \[\] \}\);/);
+  // TEST-MOVE (lane-c18-fix): the malformed arm seats the lane NULL, not []
+  // — a server-broken answer paints the failed-load face, never the empty
+  // state (the valid empty array keeps the empty paint).
+  assert.match(CAPSULES_UI, /store\.set\(\{ \[mineKey\(serverId\)\]: Array\.isArray\(payload\?\.capsules\) \? payload\.capsules : null \}\);/);
 });
 
 test("the mine lane keys per-server — server-1 rows never answer server-2's URL", () => {

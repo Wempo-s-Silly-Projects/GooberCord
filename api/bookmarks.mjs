@@ -61,9 +61,13 @@ const BOOKMARK_SAVE_SQL =
     "AND NOT EXISTS (SELECT 1 FROM gc_bookmarks b " +
       "WHERE b.owner_user_id = ? AND b.message_id = ?)";
 
-// The duplicate read after a changes-0 save: the caller's OWN row only.
+// The duplicate read after a changes-0 save: the caller's OWN row only,
+// widened from the 1-seat stub to the id + saved_at columns (lane-c18-fix)
+// — the duplicate envelope answers the SAME first-buy shape a fresh save
+// did, so the client's row toggle finds its saved truth and the unsave
+// door exists on a double-save too.
 const BOOKMARK_DUPLICATE_READ_SQL =
-  "SELECT 1 FROM gc_bookmarks b WHERE b.owner_user_id = ? AND b.message_id = ? LIMIT 1";
+  "SELECT id, saved_at FROM gc_bookmarks b WHERE b.owner_user_id = ? AND b.message_id = ? LIMIT 1";
 
 // The private read: ONLY the caller's own pointers, newest save first, cut
 // at the named cap. No owner column in the payload (the caller IS the
@@ -118,7 +122,18 @@ async function handleBookmarkSaveRoute(request, env, messageId) {
 
   const own = (await env.GOOBER_DB.prepare(BOOKMARK_DUPLICATE_READ_SQL)
     .bind(userId, messageId).all()).results || [];
-  if (own.length >= 1) return json({ saved: true, duplicate: true });
+  // The duplicate answers the fresh-save shape's fields too (the first-buy
+  // shape, lane-c18-fix): id + savedAt ride ADDITIVE seats — the envelope
+  // gains them, the fresh arm is byte-unchanged, and no existing consumer
+  // read them absent before.
+  if (own.length >= 1) {
+    return json({
+      saved: true,
+      duplicate: true,
+      id: Number(own[0].id),
+      savedAt: Number(own[0].saved_at),
+    });
+  }
   throw new HttpError(404, "Message not found.");
 }
 

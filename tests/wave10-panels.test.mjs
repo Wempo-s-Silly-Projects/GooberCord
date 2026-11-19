@@ -120,7 +120,10 @@ test("the store lane mirrors the GET list — one shape, no client recount", () 
   // ORDER BY saved_at DESC) and caps the lane at the UIBOOKMARKS_LIST_MAX
   // mirror — the old append-tail shape painted the fresh row at the END and
   // could push a truncated lane past the cap, so this pin followed the fix.
-  assert.match(BOOKMARKS_UI, /store\.set\(\{\n\s*\[BOOKMARKS_LANE\]: \[freshRow, \.\.\.\(store\.get\(BOOKMARKS_LANE\) \|\| \[\]\)\]/);
+  // TEST-MOVE (lane-c18-fix): the lane expression lifted to a `lane` const
+  // (the duplicate arm's dedupe rides the same read) — the PREPEND shape
+  // stays, only its spelling moved (the c17 pin above carries the same move).
+  assert.match(BOOKMARKS_UI, /store\.set\(\{\s*\[BOOKMARKS_LANE\]: \[freshRow, \.\.\.lane\]\.slice\(0, UI_BOOKMARKS_LIST_MAX\),?\s*\}\)/);
   assert.match(BOOKMARKS_UI, /store\.set\(\{\s*\[BOOKMARKS_LANE\]: \(store\.get\(BOOKMARKS_LANE\) \|\| \[\]\)\.filter\(/);
 });
 

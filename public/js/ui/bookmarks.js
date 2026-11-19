@@ -47,33 +47,45 @@ const UI_BOOKMARKS_LIST_MAX = 100;
 
 export async function loadBookmarks() {
   const payload = await api("/api/bookmarks");
-  store.set({ [BOOKMARKS_LANE]: Array.isArray(payload?.bookmarks) ? payload.bookmarks : [] });
+  // A malformed (server-broken) answer seats the lane NULL, never [] — the
+  // empty state is the VALID empty list's paint alone; a broken answer
+  // paints the failed-load face instead (lane-c18-fix F3).
+  store.set({ [BOOKMARKS_LANE]: Array.isArray(payload?.bookmarks) ? payload.bookmarks : null });
   store.set({ bookmarksTruncated: payload?.truncated === true });
   return store.get(BOOKMARKS_LANE);
 }
 
-// POST /api/messages/:messageId/bookmark — the save act. The idempotent
-// duplicate answers 200 { saved: true, duplicate: true } (nothing new to
-// mirror); a fresh save answers { saved: true, id, savedAt } and its row
-// lands in the store lane so the row's toggle flips without a re-fetch.
+// POST /api/messages/:messageId/bookmark — the save act. Both save arms
+// carry the pointer now (lane-c18-fix F2): a fresh save answers
+// { saved: true, id, savedAt }, and the idempotent duplicate answers the
+// SAME first-buy shape plus the duplicate seat — { saved: true,
+// duplicate: true, id, savedAt } — so the chat row's toggle finds its
+// saved truth and the unsave door exists on a double-save too. The lane
+// DEDUPES by messageId/id: a second save of an already-held row never
+// double-rows the painted queue.
 export async function saveBookmark(messageId) {
   const result = await api(`/api/messages/${Number(messageId)}/bookmark`, { method: "POST" });
-  if (result?.id) {
-    // The fresh pointer PREPENDS — the capped read's own newest-first parity
+  const bookmarkId = Number(result?.id);
+  if (bookmarkId) {
+    // The pointer PREPENDS — the capped read's own newest-first parity
     // (the statement's ORDER BY saved_at DESC, id DESC): an appended tail
     // painted the fresh row at the bottom until the next load. The lane
     // caps at the list mirror, evicting the OLDEST end — an append on a
     // truncated lane pushed the painted count past the cap and made the
     // truncated line lie. The truncated flag stays as the last load said.
+    // A lane already holding the row (by id or messageId) dedupes — the
+    // duplicate arm's fresh-riding id must never double-row the queue.
     const freshRow = {
-      id: Number(result.id),
+      id: bookmarkId,
       messageId: Number(messageId),
       savedAt: Number(result.savedAt),
     };
-    store.set({
-      [BOOKMARKS_LANE]: [freshRow, ...(store.get(BOOKMARKS_LANE) || [])]
-        .slice(0, UI_BOOKMARKS_LIST_MAX),
-    });
+    const lane = store.get(BOOKMARKS_LANE) || [];
+    if (!lane.some((row) => row.messageId === freshRow.messageId || row.id === freshRow.id)) {
+      store.set({
+        [BOOKMARKS_LANE]: [freshRow, ...lane].slice(0, UI_BOOKMARKS_LIST_MAX),
+      });
+    }
   }
   return result;
 }
@@ -99,7 +111,17 @@ export function renderBookmarksPanel(route, mount) {
   mount.append(renderShell(route, h("section", { class: "pane-main task-main" },
     h("div", { class: "pane-body" }, body, panel))));
   const lane = store.get(BOOKMARKS_LANE);
-  if (!Array.isArray(lane)) {
+  // A NULL lane is the malformed-load seat: paint the failed-load face
+  // (the errorLine idiom's class), never the empty state, and never a
+  // second load — a broken answer must not loop the wire.
+  if (lane === null) {
+    panel.append(h("p", {
+      class: "form-error", role: "alert", "aria-live": "polite",
+      text: t("gc.bookmarks.loadFailed"),
+    }));
+    return;
+  }
+  if (lane === undefined) {
     loadBookmarks().then(() => router.renderCurrent()).catch((error) => {
       panel.append(h("p", { class: "form-error", text: error.message })); // G-2 verbatim
     });

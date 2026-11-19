@@ -53,20 +53,25 @@ const MEMBERSHIP_READ_SQL =
 // The read CAPS at the constant: revealed rows are undeletable by law and
 // accumulate forever, and the open-envelope cap covers only reveal_at >
 // now rows — past it this page would be unbounded on the wire. The order
-// is UNCHANGED (reveal_at ASC); only the LIMIT seat is additive.
+// rides reveal_at DESC (lane-c18-fix, the deslop-c17 prescription): the
+// actionable open rows (future reveal_at) paint FIRST in the capped page —
+// the oldest revealed rows truncate harmlessly on the far side, where each
+// truncated row is a bodyless pointer the reveal route still answers.
+// Zero new binds: the same author + server seats, order seat only.
 const CAPSULES_MINE_SQL =
   "SELECT id, channel_id, reveal_at FROM gc_time_capsules " +
-    "WHERE author_id = ? AND server_id = ? ORDER BY reveal_at ASC LIMIT " + GC_CAPSULES_MINE_LIST_MAX;
+    "WHERE author_id = ? AND server_id = ? ORDER BY reveal_at DESC LIMIT " + GC_CAPSULES_MINE_LIST_MAX;
 
 // The mine page's "more" probe: the bookmarks idiom (BOOKMARKS_LIST_PROBE_SQL
 // at api/bookmarks.mjs) — the D1-cheapest over-extension signal, one indexed
 // one-row read bounded by OFFSET + 1 entries past the cap. A COUNT behind
 // the same WHERE would scan the whole author index span (unbounded in N).
 // The probe adds a boolean seat to the answer; the capped statement's shape
-// stays untouched.
+// stays untouched, and the ORDER BY rides IDENTICAL to the list's (the
+// probe must over-extend the SAME page the read answered).
 const CAPSULES_MINE_PROBE_SQL =
   "SELECT 1 AS one FROM gc_time_capsules WHERE author_id = ? AND server_id = ? " +
-    "ORDER BY reveal_at ASC LIMIT 1 OFFSET " + GC_CAPSULES_MINE_LIST_MAX;
+    "ORDER BY reveal_at DESC LIMIT 1 OFFSET " + GC_CAPSULES_MINE_LIST_MAX;
 
 // The author read: the delete route's pre-check and the reveal gate's author
 // arm. No body column — the letter stays sealed even from its writer. The

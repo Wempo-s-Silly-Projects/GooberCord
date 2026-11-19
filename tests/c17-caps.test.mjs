@@ -145,12 +145,14 @@ test("c17 mine cap stands in constants.mjs at 100 beside the bookmarks cap", asy
 });
 
 test("c17 mine SQL keeps its reveal_at ordering and gains the capped shape + probe", () => {
-  // The order stays byte-identical (reveal_at ASC); only the LIMIT seat and
-  // the one-row over-extension probe (the BOOKMARKS_LIST_PROBE_SQL idiom at
-  // api/bookmarks.mjs) are additive.
-  assert.match(CAPSULES_API, /ORDER BY reveal_at ASC LIMIT "\s*\+\s*GC_CAPSULES_MINE_LIST_MAX;/,
+  // TEST-MOVE (lane-c18-fix): the order seat moved ASC -> DESC
+  // (the deslop-c17 prescription — the actionable open rows paint first in
+  // the capped page); the pin's SHAPE rides unchanged, only the direction
+  // seat re-seats, and the one-row over-extension probe keeps its idiom (the
+  // BOOKMARKS_LIST_PROBE_SQL shape at api/bookmarks.mjs).
+  assert.match(CAPSULES_API, /ORDER BY reveal_at DESC LIMIT "\s*\+\s*GC_CAPSULES_MINE_LIST_MAX;/,
     "the mine statement caps at the named constant");
-  assert.match(CAPSULES_API, /ORDER BY reveal_at ASC LIMIT 1 OFFSET "\s*\+\s*GC_CAPSULES_MINE_LIST_MAX;/,
+  assert.match(CAPSULES_API, /ORDER BY reveal_at DESC LIMIT 1 OFFSET "\s*\+\s*GC_CAPSULES_MINE_LIST_MAX;/,
     "the mine probe rides the one-row over-extension idiom (LIMIT 1 OFFSET cap)");
   const probeBoundShape = CAPSULES_API.match(/CAPSULES_MINE_PROBE_SQL/);
   assert.ok(probeBoundShape, "the probe statement exists");
@@ -239,8 +241,11 @@ test("c17 the bookmark save prepends the fresh row first and caps at the list mi
   assert.match(BOOKMARKS_UI, /G-4 mirror: GC_BOOKMARKS_LIST_MAX \(constants\.mjs\)/,
     "the mirror carries its provenance comment seat");
   assert.match(BOOKMARKS_UI, /UI_BOOKMARKS_LIST_MAX = 100;/);
+  // TEST-MOVE (lane-c18-fix): the lane expression lifted to a `lane` const
+  // (the duplicate arm's dedupe rides the same read) — the PREPEND+capped
+  // slice shape stays, only its spelling moved.
   assert.match(BOOKMARKS_UI,
-    /\[freshRow, \.\.\.\(store\.get\(BOOKMARKS_LANE\) \|\| \[\]\)\]\s*\.slice\(0, UI_BOOKMARKS_LIST_MAX\)/,
+    /\[freshRow, \.\.\.lane\]\s*\.slice\(0, UI_BOOKMARKS_LIST_MAX\)/,
     "the fresh pointer paints FIRST (the capped read's newest-first parity) and the lane never grows past the mirror");
   assert.match(BOOKMARKS_UI, /\[freshRow, \.\.\./,
     "no appended tail: the fresh row is not pushed to the END of the lane");

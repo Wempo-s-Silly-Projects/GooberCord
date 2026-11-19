@@ -162,7 +162,11 @@ test("bookmark save answers the saved shape with the statement gate", async () =
 test("bookmark save is idempotent through the owner-scoped duplicate read", async () => {
   const { db, response, body } = await run("POST", "/api/messages/101/bookmark", [
     { test: BOOKMARK_SAVE_TEST, run: () => ({ meta: { changes: 0 } }) },
-    { test: BOOKMARK_DUPLICATE_TEST, all: () => ({ results: [{ one: 1 }] }) },
+    // TEST-MOVE (lane-c18-fix): the duplicate read widened from the 1-seat
+    // stub (SELECT 1) to the id + saved_at shape — the stub serves the row
+    // the widened statement itself answers, and the envelope's additive
+    // id/savedAt seats ride the lane's own pins (tests/c18-fix.test.mjs).
+    { test: BOOKMARK_DUPLICATE_TEST, all: () => ({ results: [{ id: 3, saved_at: 123 }] }) },
   ]);
   assert.equal(response.status, 200);
   assert.equal(body.saved, true);
