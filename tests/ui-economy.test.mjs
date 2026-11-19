@@ -110,6 +110,55 @@ test("the ledger cursor appends; a replayed cursor never duplicates (ids are the
   assert.deepEqual(ledger.entries.map((entry) => entry.id).sort((a, b) => b - a), [9, 8]);
 });
 
+// The once-per-session failure surface is module state: this test runs BEFORE
+// the other voice-tick case so the flag is fresh here (the other case's stub
+// bodies reject their JSON parse and would consume the warn first).
+test("a rejected tick (network/5xx) surfaces ONE warn per session while the loop stays alive", async () => {
+  store.set({ coins: { balance: 5, voice: { windowSeconds: 0.01 } } });
+  const previousFetch = globalThis.fetch;
+  const previousWarn = console.warn;
+  const warnings = [];
+  console.warn = (...args) => warnings.push(args);
+  // A network failure: the transport records the call, then rejects BEFORE
+  // any response exists.
+  globalThis.fetch = async (path, init = {}) => {
+    calls.push({ path, method: init.method || "GET", body: init.body });
+    throw new TypeError("fetch failed");
+  };
+  try {
+    const stop = economy.startVoiceTicks(7);
+    await new Promise((resolve) => setTimeout(resolve, 80));
+    const rejectedTicks = calls.filter((call) => call.path === "/api/coins/voice/tick").length;
+    assert.ok(rejectedTicks >= 2, "the loop kept ticking through the failures");
+    stop();
+
+    // One quiet warn for the whole session, no DOM churn (the store's coins
+    // lane stays exactly as the pre-failure snapshot left it).
+    assert.equal(warnings.length, 1);
+    assert.ok(String(warnings[0][0]).startsWith("coins tick failed — retrying next tick"));
+    assert.equal(store.get("coins").balance, 5, "a failed tick never touches the store");
+
+    // A granted:false cap/gate case arrives as DATA (HTTP 200), not a catch:
+    // no second warn, no churn.
+    const previousSecondFetch = globalThis.fetch;
+    globalThis.fetch = async (path, init = {}) => {
+      calls.push({ path, method: init.method || "GET", body: init.body });
+      return new Response(JSON.stringify({ balance: 5, granted: false }), { status: 200 });
+    };
+    try {
+      const stopAgain = economy.startVoiceTicks(7);
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      stopAgain();
+    } finally {
+      globalThis.fetch = previousSecondFetch;
+    }
+    assert.equal(warnings.length, 1, "granted:false is silent-in-response, never a catch");
+  } finally {
+    globalThis.fetch = previousFetch;
+    console.warn = previousWarn;
+  }
+});
+
 test("the voice tick rides the snapshot's window, stays silent on granted:false, and stops cleanly", async () => {
   store.set({ coins: { balance: 5, voice: { windowSeconds: 0.01 } } });
   responses = [];
