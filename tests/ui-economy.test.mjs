@@ -206,7 +206,7 @@ test("economy.js holds NO sweep's leftover literals (the seat scan)", () => {
     .replace(/text: "Goober\+"/g, "");
   assert.doesNotMatch(codeOnly, /text: "[A-Z←"'][^"]*"/);
   assert.doesNotMatch(codeOnly, /label: "[A-Z][^"]*"/);
-  assert.doesNotMatch(codeOnly, /description: "[A-Z][^"]*"/);
+  assert.doesNotMatch(codeOnly, /description: "[A-Z0-9][^"]*"/);
 });
 
 test("the footer line repaints when a voice tick lands the coins lane (no route re-render)", async () => {
