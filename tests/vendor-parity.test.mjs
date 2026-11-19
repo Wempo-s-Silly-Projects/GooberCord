@@ -18,10 +18,9 @@
 
 // Vendored banner law: public/js/vendor/ carries the frontload +
 // designer/kit modules with a fixed VENDORED VERBATIM banner above each
-// module's own "// Project Designer — <module>" header. The kit repo was
-// cancelled by owner order 2026-11-18, so the against-the-kit byte-parity
-// pins are RETIRED; what remains here is the banner shape contract on the
-// app-owned vendored copies.
+// module's own "// Project Designer — <module>" header. The against-source
+// byte-parity pins were retired 2026-11-18 by owner order; what remains
+// here is the banner shape contract on the app-owned vendored copies.
 
 import { readFileSync } from "node:fs";
 import path from "node:path";
@@ -31,7 +30,7 @@ import assert from "node:assert/strict";
 const HERE = path.dirname(new URL(import.meta.url).pathname);
 const VENDOR_DIR = path.resolve(HERE, "../public/js/vendor");
 
-// The kit header marker each vendored copy carries below the banner.
+// The designer header marker each vendored copy carries below the banner.
 const KIT_HEADER_MARKER = "// Project Designer — ";
 
 // [vendored path] — the three vendored modules.
@@ -46,9 +45,9 @@ function readVendor(name) {
 }
 
 // The banner itself is a contract: it names the strip marker so the
-// vendoring banner stays a structured header, and never sits BELOW the kit
-// header (where it would masquerade as kit code).
-test("the vendoring_banner sits exactly once, above the kit header", () => {
+// vendoring banner stays a structured header, and never sits BELOW the
+// designer header (where it would masquerade as shipped-module code).
+test("the vendoring_banner sits exactly once, above the designer header", () => {
   for (const vendored of MODULES) {
     const text = readVendor(vendored);
     assert.equal((text.match(/VENDORED VERBATIM/g) || []).length, 1, vendored);

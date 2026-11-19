@@ -29,8 +29,8 @@
 //   (plus the relative constants.mjs import path, which is identical anyway)
 // Everything else must be character-for-character identical.
 //
-// The Kitskey byte-parity pins were retired 2026-11-18 (owner order:
-// project kitskey cancelled); the vendored files are app-owned copies now.
+// The framework byte-parity pins were retired 2026-11-18 (owner order);
+// the vendored files are app-owned copies now, kept as never-touch code.
 
 import { readFileSync } from "node:fs";
 import path from "node:path";
