@@ -80,6 +80,12 @@ const SOUND_NAME_ERROR =
   "Use a " + GC_SOUND_NAME_MIN + "-" + GC_SOUND_NAME_MAX +
   " character name of letters, numbers and underscores.";
 
+// errorName(error): the compact label for best-effort catch logs (the
+// messages.mjs local's shape) — one line, never a swallowed void.
+function errorName(error) {
+  return error && error.name ? error.name : "UnknownError";
+}
+
 function validSoundName(value) {
   if (typeof value !== "string" || !GC_SOUND_NAME_PATTERN.test(value)) {
     throw new HttpError(400, SOUND_NAME_ERROR);
@@ -192,10 +198,27 @@ async function createSoundAttachment(env, uploaderId, fileBytes) {
 const OWN_SOUND_MIME_SQL =
   "SELECT mime FROM gc_attachments WHERE id = ? AND uploader_id = ? LIMIT 1";
 
+// The mint-branch sweep (GO-HAYWIRE cycle-3 FIX 1, media.mjs's rollback
+// shape): ONLY the row + object THIS create just minted — the pre-existing
+// JSON-branch asset is never swept. Best-effort, ride-before-cleanup
+// ordering; every fall-through arm (changes!=1 AND the INSERT catch's
+// UNIQUE 409 rethrow) rides the same helper.
+async function sweepMintedAttachment(env, ctx, attachmentId) {
+  try {
+    await env.GOOBER_DB.prepare(
+      "DELETE FROM gc_attachments WHERE id = ? AND status = 'pending'",
+    ).bind(attachmentId).run();
+  } catch (error) {
+    console.error(errorName(error));
+  }
+  scheduleAttachmentObjectDelete(env, ctx, Number(attachmentId));
+}
+
 // --- routes ----------------------------------------------------------------------
 
 async function handleListSoundsRoute(request, env, serverId) {
   const session = await requireSignedInRead(request, env);
+  await rateLimit(request, env, "read", "soundboard:" + session.user.id);
   await memberGate(env, Number(serverId), Number(session.user.id));
   // The caps rider (W-B0, the emoji/sticker lists' twin): the manage UI's
   // sound counter reads the board's own resolver answer.
@@ -210,13 +233,14 @@ async function handleListSoundsRoute(request, env, serverId) {
   });
 }
 
-async function handleCreateSoundRoute(request, env, serverId) {
+async function handleCreateSoundRoute(request, env, serverId, ctx) {
   const session = await requireUser(request, env);
   await rateLimit(request, env, "write", "soundboard:" + session.user.id);
   const actorId = Number(session.user.id);
   const contentType = (request.headers.get("Content-Type") || "").toLowerCase();
 
   let attachmentId = null;
+  let minted = false;
   let name = null;
   let files = [];
   if (contentType.startsWith("multipart/form-data")) {
@@ -253,7 +277,16 @@ async function handleCreateSoundRoute(request, env, serverId) {
   const cap = (await serverBoostTier(env, Number(serverId))).caps.soundboard;
 
   if (attachmentId === null) {
+    // The intake-before-authority law (GO-HAYWIRE cycle-3 FIX 1): the
+    // member + manage-tier gates answer BEFORE anything is minted — a
+    // non-member or a non-authoritative caller mints NO pending attachment
+    // row and NO R2 object (the per-visitor litter vector). The JSON
+    // branch mints nothing here; its guard stays the INSERT + classifier.
+    await memberGate(env, serverId, actorId);
+    const { authoritative } = await soundAuthority(env, serverId, actorId);
+    if (!authoritative) throw new HttpError(403, "You do not have permission to do that.");
     attachmentId = Number((await createSoundAttachment(env, actorId, files[0])).id);
+    minted = true;
   } else {
     // The JSON branch's own-asset read: the sound's asset must BE audio — a
     // member's own uploaded IMAGE can never ride the board as a sound.
@@ -276,7 +309,7 @@ async function handleCreateSoundRoute(request, env, serverId) {
       "AND NOT EXISTS (SELECT 1 FROM gc_sounds WHERE attachment_id = ?) " +
       "AND NOT EXISTS (SELECT 1 FROM gc_emoji WHERE attachment_id = ?) " +
       "AND NOT EXISTS (SELECT 1 FROM gc_stickers WHERE attachment_id = ?) " +
-      "AND (SELECT COUNT(*) FROM gc_sounds WHERE server_id = ?) < " + cap,
+      "AND (SELECT COUNT(*) FROM gc_sounds WHERE server_id = ?) < ?",
   ).bind(
     Number(serverId), name, attachmentId, actorId, nowSeconds(),
     Number(serverId), actorId,
@@ -284,7 +317,11 @@ async function handleCreateSoundRoute(request, env, serverId) {
     attachmentId, actorId,
     attachmentId, attachmentId, attachmentId,
     Number(serverId),
-  ).run().catch((error) => {
+    cap,
+  ).run().catch(async (error) => {
+    // EVERY INSERT-catch rethrow sweeps the minted row + object FIRST —
+    // the FK-RESTRICT arm (a raw 500 rethrow) is no exception.
+    if (minted) await sweepMintedAttachment(env, ctx, attachmentId);
     if (/UNIQUE|SQLITE_CONSTRAINT/i.test(String(error))) {
       throw new HttpError(409, "That sound name is already taken in this server.");
     }
@@ -292,6 +329,10 @@ async function handleCreateSoundRoute(request, env, serverId) {
   });
 
   if (Number(result?.meta?.changes) !== 1) {
+    // The belt-and-braces sweep: a guarded INSERT that fell through leaves
+    // the row + object THIS create just minted to die — the pre-existing
+    // JSON-branch asset is never swept. Best-effort, ride-before-cleanup.
+    if (minted) await sweepMintedAttachment(env, ctx, attachmentId);
     // Zero changes — classify by the failing arm, in arm order (the
     // expression lane's exact discipline: one read for the caller-own-asset
     // + shared-asset + count questions, the authority read the
@@ -459,7 +500,7 @@ export async function handleSoundboardRoutes(request, env, url, path, method, ct
   if (listMatch) {
     return method === "GET"
       ? handleListSoundsRoute(request, env, Number(listMatch[1]))
-      : handleCreateSoundRoute(request, env, Number(listMatch[1]));
+      : handleCreateSoundRoute(request, env, Number(listMatch[1]), ctx);
   }
 
   const itemMatch = (method === "PATCH" || method === "DELETE")

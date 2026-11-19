@@ -302,7 +302,7 @@ test("the board's read is never capped at the level's current count â€” the lega
   assert.match(select.sql, /ORDER BY name, id$/);
 });
 
-test("the boost levels' slots ride the resolver: 24 at L1, 36 at L2, 48 at L3 â€” the cap literal rides the guarded INSERT", async () => {
+test("the boost levels' slots ride the resolver: 24 at L1, 36 at L2, 48 at L3 â€” the bound cap rides the guarded INSERT", async () => {
   for (const [level, boosts] of [[1, 2], [2, 7], [3, 14]]) {
     const { response, db } = await jsonCreate(soundRoutes({ boosts }), { name: "dropthebass", attachmentId: SOUND_ATTACHMENT_ID });
     assert.equal(response.status, 201, "level " + level);
@@ -312,7 +312,10 @@ test("the boost levels' slots ride the resolver: 24 at L1, 36 at L2, 48 at L3 â€
 
     const insert = db.calls.find((call) => call.call === "run" && call.sql.startsWith("INSERT INTO gc_sounds"));
     assert.ok(insert, "the guarded INSERT ran");
-    assert.match(insert.sql, new RegExp("\\(SELECT COUNT\\(\\*\\) FROM gc_sounds WHERE server_id = \\?\\) < " + GC_SOUNDBOARD_RE[level]));
+    // The GO-HAYWIRE C3 FIX 2 shape: the resolver's cap answer is a bound
+    // placeholder, never a concatenated literal.
+    assert.match(insert.sql, new RegExp("\\(SELECT COUNT\\(\\*\\) FROM gc_sounds WHERE server_id = \\?\\) < \\?$"));
+    assert.equal(insert.bound[insert.bound.length - 1], GC_SOUNDBOARD_RE[level]);
     // The shared-asset arms (W-B0): the sound's asset is standalone, within
     // the 512 KB bytes contract, and unreferenced by any row â€” the delete-
     // while-referenced shape is unschedulable at create.
@@ -321,7 +324,7 @@ test("the boost levels' slots ride the resolver: 24 at L1, 36 at L2, 48 at L3 â€
     assert.match(insert.sql, /NOT EXISTS \(SELECT 1 FROM gc_emoji WHERE attachment_id = \?\)/);
     assert.match(insert.sql, /NOT EXISTS \(SELECT 1 FROM gc_stickers WHERE attachment_id = \?\)/);
     // The 512 KB bytes cap is a SQL literal; the sibling arms bind the id
-    // three more times.
+    // three more times; the cap rides the final bind.
     assert.deepEqual(insert.bound, [
       SERVER_ID, "dropthebass", SOUND_ATTACHMENT_ID, USER_ID, insert.bound[4],
       SERVER_ID, USER_ID,
@@ -329,6 +332,7 @@ test("the boost levels' slots ride the resolver: 24 at L1, 36 at L2, 48 at L3 â€
       SOUND_ATTACHMENT_ID, USER_ID,
       SOUND_ATTACHMENT_ID, SOUND_ATTACHMENT_ID, SOUND_ATTACHMENT_ID,
       SERVER_ID,
+      GC_SOUNDBOARD_RE[level],
     ]);
     assert.equal(insert.bound.length, insert.sql.split("?").length - 1,
       "the guard arms carry one bind per placeholder (the per-bit pair included)");
