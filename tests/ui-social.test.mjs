@@ -20,6 +20,7 @@
 // find-or-create, the hub's quiet-lane structure, and the row-write idiom the
 // hover:none clause keeps visible (the W-R2 rider). No cap arithmetic
 // client-side — the caps live in the server's 400 texts (G-2 verbatim).
+import "./helpers/xhr-shim.mjs"; // lane-xhr wave-21: mounts globalThis.XMLHttpRequest (the transport bridge)
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";

@@ -21,6 +21,7 @@
 // reload strip, never an auto-reload. compareBuild + the strip pin without a
 // browser (main.js's browser boot is guarded so node can import the pure
 // pieces).
+import "./helpers/xhr-shim.mjs"; // lane-xhr wave-21: mounts globalThis.XMLHttpRequest (the transport bridge)
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";

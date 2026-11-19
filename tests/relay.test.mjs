@@ -16,6 +16,7 @@
 // GNU Affero General Public License along with this program.  If not,
 // see <https://www.gnu.org/licenses/>
 
+import "./helpers/xhr-shim.mjs"; // lane-xhr wave-21: mounts globalThis.XMLHttpRequest (the transport bridge)
 import test from "node:test";
 import assert from "node:assert/strict";
 

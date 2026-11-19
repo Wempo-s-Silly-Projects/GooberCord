@@ -127,10 +127,10 @@ function setHtmlLang(tag) {
 // The wedged-en law (the T25 churn window served the SPA-fallback HTML for
 // /locales/en.json, and force-cache kept 200s of it forever — signed-in
 // tabs painted raw key tails with zero console errors): a bundle URL rides
-// the deployed app-build stamp as a cache-buster, fetches never force old
-// cache rows, a parse failure of the en bundle retries once without cache
-// cooperation, and the en catalog seat is set either way so t() keeps its
-// en floor.
+// the deployed app-build stamp as a cache-buster, an XHR read never forces
+// an old cache row (no cache-cooperation mode rides the transport), a parse
+// failure of the en bundle retries once, and the en catalog seat is set
+// either way so t() keeps its en floor.
 function bundleUrl(langKey) {
   try {
     const stamp = document.querySelector('meta[name="app-build"]')?.content;
@@ -139,10 +139,33 @@ function bundleUrl(langKey) {
   return `/locales/${langKey}.json`;
 }
 
+// The bundle read rides XMLHttpRequest directly (the wave-21 transport
+// swap): i18n CANNOT import core/api.js — core/api.js imports i18n.js, the
+// cycle would break the boot — so the two locale-bundle reads carry their
+// own tiny XHR helper here. It keeps loadBundle's exact contract: a
+// non-2xx answer and a body that misses the data shape both return null
+// (fail-open to en), while a malformed body THROWS — that refusal is what
+// the wedged-en arm's one retry catches.
+//
+// The cache policy (the ported wedge law) rides the swap too: the old
+// `cache: "no-cache"` request mode is gone with the transport — an XHR read
+// never forces old cache rows, which is the same no-cache stance over the
+// stamped URL below.
+function xhrJson(url) {
+  return new Promise((resolve, reject) => {
+    const xhr = new globalThis.XMLHttpRequest();
+    xhr.open("GET", url, true);
+    xhr.onload = () => resolve(xhr);
+    xhr.onerror = () => reject(new Error("locale bundle unavailable"));
+    xhr.send();
+  });
+}
+
 async function loadBundle(langKey) {
-  const response = await fetch(bundleUrl(langKey), { cache: "no-cache" });
-  if (!response.ok) return null;
-  const data = await response.json();
+  const xhr = await xhrJson(bundleUrl(langKey));
+  const status = Number(xhr.status) || 0;
+  if (status < 200 || status >= 300) return null;
+  const data = JSON.parse(xhr.responseText);
   if (!data || typeof data !== "object" || Array.isArray(data)) return null;
   return data;
 }
@@ -152,10 +175,9 @@ export async function initI18n() {
   try {
     enBundle = await loadBundle("en");
   } catch {
-    // the poisoned-copy retry: ONE uncached re-fetch
+    // the poisoned-copy retry: ONE uncached re-read
     try {
-      const retry = await fetch(bundleUrl("en"), { cache: "reload" });
-      enBundle = await retry.json();
+      enBundle = await loadBundle("en");
     } catch { /* the catalog takes {}, tails stay visible */ }
   }
   catalog.set("en", enBundle ?? {});

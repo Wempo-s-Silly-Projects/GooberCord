@@ -19,6 +19,7 @@
 // The members lane: the roster contract (routes, store key, staff-field
 // gating, the G-3/G-5 copy) and the member card route. Behavior runs against
 // a stubbed fetch; the DOM-rendered halves pin by source.
+import "./helpers/xhr-shim.mjs"; // lane-xhr wave-21: mounts globalThis.XMLHttpRequest (the transport bridge)
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";

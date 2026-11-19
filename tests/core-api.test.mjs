@@ -19,6 +19,7 @@
 // The one fetch wrapper. Pins: JSON transport, the CSRF header only on
 // mutating methods, 204 -> null, the additive error shape, and the 401
 // signal that emits store's event (main.js's single listener consumes it).
+import "./helpers/xhr-shim.mjs"; // lane-xhr wave-21: mounts globalThis.XMLHttpRequest (the transport bridge)
 import test from "node:test";
 import assert from "node:assert/strict";
 

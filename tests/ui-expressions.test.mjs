@@ -20,6 +20,7 @@
 // the name bounds are PER KIND (the sticker 30 is EXACT), the upload rides
 // the multipart FormData arm, and the manage affordances render only where
 // MANAGE_EMOJI (or the owner) says so — read-only rows otherwise.
+import "./helpers/xhr-shim.mjs"; // lane-xhr wave-21: mounts globalThis.XMLHttpRequest (the transport bridge)
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";

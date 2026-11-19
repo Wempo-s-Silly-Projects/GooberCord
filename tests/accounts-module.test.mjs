@@ -28,6 +28,7 @@
 // credentials → account-ban check → TOTP branch → session mint), with the
 // session-less TOTP challenge of the forum's api/twofa.mjs re-pointed at
 // GooberCord's own HMAC-signed stateless token (no forum rows written).
+import "./helpers/xhr-shim.mjs"; // lane-xhr wave-21: mounts globalThis.XMLHttpRequest (the transport bridge)
 import test from "node:test";
 import assert from "node:assert/strict";
 

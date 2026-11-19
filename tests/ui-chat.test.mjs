@@ -22,6 +22,7 @@
 // forward-only read markers, the composer's laws, and the fail-soft
 // attachment/GIF rendering. Behavior tests run against a stubbed fetch;
 // DOM-rendered halves pin by source.
+import "./helpers/xhr-shim.mjs"; // lane-xhr wave-21: mounts globalThis.XMLHttpRequest (the transport bridge)
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";

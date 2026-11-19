@@ -24,6 +24,7 @@
 // the 400 and no fetch runs at all), the stream pass-through with the
 // image/* pin + the shared cache, and the 502s (upstream fails, or
 // upstream answers with bytes we did not validate as images).
+import "./helpers/xhr-shim.mjs"; // lane-xhr wave-21: mounts globalThis.XMLHttpRequest (the transport bridge)
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";

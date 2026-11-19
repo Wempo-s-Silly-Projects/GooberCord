@@ -21,6 +21,7 @@
 // pins, the alerts feed's quiet empty state, the ban body WITHOUT coercion,
 // prune's dry-run-first flow, the member card's rank-gated mod controls, and
 // the staff attachment queue (reject states the byte deletion).
+import "./helpers/xhr-shim.mjs"; // lane-xhr wave-21: mounts globalThis.XMLHttpRequest (the transport bridge)
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";

@@ -16,11 +16,12 @@
 // GNU Affero General Public License along with this program.  If not,
 // see <https://www.gnu.org/licenses/>
 
-// The one fetch wrapper. Every API call in the new client rides this module —
-// no raw fetch anywhere else — so the session's CSRF header, the JSON error
-// shape, and one auth-expiry signal live in exactly one file.
+// The one API wrapper. Every API call in the new client rides this module —
+// no raw transport anywhere else — so the session's CSRF header, the JSON
+// error shape, and one auth-expiry signal live in exactly one file.
 //
-// Transport contract (matches the backend):
+// Transport contract (matches the backend; the transport is XMLHttpRequest —
+// owner directive, 2026-11-19):
 //   - sends / accepts JSON (or FormData untouched, for uploads); 204 -> null.
 //   - mutating methods carry X-CSRF-Token (once setCsrfToken has the value
 //     /api/me delivered) and, where the caller passes one, Idempotency-Key.
@@ -38,6 +39,9 @@
 //     listener (after boot's own gating settles) that routes to the landing;
 //     listeners before that point (the boot redeem itself) stay silent, which
 //     is what keeps a refused SSO ticket from ping-ponging against Accounts.
+//   - network-level death (the flight never settles) throws the local
+//     requestFailed copy carrying .status = 0 — callers paint that message
+//     verbatim, and the death is never swallowed.
 
 import { emit, set } from "./store.js";
 import { t } from "../i18n.js";
@@ -54,7 +58,52 @@ export const AUTH_EVENT = "auth:unauthorized";
 // message opens with it gets the one silent retry.
 const CSRF_STALE_PREFIX = "Your security token is out of date.";
 
-export const api = async (path, { method = "GET", body, idempotencyKey, signal, internalRetry } = {}) => {
+// The XHR flight: open, headers, send. The promise resolves the settled
+// XMLHttpRequest (onload) or rejects with the requestFailed status-0 death
+// error (onerror / a mid-flight abort — never a swallow). A caller's
+// AbortController, where one is passed, aborts the transport; the abort
+// listener is removed once the flight settles. onUploadProgress /
+// onDownloadProgress are the additive hooks (null defaults), wired through
+// xhr.upload.onprogress / xhr.onprogress for callers that want them.
+const request = (path, method, headers, body, signal, onUploadProgress, onDownloadProgress) =>
+  new Promise((resolve, reject) => {
+    const death = () => {
+      const error = new Error(t("gc.errors.requestFailed", { status: 0 }));
+      error.status = 0;
+      reject(error);
+    };
+    // An already-aborted signal never opens a transport.
+    if (signal?.aborted) {
+      death();
+      return;
+    }
+    const xhr = new globalThis.XMLHttpRequest();
+    xhr.open(method, path, true);
+    for (const [name, value] of Object.entries(headers)) xhr.setRequestHeader(name, value);
+    if (typeof onUploadProgress === "function") {
+      xhr.upload.onprogress = (event) => onUploadProgress({ loaded: event.loaded, total: event.total });
+    }
+    if (typeof onDownloadProgress === "function") {
+      xhr.onprogress = (event) => onDownloadProgress({ loaded: event.loaded, total: event.total });
+    }
+    const onAbort = () => xhr.abort();
+    const settle = (outcome) => {
+      if (signal) signal.removeEventListener("abort", onAbort);
+      outcome === "load"
+        ? resolve(xhr)
+        : death();
+    };
+    xhr.onload = () => settle("load");
+    xhr.onerror = () => settle("error");
+    xhr.onabort = () => settle("abort");
+    if (signal) signal.addEventListener("abort", onAbort, { once: true });
+    xhr.send(body);
+  });
+
+export const api = async (path, {
+  method = "GET", body, idempotencyKey, signal, internalRetry,
+  onUploadProgress = null, onDownloadProgress = null,
+} = {}) => {
   const headers = { Accept: "application/json" };
   const mutating = !["GET", "HEAD", "OPTIONS"].includes(method.toUpperCase());
   if (body !== undefined && !(body instanceof FormData)) {
@@ -64,19 +113,21 @@ export const api = async (path, { method = "GET", body, idempotencyKey, signal, 
   if (mutating && typeof idempotencyKey === "string" && idempotencyKey) {
     headers["Idempotency-Key"] = idempotencyKey;
   }
-  const response = await fetch(path, {
-    method,
-    headers,
-    credentials: "same-origin",
-    signal,
-    body: body === undefined ? undefined :
-      body instanceof FormData ? body : JSON.stringify(body),
-  });
+  const payload = body === undefined ? undefined :
+    body instanceof FormData ? body : JSON.stringify(body);
+  const xhr = await request(
+    path, method, headers, payload, signal, onUploadProgress, onDownloadProgress,
+  );
+  const response = {
+    status: xhr.status,
+    ok: xhr.status >= 200 && xhr.status < 300,
+    headers: { get: (name) => xhr.getResponseHeader(name) },
+  };
   if (response.status === 401) emit(AUTH_EVENT);
   if (response.status === 204) return null;
   let result;
   try {
-    result = await response.json();
+    result = JSON.parse(xhr.responseText);
   } catch {
     const error = new Error(
       response.ok
