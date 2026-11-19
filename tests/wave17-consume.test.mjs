@@ -250,12 +250,21 @@ test("freeze: the frozen paths stay untouched across LANE_BASE..LANE_TIP", () =>
     // environment (a shallow checkout, an exported tree) cannot answer the
     // range — the other source-read pins carry the freeze there. A throw in
     // a FULL checkout IS the defect (a mistyped SHA) and must fail loud.
-    let isShallow;
+    // The probe of the probe (the c25 audit LOW): a rev-parse failure
+    // alone is not "not a git checkout" — a full checkout with a broken
+    // git still rethrows, so a silent skip never rides a broken
+    // environment.
+    let isShallow = null;
+    try {
+      execFileSync("git", ["rev-parse", "HEAD"], { cwd: ROOT, encoding: "utf8" });
+    } catch {
+      return; // git itself unusable (no repo at all — an exported tree)
+    }
     try {
       isShallow = execFileSync("git", ["rev-parse", "--is-shallow-repository"],
         { cwd: ROOT, encoding: "utf8" }).trim() === "true";
     } catch {
-      return; // not a git checkout at all (an exported tree)
+      throw error; // git answers HEAD but refuses the probe — not a swallow
     }
     if (isShallow) return;
     throw error;
@@ -272,12 +281,21 @@ test("freeze: api/coins.mjs is byte-identical across LANE_BASE..LANE_TIP (the wa
     bytes = execFileSync("git", ["diff", LANE_BASE, tip, "--", "api/coins.mjs"],
       { cwd: ROOT, encoding: "utf8" }).trim();
   } catch (error) {
-    let isShallow;
+    // The probe of the probe (the c25 audit LOW): a rev-parse failure
+    // alone is not "not a git checkout" — a full checkout with a broken
+    // git still rethrows, so a silent skip never rides a broken
+    // environment.
+    let isShallow = null;
+    try {
+      execFileSync("git", ["rev-parse", "HEAD"], { cwd: ROOT, encoding: "utf8" });
+    } catch {
+      return; // git itself unusable (no repo at all — an exported tree)
+    }
     try {
       isShallow = execFileSync("git", ["rev-parse", "--is-shallow-repository"],
         { cwd: ROOT, encoding: "utf8" }).trim() === "true";
     } catch {
-      return; // not a git checkout at all (an exported tree)
+      throw error; // git answers HEAD but refuses the probe — not a swallow
     }
     if (isShallow) return;
     throw error;

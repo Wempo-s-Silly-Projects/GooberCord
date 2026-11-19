@@ -1637,3 +1637,9 @@ textarea {
   border-radius: 50%;
   object-fit: cover;
 }
+
+/* The member card's avatar seat (the c25 audit LOW): a grid child above the
+   header needs its own breathing room the rail row's flex gap covers. */
+.task-page .member-avatar {
+  margin: 0 0 0.4rem;
+}

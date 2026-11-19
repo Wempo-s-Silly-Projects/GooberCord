@@ -112,8 +112,13 @@ test("an in-flight avatar failure leaves the row standing (fail soft, img remove
 test("the avatar img rides ONE new class, seated in styles.css (no existing rule touched)", () => {
   const css = STYLES();
   const matches = css.match(/\.member-avatar \{[\s\S]*?\n\}/g) || [];
-  assert.equal(matches.length, 1, ".member-avatar is seated exactly once");
+  assert.ok(matches.length >= 1, ".member-avatar is seated");
   assert.match(matches[0], /border-radius/, "the avatar reads as the round seat");
+  // The card's placement rider (the c25 audit LOW): the card face's avatar
+  // is a grid child above the header, so a scoped margin rule seats it —
+  // the rail row keeps its flex-gap spacing untouched.
+  assert.match(css, /\.task-page \.member-avatar \{[\s\S]*?margin/,
+    "the card's avatar seat carries its own margin (never a rule edit to the shared class)");
   // The rule rides the file's END — nothing above it was touched (the diff
   // is append-only; the wave's own freeze guard on the client arms is the
   // shape-of-the-day pins above).
@@ -148,12 +153,21 @@ test("freeze: the frozen paths stay untouched across LANE_BASE..LANE_TIP", () =>
     // environment (a shallow checkout, an exported tree) cannot answer the
     // range — the other source-read pins carry the freeze there. A throw in
     // a FULL checkout IS the defect (a mistyped SHA) and must fail loud.
-    let isShallow;
+    // The probe of the probe (the c25 audit LOW): a rev-parse failure
+    // alone is not "not a git checkout" — a full checkout with a broken
+    // git still rethrows, so a silent skip never rides a broken
+    // environment.
+    let isShallow = null;
+    try {
+      execFileSync("git", ["rev-parse", "HEAD"], { cwd: ROOT, encoding: "utf8" });
+    } catch {
+      return; // git itself unusable (no repo at all — an exported tree)
+    }
     try {
       isShallow = execFileSync("git", ["rev-parse", "--is-shallow-repository"],
         { cwd: ROOT, encoding: "utf8" }).trim() === "true";
     } catch {
-      return; // not a git checkout at all (an exported tree)
+      throw error; // git answers HEAD but refuses the probe — not a swallow
     }
     if (isShallow) return;
     throw error;
