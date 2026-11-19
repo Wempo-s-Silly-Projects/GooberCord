@@ -33,10 +33,14 @@ import { fileURLToPath } from "node:url";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const stylesheet = path.join(here, "..", "public", "styles.css");
-// The forum repo is the sibling working copy checked out next to this one —
-// the same dependency the vendored-kit parity tests lean on.
+// The forum checkout is referenced at the ABSOLUTE sibling path — the same
+// convention tests/contract-parity.test.mjs pins (FORUM_CORE), which the CI
+// tree satisfies with its /Users/itswempo/wempos-forum symlink into the
+// forum-source checkout. A relative dirname-walk stops one level short in
+// the runner (tests/ -> repo -> workspace root), which is what failed the
+// two 2026-11-19 CI runs on 2207501/7339fa6.
 const forumStylesheet = path.join(
-  path.dirname(path.dirname(here)), "wempos-forum", "public", "styles.css",
+  "/Users/itswempo", "wempos-forum", "public", "styles.css",
 );
 
 // firstRuleBlock(css, selector): the bytes of the FIRST line-anchored rule whose
