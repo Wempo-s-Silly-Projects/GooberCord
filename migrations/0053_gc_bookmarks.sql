@@ -35,10 +35,15 @@
 -- server arrives via the message's channel at read), and no auto rows
 -- (defaults law: nothing exists until the member themselves saves). NO FK
 -- anywhere by design: a deleted message leaves an orphan pointer the
--- owner's list read's JOIN-classification naturally drops — no CASCADE arm
--- to reason about, no edit to any other table's write path, and a
--- wrong-owner unsave is indistinguishable from a wrong id (no existence
--- oracle either way).
+-- owner's capped page carries as an UNCLASSIFIABLE pointer row — the
+-- shipped list read (BOOKMARK_LIST_SQL in api/bookmarks.mjs) has NO join,
+-- so nothing classifies or drops the orphan; the owner's list KEEPS it,
+-- unsave stays the manual owner-scoped removal, and the wider
+-- classification/clear-act is parked (T-PARITY-BOOKMARK-ORPHANS). No
+-- CASCADE arm to reason about, no edit to any other table's write path,
+-- and a wrong-owner unsave is indistinguishable from a wrong id (no
+-- existence oracle either way). [header-truth fix 2026-11-19, c19 MED-3 —
+-- the DDL is untouched; migration files are append-only law.]
 CREATE TABLE IF NOT EXISTS gc_bookmarks (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   owner_user_id INTEGER NOT NULL,

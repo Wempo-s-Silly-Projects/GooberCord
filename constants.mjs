@@ -199,6 +199,13 @@ export const GC_CAMPFIRE_LEDGER_WINDOW_SECONDS = 2592000;
 // their UI/assets waves are the frontend's; this table carries the numbers
 // the backend owns: inventory caps, stream quality + fps, audio bitrate, the
 // per-server upload size, and the stage seats.
+//
+// UPLOAD TRUTH (c19 MED-2, 2026-11-19): every uploadBytes here is PAINT-ONLY
+// TODAY — zero enforcement consumers — and L1's 10,485,760 sits BELOW the
+// live free cap MAX_ATTACHMENT_BYTES 20,971,520 (the live upload tiers ride
+// GC_MINI/PLUS_ATTACHMENT_BYTES below, not this field), parity source
+// unpinned. The boost-tier panel's upload face is DROPPED until an
+// enforcement wave lands; these keys stay seated for it to reclaim.
 export const GC_BOOST_LEVELS = Object.freeze([
   Object.freeze({
     level: 1, boosts: 2,

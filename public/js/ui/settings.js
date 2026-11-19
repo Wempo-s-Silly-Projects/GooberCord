@@ -216,7 +216,12 @@ function boostTierPanel(serverId) {
       perks !== null ? h("p", { class: "muted perks-heading", text: t("gc.settings.boostTier.perks.heading") }) : null,
       perks !== null ? h("p", { class: "muted", text: t("gc.settings.boostTier.perks.stream", { height: perks.streamHeight, fps: perks.streamFps }) }) : null,
       perks !== null ? h("p", { class: "muted", text: t("gc.settings.boostTier.perks.audio", { bitrate: perks.audioBitrate }) }) : null,
-      perks !== null ? h("p", { class: "muted", text: t("gc.settings.boostTier.perks.upload", { size: perks.uploadBytes }) }) : null,
+      // The uploads perk line dropped here (c19 MED-2): uploadBytes is
+      // paint-only (zero enforcement consumers) and L1's 10,485,760 sits
+      // BELOW the free MAX_ATTACHMENT_BYTES 20,971,520 cap, so the panel
+      // stopped advertising an unenforced downgrade-reading blessing until
+      // an enforcement wave lands; the locale keys stay seated (the wave
+      // reclaims them).
       perks !== null ? h("p", { class: "muted", text: t("gc.settings.boostTier.perks.stage", { seats: perks.stageSeats }) }) : null,
     ];
     for (const seat of seats) {

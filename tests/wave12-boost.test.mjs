@@ -344,7 +344,11 @@ test("levelPerks paints as-is from the payload and stays silent at level 0 (the 
   assert.match(SETTINGS_UI, /const perks = payload\?\.levelPerks \?\? null;/);
   assert.match(SETTINGS_UI, /t\("gc\.settings\.boostTier\.perks\.stream", \{ height: perks\.streamHeight, fps: perks\.streamFps \}\)/);
   assert.match(SETTINGS_UI, /t\("gc\.settings\.boostTier\.perks\.audio", \{ bitrate: perks\.audioBitrate \}\)/);
-  assert.match(SETTINGS_UI, /t\("gc\.settings\.boostTier\.perks\.upload", \{ size: perks\.uploadBytes \}\)/);
+  // TEST-MOVE (lane-c19-fix, 2026-11-19): the upload perk-line pin moved to
+  // tests/c19-fix.test.mjs inverted — the panel DROPS the uploads seat (c19
+  // MED-2: uploadBytes is paint-only, below the free attachment cap at L1)
+  // while the locale keys stay seated for the enforcement wave.
+  assert.doesNotMatch(SETTINGS_UI, /t\("gc\.settings\.boostTier\.perks\.upload"/);
   assert.match(SETTINGS_UI, /t\("gc\.settings\.boostTier\.perks\.stage", \{ seats: perks\.stageSeats \}\)/);
   assert.doesNotMatch(SETTINGS_UI, /Math\.(?:ceil|min|max|round|floor)\([^)]*perks/i,
     "the resolver's numbers paint unrounded, never recomputed client-side");

@@ -28,9 +28,13 @@
 // shared 404 body (no 403 existence oracle); an unreachable message save
 // answers the shared message-family 404 the same way — both classifications
 // ride the statement gate (changes-0), never a pre-read. A deleted message
-// leaves an orphan pointer (migration 0053 carries no FK by design) whose
-// dead address answers nothing on the read — the save gate cannot match a
-// row that no longer exists, so the pointer keeps nothing alive.
+// leaves an orphan pointer (migration 0053 carries no FK by design); the
+// owner's capped list page carries it as an UNCLASSIFIABLE pointer row — the
+// shipped BOOKMARK_LIST_SQL has NO join, so nothing classifies or drops the
+// orphan, and unsave stays the manual owner-scoped removal (the wider
+// classification/clear-act is parked: T-PARITY-BOOKMARK-ORPHANS). The save
+// gate cannot match a row that no longer exists, so the pointer keeps
+// nothing alive. [header-truth fix 2026-11-19, c19 MED-3 — code untouched.]
 import { requireUser } from "./core/auth.mjs";
 import { nowSeconds } from "./core/crypto.mjs";
 import { HttpError, json, rateLimit } from "./core/http.mjs";
