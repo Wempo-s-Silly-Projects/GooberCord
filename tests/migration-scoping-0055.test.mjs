@@ -76,7 +76,6 @@ function migrationStatements() {
 }
 
 const TABLES = [
-  { name: "gc_servers", hasIndex: "idx_gc_servers_is_public ON gc_servers(is_public)" },
   { name: "gc_invites", hasIndex: "idx_gc_invites_server ON gc_invites(server_id)" },
   { name: "gc_server_bans", hasIndex: null },
   { name: "gc_filter_rules", hasIndex: "idx_gc_filter_rules_server ON gc_filter_rules(server_id, id)" },
@@ -85,30 +84,34 @@ const TABLES = [
   { name: "gc_sounds", hasIndex: null },
 ];
 
-test("the file is exactly 32 statements: the deferral PRAGMA, then the pinned rebuild order", () => {
+test("the file is exactly 30 statements: the owner column dance, then six rebuild pairs", () => {
   const list = migrationStatements();
-  assert.match(list[0], /^PRAGMA defer_foreign_keys = ON$/i,
-    "the deferral rides first, before any rebuild statement");
-  assert.equal(list.length, 32, `32 statements expected, got ${list.length}`);
-  const tail = list.slice(1);
+  assert.equal(list.length, 30, `30 statements expected, got ${list.length}`);
+  // (1) the owner dance: four statements, the parent's name never moves.
   let at = 0;
+  assert.match(list[at++], /^ALTER TABLE gc_servers ADD COLUMN owner_user_id_setnull\b/);
+  assert.match(list[at++], /^UPDATE gc_servers SET owner_user_id_setnull = owner_user_id\b/);
+  assert.match(list[at++], /^ALTER TABLE gc_servers DROP COLUMN owner_user_id\b/);
+  assert.match(list[at++], /^ALTER TABLE gc_servers RENAME COLUMN owner_user_id_setnull TO owner_user_id\b/);
   for (const { name, hasIndex } of TABLES) {
-    assert.match(tail[at++], new RegExp(`^CREATE TABLE "?${name}_rebuild"? \\(`));
-    assert.match(tail[at++], new RegExp(`^INSERT INTO ${name}_rebuild`));
-    assert.match(tail[at++], new RegExp(`^DROP TABLE "?${name}"?`));
-    assert.match(tail[at++], new RegExp(`^ALTER TABLE ${name}_rebuild RENAME TO ${name}\\b`));
+    assert.match(list[at++], new RegExp(`^CREATE TABLE "?${name}_rebuild"? \\(`));
+    assert.match(list[at++], new RegExp(`^INSERT INTO ${name}_rebuild`));
+    assert.match(list[at++], new RegExp(`^DROP TABLE "?${name}"?`));
+    assert.match(list[at++], new RegExp(`^ALTER TABLE ${name}_rebuild RENAME TO ${name}\\b`));
     if (hasIndex) {
       const literal = hasIndex.replace(/([().,])/g, "\\$1");
-      assert.match(tail[at++], new RegExp(`^CREATE INDEX (IF NOT EXISTS )?${literal}`));
+      assert.match(list[at++], new RegExp(`^CREATE INDEX (IF NOT EXISTS )?${literal}`));
     }
   }
-  assert.equal(at, tail.length, "every statement belongs to a rebuild pair");
+  assert.equal(at, list.length, "every statement belongs to the dance or a rebuild pair");
 });
 
 test("the five FK treatments ride exactly the intended clauses", () => {
   const body = stripped(MIGRATION);
-  // (1) the server owner: NULLable + SET NULL (NOT NULL SET NULL is illegal).
-  assert.match(body, /owner_user_id INTEGER NULL REFERENCES users\(id\) ON DELETE SET NULL/);
+  // (1) the server owner: NULLable + SET NULL, via the column dance
+  // (the dancer's carrier column carries the FK; the rename restores the name).
+  assert.match(body, /owner_user_id_setnull INTEGER NULL REFERENCES users\(id\) ON DELETE SET NULL/);
+  assert.match(body, /RENAME COLUMN owner_user_id_setnull TO owner_user_id\b/);
   assert.doesNotMatch(body, /owner_user_id[^\n]*NOT NULL REFERENCES/);
   // (2) the invite author: NOT NULL kept, CASCADE chosen.
   assert.match(body, /created_by INTEGER NOT NULL REFERENCES users\(id\) ON DELETE CASCADE/);
@@ -132,7 +135,6 @@ test("the five FK treatments ride exactly the intended clauses", () => {
 test("each copy lists the identical column set on both sides — no renumbering", () => {
   const list = migrationStatements();
   const columns = {
-    gc_servers: "id, name, owner_user_id, created_at, icon_media_id, is_public, boosts, verification_level, rules_text",
     gc_invites: "code, server_id, created_by, created_at, uses, expires_at, max_uses, revoked_at",
     gc_server_bans: "server_id, user_id, created_by, reason, created_at",
     gc_filter_rules: "id, server_id, name, terms, exempt_role_ids, exempt_channel_ids, actions, is_care, check_names, block_message, timeout_minutes, created_by, created_at, updated_at",
@@ -158,12 +160,6 @@ test("the single delta per table is the FK clause: the rest of the shape matches
       s.startsWith(`CREATE TABLE ${name}_rebuild`) || s.startsWith(`CREATE TABLE "${name}_rebuild`))]),
   );
   const expected = {
-    gc_servers: [
-      "id INTEGER PRIMARY KEY AUTOINCREMENT",
-      "name TEXT NOT NULL CHECK(length(trim(name)) BETWEEN 1 AND 100)",
-      "created_at INTEGER NOT NULL, icon_media_id INTEGER NULL, is_public INTEGER NOT NULL DEFAULT 0, boosts INTEGER NOT NULL DEFAULT 0, verification_level INTEGER NOT NULL DEFAULT 0",
-      "CHECK(verification_level IN (0, 1, 2, 3, 4)), rules_text TEXT NULL",
-    ],
     gc_invites: [
       "code TEXT PRIMARY KEY",
       "server_id INTEGER NOT NULL REFERENCES gc_servers(id) ON DELETE CASCADE",
@@ -222,7 +218,6 @@ test("the single delta per table is the FK clause: the rest of the shape matches
     ],
   };
   const checkCounts = {
-    gc_servers: 2,
     gc_invites: 0,
     gc_server_bans: 1,
     gc_filter_rules: 9,
@@ -242,7 +237,7 @@ test("the single delta per table is the FK clause: the rest of the shape matches
   }
 });
 
-test("the named indexes are recreated verbatim, only after their renames", () => {
+test("the named indexes: the two rebuild indexes recreate after their renames; the server index is untouched", () => {
   const body = stripped(MIGRATION);
   for (const { name, hasIndex } of TABLES) {
     if (!hasIndex) continue;
@@ -253,18 +248,22 @@ test("the named indexes are recreated verbatim, only after their renames", () =>
     assert.ok(own > renameAt, `${name} index is created only on the final table`);
     assert.ok(indexAt > -1);
   }
-  assert.equal((body.match(/CREATE INDEX/g) || []).length, 3,
-    "exactly the three live named indexes are recreated");
+  assert.equal((body.match(/CREATE INDEX/g) || []).length, 2,
+    "exactly the two live named indexes ride the rebuilds");
+  // gc_servers' name never moves, so its named index needs no recreate.
+  assert.doesNotMatch(body, /DROP INDEX/, "no index is dropped");
+  assert.doesNotMatch(body, /idx_gc_servers_is_public/,
+    "the server index survives the column dance untouched");
 });
 
-test("the 0013->0014 hazard stays dead: drops are own-name, the only PRAGMA is the deferral", () => {
+test("the 0013->0014 hazard stays dead: drops are own-name, six rebuilds, no PRAGMA, parent never dropped", () => {
   const body = stripped(MIGRATION);
-  assert.equal((body.match(/DROP TABLE/g) || []).length, 7);
-  assert.equal((body.match(/RENAME TO/g) || []).length, 7);
+  assert.equal((body.match(/DROP TABLE/g) || []).length, 6);
+  assert.equal((body.match(/RENAME TO/g) || []).length, 6);
   assert.doesNotMatch(body, /RENAME TO.*pre/i);
-  const pragmas = [...body.matchAll(/PRAGMA[^\n]*/gi)].map((m) => m[0].trim());
-  assert.equal(pragmas.length, 1, "the one PRAGMA is the deferral, nothing else");
-  assert.match(pragmas[0], /defer_foreign_keys/i);
+  assert.doesNotMatch(body, /\bPRAGMA\b/i, "no PRAGMA rides the file");
+  assert.doesNotMatch(body, /DROP TABLE "?gc_servers"?/,
+    "the populated parent is never dropped — enforcement survives by design");
   for (const { name } of TABLES) {
     assert.match(body, new RegExp(`DROP TABLE "?${name}"?`), `${name} dropped by its own name`);
   }
@@ -377,7 +376,10 @@ function seed() {
 }
 
 function apply(db) {
-  db.exec("PRAGMA foreign_keys = OFF");
+  // The runner is FK-ENFORCING (two remote applies proved it: 7500
+  // immediately, then at COMMIT even with deferral). The file is written
+  // enforcement-clean, so the fidelity lane applies it with FKs ON.
+  db.exec("PRAGMA foreign_keys = ON");
   db.exec(MIGRATION);
 }
 

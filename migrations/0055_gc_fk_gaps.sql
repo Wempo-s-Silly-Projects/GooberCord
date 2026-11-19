@@ -26,46 +26,41 @@
 --   (5) the RESTRICT wall: gc_emoji/gc_stickers/gc_sounds.attachment_id ride
 --       ON DELETE RESTRICT while gc_attachments.uploader_id CASCADEs, so the
 --       uploader's attachment delete dies on their own expression rows.
--- SQLite cannot ALTER a FK clause, so each shape rebuilds (0021/0024/0027
--- discipline): create the NEW table with the one FK-clause delta, copy every
--- row (ids INSERT explicitly, so children's links stay exact and
--- sqlite_sequence follows the highest inserted id), DROP the original BY ITS
--- OWN NAME (a DROP rewrites nothing — the child clauses still name
--- "gc_servers" etc.), then RENAME the copy over that exact name — the
--- children are never rewritten at all — and recreate every index the prod
--- DDL declares (the UNIQUE/PK auto-named indexes re-derive through the
--- rename itself).
+-- SQLite cannot ALTER a FK clause, and the runner is FK-ENFORCING. Two
+-- remote applies proved the rebuild-by-rename dance DEAD on a populated
+-- parent: the first (2026-11-19, ledger top 0054) refused gc_servers' DROP
+-- immediately (7500, SQLITE_CONSTRAINT_FOREIGNKEY) and rolled back
+-- atomically (no *_rebuild leak); the second rode PRAGMA
+-- defer_foreign_keys = ON (accepted on D1 today — 0024's internal-error
+-- finding is stale) and still died at COMMIT: a pure-SQLite probe
+-- (2026-11-19) reproduced the deferred COMMIT
+-- refusal — the rename-restore window leaves children naming a vanished
+-- parent, and deferral cannot rescue a parent that must not exist mid-file.
+-- So gc_servers is rebuilt by the COLUMN dance instead (SQLite 3.35+,
+-- probed enforcement-clean: ADD a NULLable FK column, carry the values with
+-- UPDATE, DROP the NOT NULL column, rename it back). The table NAME never
+-- moves — children resolve by the same name through every statement, no
+-- parent DROP ever executes, and no implicit DELETE fires. The delta: the
+-- owner column re-enters at the TAIL of the column order (same column set,
+-- same checks, NULLable + SET NULL).
 --
--- Shape discipline (pinned by tests/migration-scoping-0055.test.mjs):
--- The runner is FK-ENFORCING — the first remote apply (2026-11-19, ledger
--- top 0054) refused gc_servers' populated DROP with 7500
--- SQLITE_CONSTRAINT_FOREIGNKEY and rolled the whole file back atomically
--- (verified: no *_rebuild table leaked, ledger stayed clean). The audit's
--- shape-compare LOW is honored by the same evidence: the BEFORE/AFTER
--- sqlite_master compare normalizes whitespace/quoting before judging deltas.
--- The rebuild relies on foreign_keys enforcement being OFF, and that PRAGMA
--- is startup-only per connection, so deferral rides instead: the file's
--- FIRST statement is PRAGMA defer_foreign_keys = ON (accepted on remote D1,
--- probed 2026-11-19 — 0024's "defer_foreign_keys internal-errors" finding
--- is stale against today's runner). Deferral moves every would-be immediate
--- FK failure — the populated parent DROP's implicit DELETE, and the
--- children naming a vanished parent — to COMMIT, and by COMMIT the rename
--- has rebuilt gc_servers (and every other table) with all copied rows, so
--- the deferred checks all pass on the restored parent. gc_invites/
--- gc_filter_rules/gc_server_bans/gc_emoji/gc_stickers/gc_sounds are
--- referenced by NO table, so their drops cannot strand a foreign key
--- either way. The FK-on INSERT..SELECT either copies every row or the
--- whole file rolls back atomically.
+-- The six childless tables keep the create/copy/drop/rename dance:
+-- gc_invites/gc_server_bans/gc_filter_rules/gc_emoji/gc_stickers/gc_sounds
+-- are referenced by NO table, so their drops cannot strand a foreign key
+-- (their own FKs point OUTWARD and vanish with their rows; the copies'
+-- INSERT..SELECT references only parents that exist at that point).
 --
 -- The five treatments (byte-truth DDLs captured from the live shared
 -- wempo-forum-data D1, 2026-11-19, via sqlite_master — NOT the 0xxx files;
 -- the 0001/0004/0010/0008/0027-era shapes plus every later column add are
 -- reproduced exactly):
 --   (1) gc_servers.owner_user_id: NOT NULL SET NULL is illegal in SQLite, so
---       the rebuild makes the column NULLable — owner_user_id INTEGER NULL
+--       the column dance makes the column NULLable — INTEGER NULL
 --       REFERENCES users(id) ON DELETE SET NULL (the accepted audit shape;
 --       the app-side invariant stays: routes guard on owner_user_id = ? and
 --       a NULL owner means an ownerless server, never a fabricated one).
+--       The only INSERT path binds the authenticated actor's id — no route
+--       can insert NULL.
 --   (2) gc_invites.created_by: stays NOT NULL and becomes
 --       REFERENCES users(id) ON DELETE CASCADE — deleting the creator
 --       deletes their invites (an invite is not a user asset worth
@@ -99,33 +94,21 @@
 --   AFTER: every table's COUNT(*) MUST EQUAL its BEFORE count (no row may
 --   appear, vanish, or renumber); the sqlite_master shape compare must show
 --   ONLY the intended FK-clause delta per rebuilt table (line-wrap on the
---   touched clause allowed) and the same named index set.
+--   touched clause allowed) and the same named index set. For gc_servers
+--   the allowed shape delta is wider by design: owner_user_id re-enters as
+--   the LAST column, NULLable with ON DELETE SET NULL (the column dance
+--   cannot splice a column mid-table), and idx_gc_servers_is_public is
+--   untouched (its parent table name never moved). Whitespace/quoting is
+--   normalized before judging deltas.
 
--- Deferral is the first statement: every would-be immediate FK failure in
--- the dance below defers to COMMIT, where the rebuilt parents exist again
--- with every copied row.
-PRAGMA defer_foreign_keys = ON;
-
--- gc_servers: the one delta vs the live DDL is the owner FK — NULLable with
--- ON DELETE SET NULL (NOT NULL SET NULL is illegal; the app-side invariant
--- keeps one owner). No comment rides INSIDE the CREATE: comments in a CREATE
--- body become permanent sqlite_master text (0024's gc_roles evidence), and
--- the ritual's shape compare allows only the FK-clause delta.
-CREATE TABLE gc_servers_rebuild (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  name TEXT NOT NULL CHECK(length(trim(name)) BETWEEN 1 AND 100),
-  owner_user_id INTEGER NULL REFERENCES users(id) ON DELETE SET NULL,
-  created_at INTEGER NOT NULL, icon_media_id INTEGER NULL, is_public INTEGER NOT NULL DEFAULT 0, boosts INTEGER NOT NULL DEFAULT 0, verification_level INTEGER NOT NULL DEFAULT 0
-  CHECK(verification_level IN (0, 1, 2, 3, 4)), rules_text TEXT NULL
-);
-INSERT INTO gc_servers_rebuild
-  (id, name, owner_user_id, created_at, icon_media_id, is_public, boosts, verification_level, rules_text)
-SELECT id, name, owner_user_id, created_at, icon_media_id, is_public, boosts, verification_level, rules_text
-FROM gc_servers;
-DROP TABLE gc_servers;
-ALTER TABLE gc_servers_rebuild RENAME TO gc_servers;
--- Dropped with the table; recreated verbatim after the rename.
-CREATE INDEX idx_gc_servers_is_public ON gc_servers(is_public);
+-- gc_servers: the four-statement column dance (probed enforcement-clean).
+-- ADD is legal because the new column's implicit default is NULL; the
+-- UPDATE carries every owner value across; DROP takes the NOT NULL column
+-- and its NO ACTION FK away; RENAME restores the app-facing column name.
+ALTER TABLE gc_servers ADD COLUMN owner_user_id_setnull INTEGER NULL REFERENCES users(id) ON DELETE SET NULL;
+UPDATE gc_servers SET owner_user_id_setnull = owner_user_id;
+ALTER TABLE gc_servers DROP COLUMN owner_user_id;
+ALTER TABLE gc_servers RENAME COLUMN owner_user_id_setnull TO owner_user_id;
 
 -- gc_invites: the one delta vs the live DDL is created_by's
 -- ON DELETE CASCADE (NOT NULL stays — the only INSERT path binds the
