@@ -20,14 +20,13 @@
 // the security-header set, rate limiting, Turnstile verification, bounded
 // body reading, and field validation.
 //
-// Phase-1 Kitskey migration: the error/response/rate-limit vocabulary now
-// LIVES in api/vendor/http.mjs (byte-identical to the framework's
-// experience/http.mjs — pinned by contract-parity; the file is the
-// framework's, not an app-owned copy). This leaf re-exports that surface
-// unchanged so every api module imports exactly the way it did — public
-// signatures and messages never moved — and keeps the app-side pieces: the
-// Turnstile wall (app secret/hostnames), the GooberCord limiter binding map,
-// and GooberCord's ONE intentional header divergence (voice, below).
+// The error/response/rate-limit vocabulary LIVES in api/vendor/http.mjs (the
+// vendored HTTP framework, recoded fleet-owned on 2026-11-18). This leaf
+// re-exports that surface unchanged so every api module imports exactly the
+// way it did — public signatures and messages never moved — and keeps the
+// app-side pieces: the Turnstile wall (app secret/hostnames), the GooberCord
+// limiter binding map, and GooberCord's ONE intentional header divergence
+// (voice, below).
 import { RATE_LIMIT_BINDINGS, TURNSTILE_SITEVERIFY_URL } from "../../constants.mjs";
 import {
   HttpError,
@@ -38,22 +37,21 @@ import {
   securityHeaders as vendorSecurityHeaders,
 } from "../vendor/http.mjs";
 
-// The vendored surface, unchanged; since phase 2, worker.mjs consumes errorReply
-// and dispatch from here (the vendor import is theirs — one classifier, one
-// dispatch chain, no twin). Phase 4: errorReply/dispatch + the static leg
-// (secureResponse rides makeHttp's securityHeaders config above; the
-// conditional-get force-200 trade, unconditional, is the framework verbatim).
+// The vendored surface, unchanged; worker.mjs consumes errorReply and
+// dispatch from here (one classifier, one dispatch chain, no twin). The
+// static leg rides this leaf too: secureResponse applies the app's
+// securityHeaders (makeHttp config below), and unconditional is the
+// conditional-get force-200 trade for documents.
 export { unconditional, isDocumentRequest } from "../vendor/http.mjs";
 export { HttpError, MAX_JSON_BYTES, errorReply };
 
 // GooberCord's one app-side divergence is kept OUT of the vendored file (it
-// must stay byte-identical to the framework source). Voice (phase 2) needs
-// the page to be allowed its OWN microphone; `microphone=()` disabled
-// getUserMedia outright. `microphone=(self)` still denies every cross-origin
-// embed while permitting the app itself. The vendored json() applies the
-// framework's header set internally, so BOTH json exits re-assert the app's
-// policy — the produced header bytes are exactly what this leaf made before
-// the migration.
+// serves the whole worker, not just the app's routes). Voice needs the page
+// to be allowed its OWN microphone; `microphone=()` disables getUserMedia
+// outright. `microphone=(self)` still denies every cross-origin embed while
+// permitting the app itself. The vendored json() applies the vendored header
+// set internally, so BOTH json exits re-assert the app's policy — the
+// produced header bytes are exactly what this leaf made before the seam.
 export function securityHeaders(headers = new Headers()) {
   const result = vendorSecurityHeaders(headers);
   result.set("Permissions-Policy", "camera=(), microphone=(self), geolocation=()");
@@ -67,10 +65,10 @@ export function json(data, status = 200, headers = {}) {
 }
 
 // The config-bound half: GooberCord's limiter map and the shared JSON cap.
-// Phase-4 Kitskey migration: the static leg rides THIS config too — the app's
-// securityHeaders (the divergent microphone=(self) set) is the re-wrap the
-// vendor secureResponse applies to every upstream ASSETS response, exactly
-// where the app's inline secureResponse used to re-assert it.
+// The static leg rides THIS config too — the app's securityHeaders (the
+// divergent microphone=(self) set) is the re-wrap the vendor secureResponse
+// applies to every upstream ASSETS response, exactly where the app's inline
+// secureResponse used to re-assert it.
 const app = makeHttp({
   rateLimitBindings: RATE_LIMIT_BINDINGS,
   maxJsonBytes: MAX_JSON_BYTES,

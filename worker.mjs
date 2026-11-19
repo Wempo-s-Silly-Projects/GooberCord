@@ -51,9 +51,9 @@ import { handleBookmarkRoutes } from "./api/bookmarks.mjs";
 import { handleWelcomeCardRoutes } from "./api/welcome-card.mjs";
 import { ensureFilterWords } from "./api/filterstore.mjs";
 import { HttpError, json, rateLimit, secureResponse, unconditional } from "./api/core/http.mjs";
-// Phase-2 Kitskey migration: the ONE error classifier and the dispatch chain
-// come from the vendored framework (core re-exports both; the byte-pin keeps
-// them identical). worker.mjs stops carrying its second copy of the mapping.
+// The ONE error classifier and the dispatch chain come from the vendored
+// HTTP framework (core re-exports both). worker.mjs carries no second copy
+// of the mapping.
 import { dispatch, errorReply } from "./api/vendor/http.mjs";
 
 export { createSession } from "./api/core/auth.mjs";
@@ -78,12 +78,11 @@ export { requireTurnstile, rateLimit } from "./api/core/http.mjs";
 export { ChatRoom } from "./api/rooms.mjs";
 export { PresenceHub } from "./api/presence.mjs";
 
-// Phase-4 Kitskey migration: the static leg's two workers — secureResponse
-// (the security-header re-wrap; the app's microphone=(self) set rides
-// makeHttp's securityHeaders config in api/core/http.mjs) and unconditional
-// (the conditional-get force-200 trade for documents) — now come from the
-// core leaf, which is the vendored framework verbatim. worker.mjs stops
-// carrying its own copies; stampedAssetResponse (the build stamp) STAYS
+// The static leg's two workers — secureResponse (the security-header
+// re-wrap; the app's microphone=(self) set rides makeHttp's securityHeaders
+// config in api/core/http.mjs) and unconditional (the conditional-get
+// force-200 trade for documents) — come from the core leaf. worker.mjs
+// carries no own copies; stampedAssetResponse (the build stamp) STAYS
 // app-side — the injection differs here by design (the hardened anchored
 // injector is pinned by tests/stale-stamp-comment.test.mjs).
 

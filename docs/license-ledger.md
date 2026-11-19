@@ -45,7 +45,12 @@ lineage is comment-only). Recorded here per the ruling.
 | c1cc727 | Root docs: the THIRD hand-wrap-drifted LICENSE found (same two lines) — rename to COPYING + canonical bytes; README born (the token is the repo's own identity, GooberCord, the same repository's rewrite branch) | COPYING cmp-identical to GC main's committed canonical |
 | cce36fc | 121-file per-file notice pass — the five parity-locked twins take the identical-template notice (substituted-equal to forum's, verified byte-for-byte before the landing); template punctuation CONVERGED to the ruled pair's no-period bytes (a 1-byte template split was caught by the substituted gate going red and green only after the byte landed) | suite exit 0 — the six baseline twin-clone failures driven to zero |
 
-## Framework root (project-kitskey / project-designer)
+## Framework root (project-designer — kitskey name RETIRED 2026-11-18)
+
+Owner order 2026-11-18: "remove all references to kitskey"; the framework
+project was cancelled and its repo deleted. This board entry is kept as a
+historical record with the naming amended; the framework itself no longer
+exists as a dependency (api/vendor recoded fleet-owned 2026-11-18).
 
 | SHA | Step | Verification |
 | --- | --- | --- |

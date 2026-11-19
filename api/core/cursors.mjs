@@ -29,9 +29,8 @@
 // their error messages are route-specific. (GC's routes use bare-id cursors
 // inline today; this leaf is the codecs' home for the day a feed needs them.)
 //
-// Phase-3 Kitskey migration: the codecs now LIVE in api/vendor/db.mjs
-// (experience/db — byte-identical to the framework source, pinned by
-// contract-parity); this leaf is the unchanged re-export seam.
+// The codecs live in api/vendor/db.mjs (the vendored DB framework, recoded
+// fleet-owned on 2026-11-18); this leaf is the unchanged re-export seam.
 //
 // NOTE on the block-gate half of experience/db: GC's own block vocabulary
 // diverged deliberately (gc_blocks carries a `kind` column — the hard

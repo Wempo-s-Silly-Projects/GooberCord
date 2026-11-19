@@ -16,9 +16,9 @@
 // GNU Affero General Public License along with this program.  If not,
 // see <https://www.gnu.org/licenses/>
 
-// Phase-2 Kitskey migration pin: worker.mjs stopped carrying its second copy
-// of the error mapping. The ONE classifier (errorReply) and the ONE dispatch
-// chain (dispatch) come from the vendored framework; this file holds the line
+// Pin: worker.mjs carries no second copy of the error mapping. The ONE
+// classifier (errorReply) and the ONE dispatch chain (dispatch) come from the
+// vendored framework; this file holds the line
 // on the public behavior that must NOT have moved in the swap — the two 404
 // copies, the shared 500 for a non-HttpError, and the console label (GC's
 // twin carried the FORUM's "Forum request failed:" literal since the
@@ -105,7 +105,7 @@ test("a non-HttpError inside the chain takes the shared 500 and never echoes the
   }
 });
 
-// --- phase 4 (Kitskey migration): the static leg rides the vendor ---------------
+// --- pin: the static leg rides the vendor ---------------------------------------
 
 test("worker.mjs stops carrying the static-leg twins — they come from the core leaf now", () => {
   assert.ok(!/function secureResponse/.test(WORKER_SOURCE), "the re-wrap comes from core via makeHttp(config)");

@@ -7,6 +7,14 @@
 // api/*, the parity-law constants, migrations 0001-0027) is NOT touched.
 // Route truth: docs/rewrite/api-contract.md (researcher output) once it
 // lands; until then the committed api/*.mjs handlers are authoritative.
+//
+// 2026-11-18 WITHDRAWN (owner: "project kitskey is cancelled", "just recode
+// all future", "keep the new features", "BACKPORT EVERYTHING"): the
+// revert-and-port replaced the rewrite lane; the KITSKEY FRAMEWORK
+// mandate, the byte-parity pins, and the rewrite-era branch plans in this
+// brief are DEAD LAW. The vendored api/vendor modules were recoded
+// fleet-owned 2026-11-18. This brief is kept as a historical record only —
+// do not execute lanes from it.
 
 == WHAT TRAVELS vs WHAT DIES ==
 Travels: the API shapes (unchanged server), the build-stamp contract in
