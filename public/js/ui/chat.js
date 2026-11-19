@@ -1207,9 +1207,14 @@ function gifRider(well, errorLine) {
     maxlength: String(UI_GIF_QUERY_MAX), "aria-label": t("gc.chat.gif.heading") });
   const grid = h("div", { class: "gif-grid" });
   let position = null;
+  let loadSeq = 0; // the serialization guard: only the newest load paints
   const load = async (reset) => {
+    const seq = ++loadSeq;
     try {
+      if (reset) grid.replaceChildren(
+        h("p", { class: "empty-state", text: t("gc.controls.fetching") }));
       const payload = await searchGifs(seat.value.trim(), { position });
+      if (seq !== loadSeq) return; // a newer search superseded this one — never paint stale
       position = payload.position ?? null;
       if (reset) grid.replaceChildren();
       for (const gif of payload.gifs || []) {
@@ -1233,7 +1238,10 @@ function gifRider(well, errorLine) {
       }
       dialog.retitle?.("GIFs");
     } catch (error) {
-      grid.append(h("p", { class: "form-error", text: error.message })); // 503 "GIF search is not configured yet."
+      if (seq !== loadSeq) return; // a superseded failure never pollutes the newer paint
+      // 503 "GIF search is not configured yet." — the refusal REPLACES the
+      // pending line, never appends under it.
+      grid.replaceChildren(h("p", { class: "form-error", text: error.message }));
     }
   };
   const dialog = openDialog(document, {
@@ -1403,21 +1411,29 @@ export function renderChannelPins(route, mount) {
       h("h2", { class: "page-heading", text: t("gc.chat.pins.heading") })));
   mount.append(renderShell(null, h("section", { class: "pane-main task-main" },
     h("div", { class: "pane-body" }, body))));
+  // The pending lane: the body paints a fetching state while loadPins
+  // resolves (the slow-fetch blank pane was the wave-25 strand row R5);
+  // the receipt and the refusal both repaint the lane, never append under it.
+  const lane = h("div");
+  body.append(lane);
+  lane.replaceChildren(h("p", { class: "empty-state", text: t("gc.controls.fetching") }));
   loadPins(channelId).then((payload) => {
     const me = store.get("user");
     if ((payload.messages || []).length === 0) {
-      body.append(h("p", { class: "empty-state", text: t("gc.chat.pins.empty") }));
+      lane.replaceChildren(h("p", { class: "empty-state", text: t("gc.chat.pins.empty") }));
       return;
     }
     const inventory = store.get(expressionsKey(serverId));
     const membersRoster = store.get(`presence:${channelId}`) || [];
+    const rows = h("div");
     for (const message of payload.messages) {
-      body.append(messageRow(message, null,
+      rows.append(messageRow(message, null,
         { me, inventory, roster: membersRoster, channelId }));
     }
-    body.append(h("p", { class: "muted count-line", text: t("gc.chat.pins.capNote") }));
+    rows.append(h("p", { class: "muted count-line", text: t("gc.chat.pins.capNote") }));
+    lane.replaceChildren(rows);
   }).catch((error) => {
-    body.append(h("p", { class: "form-error", text: error.message }));
+    lane.replaceChildren(h("p", { class: "form-error", text: error.message }));
   });
 }
 

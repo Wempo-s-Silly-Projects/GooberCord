@@ -502,7 +502,7 @@ function homePane() {
   }
   return h("section", { class: "pane-main" },
     h("header", { class: "pane-header" },
-      h("h2", { class: "pane-title", text: "Home" })),
+      h("h2", { class: "pane-title", text: t("gc.shell.home.title") })),
     h("div", { class: "pane-body" },
       h("p", {
         class: "empty-state",
@@ -519,7 +519,7 @@ function mainPane() {
 function membersRail() {
   const rail = h("aside", { class: "rail-members", "aria-label": t("gc.shell.nav.members") },
     h("header", { class: "rail-header" },
-      h("h2", { class: "rail-title", text: "Members" })));
+      h("h2", { class: "rail-title", text: t("gc.shell.nav.members") })));
   const activeServerId = store.get("activeServerId");
   if (activeServerId) {
     // The members wave owns the body; the shell only hands over the node.

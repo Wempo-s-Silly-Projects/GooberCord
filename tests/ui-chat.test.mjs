@@ -300,3 +300,24 @@ test("the row's pin control: call site and bundle agree on which word paints whi
     /pinnedFlag \? t\("gc\.chat\.row\.unpin"\) : t\("gc\.chat\.row\.pin"\)/,
     "pinned → row.unpin, unpinned → row.pin");
 });
+
+// The wave-25 strand rows (T-R25-I18N-FIX): the GIF rider's concurrent loads
+// raced (a slower older response could overwrite the newer grid) and painted
+// nothing pending; the pins page painted nothing while loadPins resolved.
+test("the GIF rider serializes its loads (latest-wins) with a pending line (row R4)", () => {
+  const start = CHAT.indexOf("function gifRider");
+  const end = CHAT.indexOf("// Expression riders:");
+  const block = CHAT.slice(start, end);
+  assert.ok(block, "the gifRider block is present");
+  assert.match(block, /loadSeq/, "the load seat carries a sequence guard");
+  assert.match(block, /seq !== loadSeq/, "a superseded response never paints");
+  assert.match(block, /gc\.controls\.fetching/, "the pending line rides the shared key");
+});
+
+test("the pins page paints the fetching state while loadPins resolves (row R5)", () => {
+  const start = CHAT.indexOf("export function renderChannelPins");
+  const end = CHAT.indexOf("// The server search task page:");
+  const block = CHAT.slice(start, end);
+  assert.ok(block, "the pins-page block is present");
+  assert.match(block, /gc\.controls\.fetching/, "the pending state rides the shared key");
+});

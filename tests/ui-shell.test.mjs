@@ -343,3 +343,20 @@ test("a failed servers list stores NULL (retryable), never the truthy empty arra
   assert.doesNotMatch(block, /store\.set\(\{ servers: \[\] \}\);/,
     "caching [] wedges the guard (empty array is truthy) and the rails never retry");
 });
+
+// The wave-25 no-copy sweep (T-R25-I18N-FIX): the pane-title and rail-title
+// seats painted raw English — the keys already rode every bundle, so the
+// paints now ride them too (R1 + R2 of the audit).
+test("the pane and rail titles ride the bundles (wave-25 no-copy rows R1+R2)", () => {
+  assert.match(SHELL, /class: "pane-title", text: t\("gc\.shell\.home\.title"\)/,
+    "the home pane-title rides its key, never the literal");
+  assert.match(SHELL, /class: "rail-title", text: t\("gc\.shell\.nav\.members"\)/,
+    "the members rail-title rides the nav key, never the literal");
+  const LANGS = ["en", "es", "de", "fr", "pt", "ru", "ar", "ja", "zh"];
+  for (const key of ["gc.shell.home.title", "gc.shell.nav.members"]) {
+    for (const lang of LANGS) {
+      const bundle = JSON.parse(readFileSync(join(HERE, `../public/locales/${lang}.json`), "utf8"));
+      assert.ok(key in bundle, `${key} rides ${lang}.json`);
+    }
+  }
+});
