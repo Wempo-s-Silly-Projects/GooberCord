@@ -31,7 +31,10 @@ import { join, dirname } from "node:path";
 const HERE = dirname(new URL(import.meta.url).pathname);
 const MEMBERS = readFileSync(join(HERE, "../public/js/ui/members.js"), "utf8");
 const SETTINGS = readFileSync(join(HERE, "../public/js/ui/settings.js"), "utf8");
-const SERVERS_API = readFileSync(join(HERE, "../api/servers.mjs"), "utf8");
+// T-R25-SPLIT-SERVERS-5: the frozen leave/transfer handlers moved to the
+// api/server-leave.mjs seam — the frozen-route pins read that module now
+// (servers.mjs no longer defines them).
+const LEAVE_API = readFileSync(join(HERE, "../api/server-leave.mjs"), "utf8");
 const STAGED = ["de", "es", "fr", "pt", "ru", "ja", "zh", "ar"];
 
 const enData = JSON.parse(readFileSync(join(HERE, "../public/locales/en.json"), "utf8"));
@@ -86,8 +89,8 @@ test("the leave write asks ONCE and rides the frozen route verbatim", () => {
   assert.match(MEMBERS, /await api\(`\/api\/servers\/\$\{serverId\}\/leave`, \{\s*method: "POST",?\s*\}\)/,
     "the route rides a plain POST, as the frozen contract spells it");
   // The route itself is the frozen backend's — the client adds no shape.
-  assert.match(SERVERS_API, /async function handleLeaveServerRoute\(/,
-    "the frozen leave handler still stands (this lane never touches api/)");
+  assert.match(LEAVE_API, /async function handleLeaveServerRoute\(/,
+    "the frozen leave handler still stands (the seam move keeps it byte-frozen)");
 });
 
 test("the leave refusal renders the server's body VERBATIM in the error lane", () => {
@@ -140,8 +143,8 @@ test("the transfer write asks ONCE and POSTs the frozen route with { userId }", 
   assert.match(SETTINGS,
     /await api\(`\/api\/servers\/\$\{serverId\}\/transfer-ownership`, \{\s*method: "POST", body: \{ userId \},?\s*\}\)/,
     "the body is the contract's { userId } — never a renamed wire");
-  assert.match(SERVERS_API, /async function handleTransferOwnershipRoute\(/,
-    "the frozen transfer handler still stands (this lane never touches api/)");
+  assert.match(LEAVE_API, /async function handleTransferOwnershipRoute\(/,
+    "the frozen transfer handler still stands (the seam move keeps it byte-frozen)");
 });
 
 test("the { transferred: false } echo renders an honest i18n line, never silence", () => {
