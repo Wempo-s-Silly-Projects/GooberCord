@@ -240,7 +240,9 @@ async function handleInviteJoinRoute(request, env, code) {
 // INSIDE the statement; an outsider without the bit sees a 404, never a 403
 // existence oracle.
 
-const INVITE_LIST_SQL =
+// Exported for tests/guard-binds.test.mjs (the real-SQLite guard gate; no
+// behavior rides the retag).
+export const INVITE_LIST_SQL =
   "SELECT i.code, i.created_by, i.created_at, i.uses, i.max_uses, i.expires_at, " +
     "i.revoked_at, u.username AS created_by_name " +
   "FROM gc_invites i JOIN users u ON u.id = i.created_by " +
@@ -254,7 +256,7 @@ async function handleListInvitesRoute(request, env, serverId) {
   const now = nowSeconds();
 
   const { results } = await env.GOOBER_DB.prepare(INVITE_LIST_SQL)
-    .bind(serverId, userId, serverId, userId).all();
+    .bind(serverId, serverId, userId, serverId, userId).all();
 
   const invites = (results || []).map((row) => {
     const expiresAt = row.expires_at === null || row.expires_at === undefined ? null : Number(row.expires_at);
@@ -280,7 +282,8 @@ async function handleListInvitesRoute(request, env, serverId) {
   return json({ invites });
 }
 
-const INVITE_REVOKE_SQL =
+// Exported for tests/guard-binds.test.mjs (real-SQLite guard gate).
+export const INVITE_REVOKE_SQL =
   "UPDATE gc_invites SET revoked_at = ? WHERE code = ? AND server_id = ? AND " +
     "(" + OWNER_EXISTS_SQL + " OR " + holdsRolesBitsSql(SERVER_PERMISSIONS.MANAGE_INVITES) + ")";
 
@@ -294,7 +297,7 @@ async function handleRevokeInviteRoute(request, env, serverId, code) {
   // caller can manage invites yet the UPDATE matched nothing) is the
   // idempotent ok — the state is exactly what they asked for.
   const revoke = await env.GOOBER_DB.prepare(INVITE_REVOKE_SQL)
-    .bind(now, code, serverId, userId, serverId, userId).run();
+    .bind(now, code, serverId, serverId, userId, serverId, userId).run();
   if (Number(revoke.meta?.changes) === 1) {
     return json({ ok: true });
   }
@@ -309,7 +312,7 @@ async function handleRevokeInviteRoute(request, env, serverId, code) {
   const allowed = await env.GOOBER_DB.prepare(
     "SELECT 1 AS allowed FROM gc_servers s WHERE s.id = ? AND (" +
       OWNER_EXISTS_SQL + " OR " + holdsRolesBitsSql(SERVER_PERMISSIONS.MANAGE_INVITES) + ") LIMIT 1",
-  ).bind(serverId, userId, serverId, userId).first();
+  ).bind(serverId, serverId, userId, serverId, userId).first();
   if (!allowed) {
     throw new HttpError(404, "That invite does not exist.");
   }

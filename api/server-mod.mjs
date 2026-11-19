@@ -675,7 +675,7 @@ async function handlePruneRoute(request, env, serverId) {
     : "NOT EXISTS (SELECT 1 FROM gc_member_roles pm JOIN gc_roles pr ON pr.id = pm.role_id " +
         "WHERE pm.server_id = ? AND pm.user_id = m.user_id AND pr.position >= " +
         TOP_POSITION_SELECT + ")";
-  const positionGuardBinds = isOwner ? [] : [serverId, userId, serverId, userId];
+  const positionGuardBinds = isOwner ? [] : [serverId, serverId, userId];
   const roleFilterSql = roleFilterId !== null ? pruneRoleFilterSql() : "1 = 1";
   const roleFilterBinds = roleFilterId !== null ? [serverId, roleFilterId] : [];
 

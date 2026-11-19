@@ -777,7 +777,9 @@ function overwriteMaskFrom(value, field) {
 // rule, re-asserted inside the statement). The channel rider pins the channel
 // to this server as a text/voice channel; the role rider pins the role to
 // this server.
-function overwriteGuardSql(serverId, userId, channelId, roleId) {
+// Exported for tests/guard-binds.test.mjs (the real-SQLite guard gate; the
+// export is one implementation — no behavior rides the retag).
+export function overwriteGuardSql(serverId, userId, channelId, roleId) {
   const sql =
     "EXISTS (SELECT 1 FROM gc_channels gc WHERE gc.id = ? AND gc.server_id = ? " +
       "AND gc.kind IN ('text','voice'))" +
@@ -794,9 +796,13 @@ function overwriteGuardSql(serverId, userId, channelId, roleId) {
   const params = [
     channelId, serverId,
     ...(roleId !== null ? [roleId, serverId] : []),
-    // the owner arm, then the MANAGE_CHANNELS per-bit EXISTS…
+    // the owner arm's (server, user) pair rides EVERY write (the guard is
+    // owner OR the per-bit EXISTS), then the MANAGE_CHANNELS
+    // per-bit EXISTS's own pair…
+    serverId, userId,
     ...holdsRolesBitsParams(serverId, userId, SERVER_PERMISSIONS.MANAGE_CHANNELS),
-    // …then the MANAGE_ROLES + position arm (role-targeted rows only).
+    // …then the MANAGE_ROLES + position arm (role-targeted rows only): the
+    // MR pair, the role probe's (id, server_id), and the TOP pair.
     ...(roleId !== null
       ? [...holdsRolesBitsParams(serverId, userId, SERVER_PERMISSIONS.MANAGE_ROLES), roleId, serverId, serverId, userId]
       : []),

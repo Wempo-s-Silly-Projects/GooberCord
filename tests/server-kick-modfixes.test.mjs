@@ -239,6 +239,9 @@ test("a kick is ONE batch of four: roles strip, boost strip, member DELETE, reco
   const rolesDelete = batch.statements[0];
   assert.match(rolesDelete.sql, /^DELETE FROM gc_member_roles WHERE server_id = \? AND user_id = \?/);
   assert.ok(STRIP_ARM_TEST(rolesDelete.sql), "the membership-EXISTS + owner arm rides the roles strip");
+  // Guard binds in TEXTUAL order — owner pair, per-bit pair, the hierarchy's
+  // actor read, its target read — 8 binds (tests/guard-binds.test.mjs pins
+  // the arithmetic; the stale 10-bind shape carried a duplicate actor pair).
   assert.match(rolesDelete.sql, /gc_member_roles gbm4 JOIN gc_roles gbr4/);
   assert.match(rolesDelete.sql, /\(gbr4\.permissions & 4\) <> 0/);
   assert.match(
@@ -248,7 +251,7 @@ test("a kick is ONE batch of four: roles strip, boost strip, member DELETE, reco
   assert.deepEqual(
     rolesDelete.bound,
     [SERVER_ID, TARGET_ID, SERVER_ID, TARGET_ID,
-      SERVER_ID, USER_ID, SERVER_ID, USER_ID, SERVER_ID, USER_ID,
+      SERVER_ID, USER_ID, SERVER_ID, USER_ID,
       SERVER_ID, USER_ID, SERVER_ID, TARGET_ID],
   );
 
@@ -261,7 +264,7 @@ test("a kick is ONE batch of four: roles strip, boost strip, member DELETE, reco
   assert.deepEqual(
     boostDelete.bound,
     [SERVER_ID, TARGET_ID, SERVER_ID, TARGET_ID,
-      SERVER_ID, USER_ID, SERVER_ID, USER_ID, SERVER_ID, USER_ID,
+      SERVER_ID, USER_ID, SERVER_ID, USER_ID,
       SERVER_ID, USER_ID, SERVER_ID, TARGET_ID],
   );
 
@@ -275,7 +278,7 @@ test("a kick is ONE batch of four: roles strip, boost strip, member DELETE, reco
   assert.deepEqual(
     memberDelete.bound,
     [SERVER_ID, TARGET_ID, SERVER_ID, USER_ID, SERVER_ID, USER_ID,
-      SERVER_ID, USER_ID, SERVER_ID, USER_ID, SERVER_ID, TARGET_ID],
+      SERVER_ID, USER_ID, SERVER_ID, TARGET_ID],
   );
 
   // Statement 3: the recount rides IN-batch LAST, bound (serverId, serverId).

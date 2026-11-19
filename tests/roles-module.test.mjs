@@ -933,14 +933,17 @@ test("a kick is ONE batch: roles + boost strips, member row, recount — the sam
   assert.match(assignments, /DELETE FROM gc_member_roles WHERE server_id = \? AND user_id = \?/);
   assert.match(assignments, /EXISTS \(SELECT 1 FROM gc_server_members ks WHERE ks\.server_id = \? AND ks\.user_id = \? AND ks\.role <> 'owner'\) AND \(EXISTS/);
   assert.equal(recount.includes("DELETE"), false);
-  // Each guarded statement carries the KICK-membership guard (the per-bit
-  // EXISTS pair) plus the position compares; the strips prepend their own
-  // (serverId, targetId) pair, and the recount binds (serverId, serverId).
+  // Each guarded statement carries the KICK-membership guard in TEXTUAL
+  // order — the owner pair, the per-bit EXISTS pair, the hierarchy's actor
+  // read, the hierarchy's target read — 8 binds. (The stale 10-bind shape
+  // carried a spurious duplicate actor pair; the real-SQLite gate
+  // tests/guard-binds.test.mjs pins the corrected arithmetic.) The strips
+  // prepend their own (serverId, targetId) pair.
   const guardBinds = [
-    3, USER_ID, 3, USER_ID, 3, USER_ID, 3, USER_ID, 3, TARGET_ID,
+    3, USER_ID, 3, USER_ID, 3, USER_ID, 3, TARGET_ID,
   ];
   for (const statement of batch.statements.slice(0, 3)) {
-    assert.deepEqual(statement.bound.slice(-10), guardBinds);
+    assert.deepEqual(statement.bound.slice(-8), guardBinds);
   }
   assert.deepEqual(batch.statements[0].bound.slice(0, 4), [3, TARGET_ID, 3, TARGET_ID]);
   assert.deepEqual(batch.statements[1].bound.slice(0, 4), [3, TARGET_ID, 3, TARGET_ID]);
@@ -1036,10 +1039,13 @@ test("PATCH nick/:user_id is the MANAGE-NICKNAME tool: KICK+MANAGE_ROLES inside 
   assert.match(update.sql, /gc_member_roles gbm2 JOIN gc_roles gbr2/);
   assert.match(update.sql, /\(gbr2\.permissions & 2\) <> 0/);
   assert.match(update.sql, /\(SELECT COALESCE\(MAX\(hr\.position\), -1\)[\s\S]*>[\s\S]\(SELECT COALESCE\(MAX\(hr\.position\), -1\)/);
-  // The per-bit pair binds (server, actor) per bit — no mask pair rides.
+  // The guard binds in TEXTUAL order — owner pair, per-bit pair (KICK +
+  // MANAGE_ROLES), the hierarchy's actor read, the hierarchy's target read
+  // — 8 binds (the stale shape carried a duplicate actor pair; the
+  // real-SQLite gate tests/guard-binds.test.mjs pins the arithmetic).
   assert.deepEqual(update.bound, [
     "Renamed", 3, TARGET_ID,
-    3, USER_ID, 3, USER_ID, 3, USER_ID, 3, USER_ID, 3, USER_ID, 3, TARGET_ID,
+    3, USER_ID, 3, USER_ID, 3, USER_ID, 3, USER_ID, 3, TARGET_ID,
   ]);
 });
 

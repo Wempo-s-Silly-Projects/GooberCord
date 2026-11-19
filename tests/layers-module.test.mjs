@@ -746,14 +746,20 @@ test("a role-targeted overwrite carries the MANAGE_ROLES + position arm inside b
     /OR \(EXISTS \(SELECT 1 FROM gc_member_roles gbm1 JOIN gc_roles gbr1[\s\S]*\(gbr1\.permissions & 1\) <> 0\)\)?/);
   assert.match(insert.sql,
     /OR \(\(EXISTS \(SELECT 1 FROM gc_member_roles gbm2 JOIN gc_roles gbr2[\s\S]*\(gbr2\.permissions & 2\) <> 0\)\) AND \(SELECT position FROM gc_roles WHERE id = \? AND server_id = \?\) < \(SELECT COALESCE\(MAX\(hr\.position\), -1\)/);
-  // Binds after the values: the channel rider, the role rider, the owner arm,
-  // the two per-bit arms, then the position compare and the hierarchy read.
+  // Binds after the values: the channel rider, the role rider, then the
+  // guard in TEXTUAL order — the owner arm's (server, user), the MC bit's
+  // pair, the MR bit's pair, the role probe's (id, server_id), and the
+  // hierarchy read's (server, user). The pre-release bind gate
+  // (tests/guard-binds.test.mjs) proved the guard's 14 binds ride their
+  // 14 placeholders on real SQLite.
   assert.deepEqual(insert.bound, [
     90, 4, SP.SEND, SP.VIEW,
-    // the shared guard
+    // the shared guard: channel rider + role rider + owner + MC + MR + probe + TOP
     90, 3, 4, 3,
     3, USER_ID,
-    3, USER_ID, 4, 3, 3, USER_ID,
+    3, USER_ID,
+    3, USER_ID,
+    4, 3, 3, USER_ID,
   ]);
 });
 

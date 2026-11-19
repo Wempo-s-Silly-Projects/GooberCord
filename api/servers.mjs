@@ -294,8 +294,9 @@ const OWNER_EXISTS_SQL =
 // per-bit EXISTS (one role row may answer each bit independently — EXACT OR,
 // never a SUM's arithmetic carry).
 // Binds (in fragment order): serverId, actorId (the owner row), then
-// serverId, actorId per required bit, then serverId, actorId ×2 (the
-// hierarchy comparison's two top-position reads), then serverId, targetId.
+// serverId, actorId per required bit, then the hierarchy comparison's two
+// top-position reads — actor's (serverId, actorId) then target's (serverId,
+// targetId). Real-SQLite proof: tests/guard-binds.test.mjs.
 // Exported so api/rules.mjs's manual-verify route guards with the SAME
 // fragment (one implementation — the drift guard; the rules gate's verify
 // authority is the KICK_MEMBERS pair this module already uses for kicks,
@@ -308,7 +309,6 @@ export function moderationGuardSql(serverId, actorId, targetId, bits) {
     params: [
       serverId, actorId,
       ...holdsRolesBitsParams(serverId, actorId, bits),
-      serverId, actorId,
       serverId, actorId,
       serverId, targetId,
     ],
