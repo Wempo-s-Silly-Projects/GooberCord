@@ -421,6 +421,7 @@
   "gc.economy.items.costPlus_one": "Goober+ {{count}} Münze",
   "gc.economy.items.equipped": "angelegt",
   "gc.economy.items.equip": "Anlegen",
+  "gc.economy.items.unequip": "Ablegen",
   "gc.economy.items.fxBurstConfetti": "Konfetti-Burst-Paket (5 Anwendungen)",
   "gc.economy.items.frameGold": "Goldrahmen",
   "gc.economy.items.frameNeon": "Neonrahmen",

@@ -42,7 +42,7 @@ const SKU_ITEMS = ["fx_burst_confetti", "frame_gold", "frame_neon", "channel_ban
 const camelItemKey = (item) => item.replace(/_([a-z0-9])/g, (_, c) => c.toUpperCase());
 const NAME_KEYS = SKU_ITEMS.map((item) => "gc.economy.items." + camelItemKey(item));
 const GRAMMAR_KEYS = ["gc.economy.items.uses", "gc.economy.items.costPlus",
-  "gc.economy.items.equipped", "gc.economy.items.equip"];
+  "gc.economy.items.equipped", "gc.economy.items.equip", "gc.economy.items.unequip"];
 const NEW_KEYS = [...NAME_KEYS, ...GRAMMAR_KEYS];
 
 test("the v1 rows ride the items panel as a KIND shape, named through the i18n lane", () => {
@@ -68,19 +68,29 @@ test("the consumable row answers its remaining uses from the payload's qty", () 
   assert.match(ECONOMY, /item\.kind === "consumable" && item\.owned/);
 });
 
-test("an own-kind owned row toggles its equipped state; one equip control otherwise", () => {
-  assert.match(ECONOMY, /item\.equipped\s*\?\s*h\("span",/,
-    "the equipped row paints the equipped state, no control");
-  assert.match(ECONOMY, /text: t\("gc\.economy\.items\.equipped"\)/);
+test("the equipped own row carries the unequip control beside the equipped span; one equip control otherwise", () => {
+  assert.match(ECONOMY, /item\.equipped\s*\?\s*\[h\("span",/,
+    "the equipped row keeps the equipped span AND gains the unequip control");
+  assert.match(ECONOMY, /unequipButton\(item, errorLine\)\]/,
+    "the unequip control rides the equipped branch as the span's row-mate");
+  assert.match(ECONOMY, /function unequipButton\(/,
+    "the control is the equipped row's own quiet button");
+  assert.match(ECONOMY, /text: t\("gc\.economy\.items\.unequip"\)/,
+    "the unequip control renders through the lane's own key");
+  assert.match(ECONOMY, /await unequipCosmetic\(item\.item\)/,
+    "the unequip control rides the shop row's own item");
   assert.match(ECONOMY, /text: t\("gc\.economy\.items\.equip"\)/);
   assert.match(ECONOMY, /await equipCosmetic\(item\.item\)/,
-    "the control rides the shop row's own item");
+    "the still-equipable rows keep ONE equip control");
 });
 
-test("the equip toggles ride Phase 1's route with the payload echo passing back", () => {
-  assert.match(ECONOMY, /await api\("\/api\/coins\/cosmetics\/equip", \{\s*method: "POST", body: \{ itemKey \},\s*\}\);/);
-  assert.match(ECONOMY, /store\.set\(\{ shop: \{ \.\.\.shop, inventory: result\.inventory \} \}\)/,
-    "the route's echoed inventory lands back in the store's shop shape");
+test("the equip and unequip toggles ride the ONE Phase 1 route with the payload echo passing back", () => {
+  assert.match(ECONOMY, /await api\("\/api\/coins\/cosmetics\/equip", \{\s*method: "POST", body: \{ itemKey \},\s*\}\);/,
+    "the equip arm rides the Phase-1 route verbatim");
+  assert.match(ECONOMY, /method: "POST", body: \{ itemKey, unequip: true \},/,
+    "the unequip arm rides the SAME route as its body flag, never a second wire");
+  assert.match(ECONOMY, /store\.set\(\{\s*shop: \{\s*\.\.\.shop,\s*inventory,\s*items: \(shop\.items \|\| \[\]\)\.map\(/,
+    "the echoed inventory lands back in the store's shop shape (the items weld rides the route's echo)");
 });
 
 test("a purchase keeps the existing POST /api/coins/cosmetics path — no second wire", () => {

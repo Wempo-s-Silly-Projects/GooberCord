@@ -414,6 +414,7 @@
   "gc.economy.items.costPlus": "Goober+ {{count}}个硬币",
   "gc.economy.items.equipped": "已装备",
   "gc.economy.items.equip": "装备",
+  "gc.economy.items.unequip": "卸下",
   "gc.economy.items.fxBurstConfetti": "纸屑突发包（5 次）",
   "gc.economy.items.frameGold": "金色相框",
   "gc.economy.items.frameNeon": "霓虹相框",
