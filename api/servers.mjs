@@ -843,16 +843,25 @@ const LAYERED_CHANNEL_INSERT_SQL =
 // derived INSIDE a batch; the same 0005/0055 stale-rowid lesson that forced
 // the compensated server create, live-verified e0bb49c): last_insert_rowid()
 // never rides a batch statement and a last_row_id can only be read AFTER the
-// batch answers. So the id is pre-read (a rowid-alias table's next id IS
-// max(id) + 1, exactly what a bare INSERT allocates), and the private channel
-// plus its overwrites commits ATOMICALLY: a refused create can never leave
-// overwrite rows behind, nor a public channel that was meant private.
+// batch answers. A changes-0 create never aborts a D1 batch — zero rows is
+// not an error — so BOTH overwrite rows ride a channel-EXISTS no-op arm: on a
+// refused create the pair no-ops in-batch (no FOREIGN KEY constraint failure
+// against the absent id, which would 500 the refusal) and the 403/400
+// classification answers off stmt[0]'s changes verdict. The private channel
+// plus its overwrites still commits atomically: a successful create can never
+// finish without the pair riding the same transaction.
+// Concurrency note: two simultaneous creates can pre-read the same max+1 —
+// the loser's UNIQUE(id) failure rolls the whole batch back clean and the
+// client retries (note-only at this traffic, no retry logic).
 const NEXT_CHANNEL_ID_SQL =
   "SELECT COALESCE(MAX(id), 0) + 1 AS next_channel_id FROM gc_channels";
 const PRIVATE_EVERYONE_DENY_SQL =
-  "INSERT INTO gc_channel_overwrites (channel_id, role_id, allow_mask, deny_mask) VALUES (?, NULL, 0, ?)";
+  "INSERT INTO gc_channel_overwrites (channel_id, role_id, allow_mask, deny_mask) " +
+    "SELECT ?, NULL, 0, ? WHERE EXISTS (SELECT 1 FROM gc_channels WHERE id = ? AND server_id = ?)";
 const PRIVATE_ROLE_ALLOWS_SQL =
-  "INSERT INTO gc_channel_overwrites (channel_id, role_id, allow_mask, deny_mask) SELECT ?, id, ?, 0 FROM gc_roles WHERE server_id = ?";
+  "INSERT INTO gc_channel_overwrites (channel_id, role_id, allow_mask, deny_mask) " +
+    "SELECT ?, id, ?, 0 FROM gc_roles WHERE server_id = ? " +
+    "AND EXISTS (SELECT 1 FROM gc_channels WHERE id = ? AND server_id = ?)";
 
 function slowmodeFrom(value) {
   if (value === undefined || value === null) return 0;
@@ -906,9 +915,10 @@ async function handleCreateChannelRoute(request, env, serverId) {
   }
 
   // ONE batch: the guarded channel row, then — only for a private create —
-  // its overwrite pair, bound the SAME literal id. A refusal in the first
-  // statement rolls the whole batch back: no overwrite rows behind a refused
-  // create (and no public channel that was meant private).
+  // its overwrite pair, bound the SAME literal id and gated on the channel's
+  // EXISTS. A refused create (stmt[0] zero changes) never aborts a D1 batch,
+  // so the pair no-ops itself against the absent id in-batch and the 403/400
+  // taxonomy answers off stmt[0]'s changes verdict — never a 500.
   const createStatements = [
     env.GOOBER_DB.prepare(
       layered ? LAYERED_CHANNEL_INSERT_SQL : CAP_CHANNEL_INSERT_SQL,
@@ -928,9 +938,9 @@ async function handleCreateChannelRoute(request, env, serverId) {
   if (privateChannel) {
     createStatements.push(
       env.GOOBER_DB.prepare(PRIVATE_EVERYONE_DENY_SQL)
-        .bind(channelId, SERVER_PERMISSIONS.VIEW),
+        .bind(channelId, SERVER_PERMISSIONS.VIEW, channelId, serverId),
       env.GOOBER_DB.prepare(PRIVATE_ROLE_ALLOWS_SQL)
-        .bind(channelId, SERVER_PERMISSIONS.VIEW, serverId),
+        .bind(channelId, SERVER_PERMISSIONS.VIEW, serverId, channelId, serverId),
     );
   }
   const results = await env.GOOBER_DB.batch(createStatements);

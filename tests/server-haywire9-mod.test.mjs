@@ -215,7 +215,7 @@ const BAN_DIAG_TEST = (sql) =>
   sql.startsWith("SELECT reason, created_at FROM gc_server_bans");
 const CHANNEL_INSERT_TEST = (sql) => sql.startsWith("INSERT INTO gc_channels (id,");
 const OVERWRITE_DENY_TEST = (sql) =>
-  sql.startsWith("INSERT INTO gc_channel_overwrites (channel_id, role_id, allow_mask, deny_mask) VALUES");
+  sql.startsWith("INSERT INTO gc_channel_overwrites") && sql.includes("SELECT ?, NULL, 0, ? WHERE EXISTS");
 const OVERWRITE_ALLOW_TEST = (sql) =>
   sql.startsWith("INSERT INTO gc_channel_overwrites") && sql.includes("SELECT ?, id, ?, 0 FROM gc_roles");
 const NEXT_CHANNEL_ID_TEST = (sql) => sql.includes("AS next_channel_id");
@@ -565,33 +565,70 @@ test("F4: a private create is ONE batch of three: channel row + @everyone deny-V
   assert.equal(channelInsert.sql.includes("last_insert_rowid"), false);
   assert.match(channelInsert.sql, /role IN \('owner','moderator'\)/);
 
-  // The overwrite pair rides the SAME batch, bound the SAME literal id.
+  // The overwrite pair rides the SAME batch, bound the SAME literal id, each
+  // gated on the channel's EXISTS (a changes-0 create never aborts a D1
+  // batch — zero rows is not an error — so an ungated pair would FK-fail a
+  // 500 out of every refused private create; the EXISTS arm no-ops them
+  // in-batch instead and the stmt[0] verdict classifies).
   const everyone = batch.statements[1];
   assert.match(
     everyone.sql,
-    /^INSERT INTO gc_channel_overwrites \(channel_id, role_id, allow_mask, deny_mask\) VALUES \(\?, NULL, 0, \?\)/,
+    /^INSERT INTO gc_channel_overwrites \(channel_id, role_id, allow_mask, deny_mask\) SELECT \?, NULL, 0, \? WHERE EXISTS \(SELECT 1 FROM gc_channels WHERE id = \? AND server_id = \?\)/,
   );
   assert.equal(everyone.sql.includes("last_insert_rowid"), false);
-  assert.deepEqual(everyone.bound, [90, VIEW]);
+  assert.deepEqual(everyone.bound, [90, VIEW, 90, SERVER_ID]);
   const roles = batch.statements[2];
-  assert.match(roles.sql, /SELECT \?, id, \?, 0 FROM gc_roles WHERE server_id = \?/);
+  assert.match(
+    roles.sql,
+    /^INSERT INTO gc_channel_overwrites \(channel_id, role_id, allow_mask, deny_mask\) SELECT \?, id, \?, 0 FROM gc_roles WHERE server_id = \? AND EXISTS \(SELECT 1 FROM gc_channels WHERE id = \? AND server_id = \?\)/,
+  );
   assert.equal(roles.sql.includes("last_insert_rowid"), false);
-  assert.deepEqual(roles.bound, [90, VIEW, SERVER_ID]);
+  assert.deepEqual(roles.bound, [90, VIEW, SERVER_ID, 90, SERVER_ID]);
 });
 
-test("F4: a refused private create leaves NO overwrite rows — the pair rides the create's own batch", async () => {
-  const { response, db } = await dispatchChannel(
-    { name: "mods-only", kind: "text", private: true },
-    { channelChanges: 0 },
+test("F4: a refused private create leaves NO overwrite rows — the EXISTS arm no-ops the pair in-batch", async () => {
+  // FK-semantics sim: the overwrite statements answer the channel's EXISTS —
+  // a refused create (changes-0 stmt[0]) leaves the channel row absent, so
+  // the pair can only ever move 0 rows (real D1 would otherwise throw
+  // FOREIGN KEY constraint failed at the ungated inserts).
+  const seen = { everyone: null, roles: null };
+  const routes = [
+    { test: NEXT_CHANNEL_ID_TEST, first: async () => ({ next_channel_id: 90 }) },
+    { test: CHANNEL_INSERT_TEST, run: async () => ({ meta: { changes: 0 } }) },
+    {
+      test: OVERWRITE_DENY_TEST,
+      run: async () => {
+        // The channel row is absent — the EXISTS arm refutes.
+        seen.everyone = 0;
+        return { meta: { changes: 0 } };
+      },
+    },
+    {
+      test: OVERWRITE_ALLOW_TEST,
+      run: async () => {
+        seen.roles = 0;
+        return { meta: { changes: 0 } };
+      },
+    },
+    { test: CHANNEL_RESELECT_TEST, first: async () => ({ id: 90, name: "mods-only", kind: "text", position: 3 }) },
+  ];
+  const session = await sessionFixtures();
+  const db = fakeDb([{ test: SESSION_READ_TEST, first: async () => session.row }, ...routes]);
+  const env = envWithRecordingLimiters(db);
+  const response = await dispatchHandler(
+    request("POST", "/api/servers/" + SERVER_ID + "/channels",
+      { name: "mods-only", kind: "text", private: true }, {
+        Cookie: "goober_session=" + session.token,
+        "X-CSRF-Token": session.csrf,
+      }),
+    env,
   );
   assert.equal(response.status, 403);
   assert.deepEqual(await bodyOf(response), { error: "You do not have permission to do that." });
 
-  // ONE batch total: the overwrite rows rode the create's own batch, so a
-  // refused create (a changes-0 first statement) can never mint them — the
-  // whole batch is the create's verdict, not a follow-on.
-  const writes = db.calls.filter((call) => call.call === "run" || call.call === "batch");
-  assert.equal(writes.length, 1);
+  // ONE batch: the overwrite pair rode the create's batch, and the refusal
+  // never minted them.
+  assert.deepEqual(seen, { everyone: 0, roles: 0 });
   const batch = batchOf(db);
   assert.ok(batch, "the overwrite pair rides the create's OWN batch, not a follow-on");
   assert.equal(batch.statements.length, 3);
@@ -600,6 +637,15 @@ test("F4: a refused private create leaves NO overwrite rows — the pair rides t
     true,
     "the create is the batch's first statement",
   );
+  // The pair is gated: BOTH statements carry the channel EXISTS (the 403/400
+  // taxonomy survives off stmt[0]'s changes verdict, never a 500).
+  for (const overwrite of batch.statements.slice(1)) {
+    assert.match(
+      overwrite.sql,
+      /EXISTS \(SELECT 1 FROM gc_channels WHERE id = \? AND server_id = \?\)/,
+      "the overwrite INSERT rides a channel EXISTS no-op arm",
+    );
+  }
   assert.ok(
     db.calls.every((call) => call.call !== "run"),
     "no standalone statement ever ran beside the batch",
