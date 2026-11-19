@@ -13,3 +13,6 @@ coverage/
 *.kate-swp
 .claude/
 .superpowers/
+.team/
+.wrangler/
+.playwright-mcp/
