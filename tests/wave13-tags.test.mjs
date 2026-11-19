@@ -229,7 +229,7 @@ test("the frozen route table keeps its arms (read, never edited)", () => {
 // commit at commit time (the wave-10/11/12 retarget-seat precedent).
 test("diff scope: the lane touches NO backend file, no constants seat, no core wire", () => {
   const LANE_BASE = "a50bd44";
-  const LANE_TIP = "a50bd44"; // LANE_TIP_PLACEHOLDER — the lead retargets at commit time
+  const LANE_TIP = "fd6a52c"; // wave-13 feat tip (retargeted by the lead 2026-11-19 — the wave-9 freeze-pin lesson, fifth instance: the pin fingerprints the lane's own range)
   let touched;
   try {
     touched = execFileSync("git", [
