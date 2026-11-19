@@ -191,10 +191,15 @@ test("the eight staged bundles carry every new key TRANSLATED", () => {
 
 test("the lane's diff touches no api/ file, no constants.mjs — the frozen path list", () => {
   const FROZEN_PATHS = ["api", "api/vendor", "constants.mjs"];
+  // The freeze is the WAVE-9 lane contract, so the fingerprint is the lane's
+  // own committed range (base f22c41f .. the wave-9 tip) — NOT moving HEAD:
+  // later audit cycles own their own api/ surfaces, and a HEAD-anchored pin
+  // would break on every legitimate post-wave-9 api/ fix (c11 did, first
+  // probe: the guard caught its own handback only once committed).
   let touched;
   try {
     touched = execFileSync("git", [
-      "diff", "--name-only", "f22c41f", "HEAD", "--", ...FROZEN_PATHS,
+      "diff", "--name-only", "f22c41f", "5f106e6", "--", ...FROZEN_PATHS,
     ], { cwd: join(HERE, ".."), encoding: "utf8" }).trim();
   } catch {
     // A non-git run (an exported tree) cannot answer — the other source-read
