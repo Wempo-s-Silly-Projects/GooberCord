@@ -49,6 +49,7 @@ import {
   GC_STICKER_NAME_MIN,
   GC_STICKER_NAME_PATTERN,
   GC_EXPRESSION_ID_CEILING,
+  GC_EXPRESSION_TOKENS_MAX,
 } from "../constants.mjs";
 import { SERVER_PERMISSIONS, holdsRolesBitsSql, holdsRolesBitsParams, parseMergedMask, roleMaskColumnSql } from "./permissions.mjs";
 import { plusMemberActive } from "./plus.mjs";
@@ -102,6 +103,10 @@ export function referencedExpressionIds(text) {
 
 // The send-time external-emoji gate (the owner's plus-at-SEND ruling). One
 // read per kind over the referenced ids, then:
+//   - a body over the per-body token cap is REFUSED outright (the cycle-6
+//     FIX 2 answer to the unbounded IN() binds — the gate never builds a
+//     statement over D1's 100-bind law; distinct ids past
+//     GC_EXPRESSION_TOKENS_MAX never resolve, so their message refuses);
 //   - unknown ids are ignored (not expressions — text);
 //   - ids on the channel's own server are free for every member;
 //   - everything else — another server inside a server channel, or ANY
@@ -117,6 +122,13 @@ export async function enforceExpressionTokenAccess(env, senderId, channelServerI
   for (const [ids, table] of [[emojiIds, "gc_emoji"], [stickerIds, "gc_stickers"]]) {
     const unique = [...new Set(ids)];
     if (unique.length === 0) continue;
+    // The per-body cap (cycle-6 FIX 2): a crafted body carrying more unique
+    // ids than the statement's ceiling refuses BEFORE any read — the reads
+    // never exceed GC_EXPRESSION_TOKENS_MAX binds (90) against D1's
+    // 100-bind law. A duplicate-heavy body (one id repeated) stays lawful.
+    if (unique.length > GC_EXPRESSION_TOKENS_MAX) {
+      throw new HttpError(400, "Too many emoji in one message.");
+    }
     const { results } = await env.GOOBER_DB.prepare(
       "SELECT id, server_id FROM " + table + " WHERE id IN (" +
         unique.map(() => "?").join(",") + ")",
@@ -320,14 +332,36 @@ const EXPRESSION_INSERT_SQL = (table) =>
     "AND NOT EXISTS (SELECT 1 FROM gc_stickers WHERE attachment_id = ?) " +
     "AND NOT EXISTS (SELECT 1 FROM gc_sounds WHERE attachment_id = ?)";
 
-async function handleCreateExpressionRoute(request, env, serverId, kind) {
+// The mint-branch sweep (cycle-6 FIX 1, the soundboard c3 mirror — media.mjs's
+// rollback shape): ONLY the row + object THIS create just minted — the
+// pre-existing JSON-branch asset is never swept. Best-effort, ride-before-
+// cleanup ordering; every fall-through arm (changes!=1 AND the INSERT catch's
+// UNIQUE 409 / generic rethrow) rides the same helper.
+function errorName(error) {
+  return error && error.name ? error.name : "UnknownError";
+}
+
+async function sweepMintedAttachment(env, ctx, attachmentId) {
+  try {
+    await env.GOOBER_DB.prepare(
+      "DELETE FROM gc_attachments WHERE id = ? AND status = 'pending'",
+    ).bind(attachmentId).run();
+  } catch (error) {
+    console.error(errorName(error));
+  }
+  scheduleAttachmentObjectDelete(env, ctx, Number(attachmentId));
+}
+
+async function handleCreateExpressionRoute(request, env, serverId, kind, ctx) {
   const session = await requireUser(request, env);
   await rateLimit(request, env, "write", "emoji:" + session.user.id);
   const actorId = Number(session.user.id);
   const contentType = (request.headers.get("Content-Type") || "").toLowerCase();
 
   let attachmentId = null;
+  let minted = false;
   let name = null;
+  let files = [];
   if (contentType.startsWith("multipart/form-data")) {
     await rateLimit(request, env, "upload", "user:" + actorId);
     // The kind's OWN file cap (the parity law's emoji 256 KB / sticker 512 KB
@@ -335,11 +369,12 @@ async function handleCreateExpressionRoute(request, env, serverId, kind) {
     // 413 copy, on the raw part size AND the post-read bytes both (the
     // sanitizer can only shrink, so a length check here is a fail-safe twin
     // of the reader's).
-    const { fields, files } = await readMultipartWithImage(request, {
+    const { fields, files: parsed } = await readMultipartWithImage(request, {
       maxFileBytes: KIND[kind].fileMax,
       maxRequestBytes: KIND[kind].fileMax + 512 * 1024,
       tooLargeCopy: KIND[kind].tooLargeCopy,
     });
+    files = parsed;
     name = validExpressionName(fields.name, kind);
     if (files.length > 1) throw new HttpError(400, "Attach exactly one image.");
     if (files.length === 0) {
@@ -348,8 +383,17 @@ async function handleCreateExpressionRoute(request, env, serverId, kind) {
     if (files[0].length > KIND[kind].fileMax) {
       throw new HttpError(413, KIND[kind].tooLargeCopy);
     }
+    // The intake-before-authority law (GO-HAYWIRE cycle-6 FIX 1, soundboard
+    // c3's mirror): the member + manage-tier gates answer BEFORE anything is
+    // minted — a non-member or a non-authoritative caller mints NO pending
+    // attachment row and NO R2 object (the per-visitor litter vector). The
+    // JSON branch mints nothing here; its guard stays the INSERT + classifier.
+    await memberGate(env, serverId, actorId);
+    const { authoritative } = await expressionAuthority(env, serverId, actorId);
+    if (!authoritative) throw new HttpError(403, "You do not have permission to do that.");
     const created = await createAttachment(env, actorId, files[0]);
     attachmentId = Number(created.id);
+    minted = true;
   } else {
     const body = await readJson(request);
     name = validExpressionName(body.name, kind);
@@ -380,7 +424,11 @@ async function handleCreateExpressionRoute(request, env, serverId, kind) {
     KIND[kind].fileMax,
     attachmentId, attachmentId, attachmentId,
     Number(serverId),
-  ).run().catch((error) => {
+  ).run().catch(async (error) => {
+    // EVERY INSERT-catch rethrow sweeps the minted row + object FIRST (the
+    // soundboard c3 belt) — the UNIQUE 409 arm and the FK-RESTRICT raw-500
+    // rethrow are both no exceptions.
+    if (minted) await sweepMintedAttachment(env, ctx, attachmentId);
     if (/UNIQUE|SQLITE_CONSTRAINT/i.test(String(error))) {
       throw new HttpError(409, "That " + KIND[kind].word + " name is already taken in this server.");
     }
@@ -388,6 +436,11 @@ async function handleCreateExpressionRoute(request, env, serverId, kind) {
   });
 
   if (Number(result?.meta?.changes) !== 1) {
+    // The belt-and-braces sweep (cycle-6 FIX 1): a guarded INSERT that fell
+    // through leaves the row + object THIS create just minted to die — the
+    // pre-existing JSON-branch asset is never swept. Best-effort,
+    // ride-before-cleanup.
+    if (minted) await sweepMintedAttachment(env, ctx, attachmentId);
     // Zero changes — classify by the failing arm, in arm order. ONE read for
     // the cap + the caller-own/shared-asset/size questions, the authority
     // read reuses the channel-delete two-step.
@@ -576,7 +629,7 @@ export async function handleExpressionRoutes(request, env, url, path, method, ct
     if (listMatch) {
       return method === "GET"
         ? handleListExpressionsRoute(request, env, Number(listMatch[1]), kindName)
-        : handleCreateExpressionRoute(request, env, Number(listMatch[1]), kindName);
+        : handleCreateExpressionRoute(request, env, Number(listMatch[1]), kindName, ctx);
     }
 
     const itemMatch = (method === "PATCH" || method === "DELETE")
