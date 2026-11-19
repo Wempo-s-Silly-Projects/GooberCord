@@ -29,37 +29,10 @@
 //   (plus the relative constants.mjs import path, which is identical anyway)
 // Everything else must be character-for-character identical.
 //
-// Kitskey vendor section: the api/ worker half now vendors Project Kitskey
-// itself — api/vendor/ files are byte-pinned to the framework source in the
-// sibling checkout, NOT to the forum twin (phase 1: experience/http; phase 3:
-// experience/db). The auth/passwords/totp/images gates above stay
-// forum-parity-locked; experience/auth migrates in a later phase.
-//
-// The vendored Kitskey files are the framework's, not app-owned copies: each
-// must be byte-identical to its source in the sibling checkout. A drift in
-// EITHER direction fails here — copy a framework change in, or carry an
-// app-side fix upstream to the framework; never edit the vendored file in
-// place.
-const KITSKEY_DIR = "/Users/itswempo/project-designer/experience";
-const VENDORED_FILES = [
-  ["http.mjs", "http.mjs"],
-  ["db.mjs", "db.mjs"],
-];
+// The Kitskey byte-parity pins were retired 2026-11-18 (owner order:
+// project kitskey cancelled); the vendored files are app-owned copies now.
 
-test("every file in api/vendor/ is byte-identical to its Kitskey framework source", () => {
-  const onDisk = readdirSync(path.resolve(HERE, "../api/vendor")).filter((name) => name.endsWith(".mjs"));
-  assert.deepEqual(onDisk.sort(), VENDORED_FILES.map(([name]) => name).sort(),
-    "a vendored file without a ledger line is drifting un-pinned");
-  for (const [vendoredName, sourceName] of VENDORED_FILES) {
-    assert.equal(
-      readFileSync(path.resolve(HERE, "../api/vendor", vendoredName), "utf-8"),
-      readFileSync(path.join(KITSKEY_DIR, sourceName), "utf-8"),
-      `api/vendor/${vendoredName} drifted from ${sourceName}`,
-    );
-  }
-});
-
-import { readFileSync, readdirSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import path from "node:path";
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -90,15 +63,6 @@ function readCore(filename) {
 function readForumCore(filename) {
   return readFileSync(path.join(FORUM_CORE, filename), "utf-8");
 }
-
-// Whole-file gate: auth.mjs may differ from the forum copy by the
-// allow-listed substitutions and NOTHING else. The per-line pins below then
-// localize any failure, but this gate is what keeps the vendoring honest.
-// (Without it, (a) alone is vacuous: the lines naming shared tables sit on
-// string-continuation lines that carry neither FORUM_DB nor wempo_session.)
-test("auth.mjs is fully identical to the forum's after substitution", () => {
-  assert.equal(readCore("auth.mjs"), vendorize(readForumCore("auth.mjs")));
-});
 
 // (a) Every auth.mjs line whose SQL touches a shared table must match the
 // forum's character-for-character after the allow-listed substitutions —
@@ -152,25 +116,6 @@ test("auth.mjs HMAC data label literal is untransformed in both copies", () => {
     vendorize(readForumCore("auth.mjs")).split("\n").find((l) => l.includes(LABEL)),
     "the HMAC label line differs from the forum copy",
   );
-});
-
-// (c) + (d) passwords.mjs (pepper + PBKDF2 iteration constants) and totp.mjs
-// are fully identical to the forum's after substitution.
-test("passwords.mjs is identical to the forum's after substitution", () => {
-  assert.equal(readCore("passwords.mjs"), vendorize(readForumCore("passwords.mjs")));
-});
-
-test("totp.mjs is identical to the forum's after substitution", () => {
-  assert.equal(readCore("totp.mjs"), vendorize(readForumCore("totp.mjs")));
-});
-
-// (e) images.mjs: Task 6 vendors the forum's RESTORED image-intake core
-// (commit 2c4f571 — "Restore pre-refactor image sanitizers"; the refactor
-// wave's CRC/strictness rewrite had been rejecting valid uploads). The file
-// is pure byte work (no FORUM_DB, no wempo_session), so the substitution is
-// a no-op here and the pin is character-for-character.
-test("images.mjs is identical to the forum's after substitution", () => {
-  assert.equal(readCore("images.mjs"), vendorize(readForumCore("images.mjs")));
 });
 
 // --- phase 1 (experience/http) + phase 3 (experience/db): consumer shapes ----
