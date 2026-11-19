@@ -232,9 +232,12 @@ async function handleSendFriendRequestRoute(request, env) {
     if (username.length > 32) {
       throw new HttpError(400, "That request didn't work. Double check that the username is correct.");
     }
+    // The normalized key (login/register/coins all ride username_key): a
+    // request by any casing of the name resolves the one unique row, and the
+    // SELECT returns the display casing untouched.
     target = await env.GOOBER_DB.prepare(
-      "SELECT id, username, role FROM users WHERE username = ? LIMIT 1",
-    ).bind(username).first();
+      "SELECT id, username, role FROM users WHERE username_key = ? LIMIT 1",
+    ).bind(username.toLowerCase()).first();
   } else {
     const userId = Number(body.userId);
     if (!Number.isInteger(userId) || userId < 1 || userId >= MAX_ID) {
@@ -364,6 +367,7 @@ async function handleFriendRequestDecisionRoute(request, env, decision) {
 
 async function handleCancelFriendRequestRoute(request, env, targetUserId) {
   const session = await requireUser(request, env);
+  await rateLimit(request, env, "write", "friend-request:" + session.user.id);
   const selfId = Number(session.user.id);
 
   // The requester's own X (the filed cancel-outgoing affordance): the same
@@ -379,6 +383,7 @@ async function handleCancelFriendRequestRoute(request, env, targetUserId) {
 
 async function handleUnfriendRoute(request, env, targetUserId) {
   const session = await requireUser(request, env);
+  await rateLimit(request, env, "write", "friend:" + session.user.id);
   const selfId = Number(session.user.id);
   const [userAId, userBId] = canonicalPair(selfId, Number(targetUserId));
 
@@ -413,6 +418,7 @@ async function handleListFriendsRoute(request, env) {
 
 async function handleUpdateFriendSettingsRoute(request, env) {
   const session = await requireUser(request, env);
+  await rateLimit(request, env, "write", "settings:" + session.user.id);
   const body = await readJson(request);
   const selfId = Number(session.user.id);
 
@@ -501,6 +507,7 @@ async function handlePutBlockRoute(request, env, targetRaw) {
 
 async function handleDeleteBlockRoute(request, env, targetRaw) {
   const session = await requireUser(request, env);
+  await rateLimit(request, env, "write", "block:" + session.user.id);
   const selfId = Number(session.user.id);
   const userId = Number(targetRaw);
   if (!Number.isInteger(userId) || userId < 1 || userId >= MAX_ID) {
