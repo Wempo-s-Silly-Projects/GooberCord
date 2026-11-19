@@ -39,12 +39,12 @@ const ORIGIN = "http://localhost";
 const USER_ID = 7;
 const SERVER_ID = 12;
 
-async function dispatch(request, env) {
+async function dispatch(request, env, clock = undefined) {
   const url = new URL(request.url);
   let response;
   try {
     response = await handleCapsuleRoutes(
-      request, env, url, url.pathname, request.method.toUpperCase(), undefined,
+      request, env, url, url.pathname, request.method.toUpperCase(), undefined, clock,
     );
   } catch (error) {
     if (!(error instanceof HttpError)) throw error;
@@ -121,7 +121,7 @@ const CAPSULE_DELETE_TEST = (sql) => sql.startsWith("DELETE FROM gc_time_capsule
 const CHANNEL_ACCESS_TEST = (sql) =>
   sql.startsWith("SELECT c.id, c.server_id, c.kind FROM gc_channels");
 
-async function run(method, path, routes = [], payload, viewerId = USER_ID) {
+async function run(method, path, routes = [], payload, viewerId = USER_ID, clock = undefined) {
   const token = randomToken();
   const row = {
     token_hash: await sha256Hex(token),
@@ -147,7 +147,7 @@ async function run(method, path, routes = [], payload, viewerId = USER_ID) {
     { test: MEMBERSHIP_TEST, first: () => membership },
   ];
   const db = fakeDb([...routes, ...baseRoutes]);
-  const response = await dispatch(request, okEnv(db));
+  const response = await dispatch(request, okEnv(db), clock);
   return { db, response, body: await bodyOf(response) };
 }
 
@@ -178,10 +178,28 @@ test("capsule create refuses a body outside the cap without storing anything", a
 });
 
 test("capsule create refuses a reveal_at outside the schedule window", async () => {
-  for (const revealAt of [nowSeconds() + GC_CAPSULE_MIN_AHEAD_SECONDS - 1, nowSeconds() + GC_CAPSULE_MAX_AHEAD_SECONDS + 1]) {
+  // One shared clock: the handler reads the SAME value the test scheduled
+  // against, so the window edges cannot slip between one read and the next.
+  const fixedNow = 1800000000;
+  const clock = () => fixedNow;
+  const refusals = [
+    fixedNow + GC_CAPSULE_MIN_AHEAD_SECONDS - 1,
+    fixedNow + GC_CAPSULE_MAX_AHEAD_SECONDS + 1,
+  ];
+  for (const revealAt of refusals) {
     const outcome = await run("POST", "/api/servers/" + SERVER_ID + "/capsules", [],
-      { body: "later", revealAt });
+      { body: "later", revealAt }, USER_ID, clock);
     assert.equal(outcome.response.status, 400);
+  }
+  // The exact window edges answer 201 (the seam pins the inclusive bounds).
+  for (const revealAt of [
+    fixedNow + GC_CAPSULE_MIN_AHEAD_SECONDS,
+    fixedNow + GC_CAPSULE_MAX_AHEAD_SECONDS,
+  ]) {
+    const outcome = await run("POST", "/api/servers/" + SERVER_ID + "/capsules", [
+      { test: CAPSULE_CREATE_TEST, run: () => ({ meta: { changes: 1, last_row_id: 42 } }) },
+    ], { body: "later", revealAt }, USER_ID, clock);
+    assert.equal(outcome.response.status, 201);
   }
 });
 
