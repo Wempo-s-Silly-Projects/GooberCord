@@ -389,9 +389,12 @@ test("the phone shell collapses to one pane under 640px (shell grid + rails)", (
   // adds no specificity, so ORDER is the whole contract — the base silence
   // must sit BEFORE the 640px block in source, or the later display:none
   // wins at phone widths and the drawer becomes unreachable.
-  assert.ok(CSS.indexOf(".phone-drawer-toggle { display: none; }")
-    < CSS.indexOf("@media (max-width: 640px)"),
-    "the base silence precedes the 640px block (source order is the contract)");
+  assert.ok(
+    (() => {
+      const silence = CSS.indexOf(".phone-drawer-toggle {\n  display: none;\n}");
+      return silence > -1 && silence < CSS.indexOf("@media (max-width: 640px)");
+    })(),
+    "the base silence exists verbatim and precedes the 640px block (source order is the contract)");
 });
 
 test("the phone drawer is a shell-level pane toggle (shell.js contract)", () => {
