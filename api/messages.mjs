@@ -89,6 +89,16 @@ import { enforceExpressionTokenAccess, loadServerExpressions } from "./emoji.mjs
 // INSERT...SELECTs (the roster matcher is the contract piece — see
 // api/mentions.mjs).
 import { mentionPersistStatements, mentionsEveryoneFlag } from "./mentions.mjs";
+
+// T-R25-SPLIT-MSGS-1: the pins family (the 0026 pin/unpin write + the
+// channel's newest-first pinned read) rides api/messages-pins.mjs (the
+// wave-25 first messages seam). The payload/gate machinery the pins read
+// shares with the history page (channelForUser/enforceChannelBits/
+// MESSAGE_SELECT/groupedPayloadReads/publicMessage) stays ONE
+// implementation here, exported for the seam; the calls happen at CALL
+// time, after this module body initializes (the circular import stays
+// inert — the T-R25-SPLIT-SERVERS-1 lesson).
+import { handleMessagesPinsRoutes } from "./messages-pins.mjs";
 // History page bounds: the bare-id cursor is the forum's replies convention
 // (`[1-9][0-9]{0,14}`, inline at the call site), and a page is at most 100
 // rows with 50 as the default.
@@ -129,7 +139,9 @@ const CHANNEL_ACCESS_SQL =
 // to a boolean. THE `?` IN TEXTUAL ORDER: because the expr sits at the END
 // of the SELECT list, its `now` bind lands BEFORE every WHERE bind — all
 // three call sites below prepend nowSeconds() to their existing arrays.
-const MESSAGE_SELECT =
+// Exported for api/messages-pins.mjs (the pinned read rides the SAME
+// select the history page rides, plus the pinned WHERE).
+export const MESSAGE_SELECT =
   "SELECT m.id, m.author_id, u.username AS author_name, m.body, m.client_message_id, " +
     "m.source, m.created_at, m.edited_at, u.accent_color AS author_accent, " +
     plusActiveExpr("u.id") +
@@ -505,7 +517,9 @@ async function loadAttachmentIds(env, messageId, viewerId) {
   return (result.results || []).map((row) => Number(row.id));
 }
 
-function publicMessage(row, attachmentIds, reactionGroups = null) {
+// Exported for api/messages-pins.mjs (the pins page renders the SAME
+// message objects the history page does — one payload shape).
+export function publicMessage(row, attachmentIds, reactionGroups = null) {
   const message = {
     id: Number(row.id),
     authorId: Number(row.author_id),
@@ -578,7 +592,9 @@ function groupReactionRows(rows, reactionGroupsByMessage) {
 // attachment chunk's bound list alone is 1 + its ids). A chunk is a
 // partition of the id list — a message's rows all land in one — so the
 // merged maps come out in the single read's exact grouping order.
-async function groupedPayloadReads(env, userId, messageIds, attachmentIdsByMessage, reactionGroupsByMessage) {
+// Exported for api/messages-pins.mjs (the pins read shares the fan-out —
+// one implementation, never a drifted pair).
+export async function groupedPayloadReads(env, userId, messageIds, attachmentIdsByMessage, reactionGroupsByMessage) {
   for (let start = 0; start < messageIds.length; start += PINS_READ_BIND_CHUNK) {
     const chunk = messageIds.slice(start, start + PINS_READ_BIND_CHUNK);
     const placeholders = chunk.map(() => "?").join(",");
@@ -1452,125 +1468,7 @@ async function handleDeleteMessageRoute(request, env, messageId, ctx) {
   return json({ ok: true });
 }
 
-// --- pins (0026) ------------------------------------------------------------------
-//
-// The manage-pin grant, CITED: Discord's Aug-2025 permission patch split
-// Manage Messages into narrower grants (the modern Manage Messages/Pins
-// family); GC carries no separate pin bit, so the pin right binds the
-// message-moderation grant DELETE_MESSAGES (permissions.mjs) — the two
-// moderation powers move together, exactly as the patched family does. The
-// read mirrors the expression manage family's shape (api/emoji.mjs): the
-// server's owner/moderator string tiers pass unconditionally, everyone
-// else's role aggregate must hold the bit, and platform staff pass like the
-// message delete always has. Per-channel overwrites are the SEND/VIEW
-// family's concern; manage-family grants ride the role aggregate.
-const PIN_MANAGER_READ_SQL =
-  "SELECT COALESCE((SELECT sm.role FROM gc_server_members sm WHERE sm.server_id = ? AND sm.user_id = ?), '') AS tier, " +
-    roleMaskColumnSql() + " AS mask";
-
-function pinRights(session, classifierRow, grants) {
-  const userId = Number(session.user.id);
-  if (Number(classifierRow.author_id) === userId) return true; // own-message pin, both directions
-  if (session.user.role === "owner" || session.user.role === "admin") return true;
-  // grants is null exactly when the classifier said non-server (a DM/group
-  // channel rides own-or-staff only) — the caller already split on it.
-  if (grants === null) return false;
-  const tier = String(grants.tier || "");
-  if (tier === "owner" || tier === "moderator") return true;
-  return (parseMergedMask(grants.mask) & Number(SERVER_PERMISSIONS.DELETE_MESSAGES)) !== 0;
-}
-
-async function handlePinRoute(request, env, messageId, pinned) {
-  const session = await requireUser(request, env);
-  const userId = Number(session.user.id);
-  // The write-bucket rider (review NIT-1): a pin/unpin is a mutation route
-  // (PUT or DELETE /pin — this handler serves both), so the write limiter
-  // rides BEFORE any table work, the same per-actor shape the other
-  // write-routed lanes carry.
-  await rateLimit(request, env, "write", "pin:" + userId);
-
-  // The classifier read: the message's own pinned state and its channel's
-  // server (a DM/group channel rides own-or-staff only). Unknown id → the
-  // shared 404; no write ever fires for one.
-  const row = await env.GOOBER_DB.prepare(
-    "SELECT m.author_id AS author_id, m.is_pinned AS is_pinned, " +
-      "c.server_id AS server_id " +
-      "FROM gc_messages m JOIN gc_channels c ON c.id = m.channel_id " +
-      "WHERE m.id = ? LIMIT 1",
-  ).bind(messageId).first();
-  if (!row) throw new HttpError(404, "Message not found.");
-
-  let grants = null;
-  if (row.server_id !== null && row.server_id !== undefined) {
-    grants = await env.GOOBER_DB.prepare(PIN_MANAGER_READ_SQL)
-      .bind(Number(row.server_id), userId, Number(row.server_id), userId).first();
-  }
-  if (!pinRights(session, row, grants)) {
-    throw new HttpError(403, "You do not have permission to do that.");
-  }
-
-  if (pinned) {
-    // Pin repeat = the reaction repeat precedent: already-pinned is a no-op
-    // 200, never a refusal.
-    if (row.is_pinned) return json({ pinned: true, id: Number(messageId) });
-    // The cap rides INSIDE the statement (the count arm): zero changes means
-    // the channel is at the cap — the classification is honest, since the
-    // unknown-id and unauthorized shapes already answered above.
-    const result = await env.GOOBER_DB.prepare(
-      "UPDATE gc_messages SET is_pinned = 1 WHERE id = ? AND " +
-        "(SELECT COUNT(*) FROM gc_messages WHERE channel_id = " +
-          "(SELECT channel_id FROM gc_messages WHERE id = ?) AND is_pinned = 1) < ?",
-    ).bind(messageId, messageId, GC_PINS_MAX_PER_CHANNEL).run();
-    if (Number(result.meta?.changes) !== 1) {
-      throw new HttpError(400, "This channel already has " + GC_PINS_MAX_PER_CHANNEL + " pins.");
-    }
-    return json({ pinned: true, id: Number(messageId) });
-  }
-
-  // Unpin: authorized (own or the manage-pin grant) and idempotent — an
-  // unpinned row's unpin is the same 200, never a second oracle read.
-  await env.GOOBER_DB.prepare(
-    "UPDATE gc_messages SET is_pinned = 0 WHERE id = ?",
-  ).bind(messageId).run();
-  return json({ pinned: false, id: Number(messageId) });
-}
-
-// The channel's pinned set, newest-first (message id order = Discord's
-// reverse-chronological pins read), one page bounded by the cap itself. The
-// gate mirrors the history route's exact read (membership + VIEW bit), and
-// the payloads are the history read's own shape — the client renders the
-// same message objects from either route.
-async function handleChannelPinsRoute(request, env, channelId) {
-  const session = await requireSignedInRead(request, env);
-  const userId = Number(session.user.id);
-
-  const channel = await channelForUser(env, channelId, userId);
-  if (!channel) throw new HttpError(404, "This channel does not exist or you cannot view it.");
-  await enforceChannelBits(env, channel, userId, ["VIEW"]);
-
-  const page = (await env.GOOBER_DB.prepare(
-    MESSAGE_SELECT +
-      " WHERE m.channel_id = ? AND m.is_pinned = 1" +
-      " ORDER BY m.id DESC LIMIT " + GC_PINS_MAX_PER_CHANNEL,
-  ).bind(nowSeconds(), channelId).all()).results || [];
-
-  // Attachments and reactions ride the SAME grouped reads the history page
-  // uses (one read each for the whole payload, never per-row) — the shared
-  // fan-out chunks them under the D1 bind limit exactly as the history
-  // page's grouped reads do.
-  const messageIds = page.map((row) => Number(row.id));
-  const attachmentIdsByMessage = new Map();
-  const reactionGroupsByMessage = new Map();
-  if (messageIds.length) {
-    await groupedPayloadReads(env, userId, messageIds, attachmentIdsByMessage, reactionGroupsByMessage);
-  }
-
-  return json({
-    messages: page.map((row) =>
-      publicMessage(row, attachmentIdsByMessage.get(Number(row.id)) || [],
-        reactionGroupsByMessage.get(Number(row.id)) || null)),
-  });
-}export async function handleMessageRoutes(request, env, url, path, method, ctx) {
+export async function handleMessageRoutes(request, env, url, path, method, ctx) {
   // ctx (the worker's execution context) threads into the DELETE ride: the
   // doomed attachments' R2 objects ride the caller's waitUntil (media.mjs's
   // scheduleAttachmentObjectDelete).
@@ -1594,21 +1492,16 @@ async function handleChannelPinsRoute(request, env, channelId) {
       : handleDeleteMessageRoute(request, env, Number(messageMatch[1]), ctx);
   }
 
-  // The pins lane (0026): PUT/DELETE /api/messages/:id/pin and the channel's
-  // newest-first GET — the dispatch patterns stay the bare-id family, and a
-  // /pins path never collides with the plain /messages match above.
-  const pinMatch = (method === "PUT" || method === "DELETE")
-    ? path.match(/^\/api\/messages\/([1-9][0-9]{0,14})\/pin$/)
-    : null;
-  if (pinMatch) {
-    return handlePinRoute(request, env, Number(pinMatch[1]), method === "PUT" ? 1 : 0);
-  }
-
-  const pinsMatch = method === "GET"
-    ? path.match(/^\/api\/channels\/([1-9][0-9]{0,14})\/pins$/)
-    : null;
-  if (pinsMatch) {
-    return handleChannelPinsRoute(request, env, Number(pinsMatch[1]));
+  // T-R25-SPLIT-MSGS-1: the pins family (the 0026 pin/unpin write + the
+  // channel's newest-first pinned read) rides api/messages-pins.mjs. The
+  // forward sits at the pin arm's ORIGINAL position — the two pins arms
+  // are the router's LAST arms, contiguous, no interior interloper — and
+  // answers the WHOLE family; its `undefined` fall-through keeps the
+  // router's remaining arms running exactly as before (no other family's
+  // path overlaps a /pin or /pins path).
+  const pinsForward = await handleMessagesPinsRoutes(request, env, path, method);
+  if (pinsForward !== undefined) {
+    return pinsForward;
   }
 
   return undefined;
