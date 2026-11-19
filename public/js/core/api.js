@@ -150,7 +150,13 @@ export const api = async (path, {
         const fresh = typeof session?.csrfToken === "string" ? session.csrfToken : "";
         setCsrfToken(fresh);
         set({ user: session?.user || null, csrfToken: fresh });
-        return api(path, { method, body, idempotencyKey, signal, internalRetry: true });
+        // The retry rides the SAME additive hooks — a retried flight losing
+        // its progress arms mid-stream would starve the 1 GiB lane's bar
+        // (deslop-w21 MEDIUM: the hooks forward with the rest of the opts).
+        return api(path, {
+          method, body, idempotencyKey, signal, internalRetry: true,
+          onUploadProgress, onDownloadProgress,
+        });
       } catch {
         // The probe itself failed; the original error surfaces below.
       }

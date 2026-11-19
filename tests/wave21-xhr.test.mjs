@@ -78,6 +78,10 @@ test("every contract rider stays present after the swap", () => {
   // is guarded by !internalRetry so it fires EXACTLY once.
   assert.match(APIJS, /Your security token is out of date\./);
   assert.match(APIJS, /mutating && !internalRetry && response\.status === 403/);
+  // deslop-w21 MEDIUM: the retried flight forwards the SAME additive hooks —
+  // a progress-starved retry never rides behind a stale CSRF token again.
+  assert.match(APIJS, /onUploadProgress, onDownloadProgress,\n/,
+    "the retry opts carry the progress hooks");
   assert.doesNotMatch(APIJS, /tokenStale/, "no dead seed key rides the source");
   // The G-8/G-6 header riders: rulesGate + parsed retryAfter.
   assert.match(APIJS, /"x-rules-gate"/);
