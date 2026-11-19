@@ -812,6 +812,26 @@ test("every seated bundle carries gc.shell.user.source, translated (no en placeh
   }
 });
 
+// The soundboard-studio wave grew the catalog without backfill — the audit
+// caught the 12 gc.studio keys riding en.json alone. The law holds and is
+// pinned: every staged bundle seats each studio row, filled and translated
+// (never an en placeholder nor an empty row, on the cosmetics-ui shape).
+test("every staged bundle seats the 12 gc.studio rows, translated (no en placeholder)", () => {
+  const studioKeys = Object.keys(enData)
+    .filter((key) => key.startsWith("gc.studio."))
+    .sort();
+  assert.equal(studioKeys.length, 12, "the studio catalog is exactly the 12 rows");
+  for (const langKey of ["de", "es", "fr", "pt", "ru", "ja", "zh", "ar"]) {
+    const bundle = JSON.parse(readFileSync(join(HERE, `../public/locales/${langKey}.json`), "utf8"));
+    for (const key of studioKeys) {
+      const value = bundle[key];
+      assert.equal(typeof value, "string", `${langKey} seats ${key}`);
+      assert.notEqual(value.trim(), "", `${langKey} fills ${key}`);
+      assert.notEqual(value, enData[key], `${langKey} carries ${key} translated, not the en row`);
+    }
+  }
+});
+
 // --- the ported lane (port2-i18n): the funnel's cache-header pins ----------------
 
 // The base funnel semantics stay: /locales/*.json rides the generic ASSETS
