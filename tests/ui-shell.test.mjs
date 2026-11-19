@@ -378,6 +378,13 @@ test("the phone shell collapses to one pane under 640px (shell grid + rails)", (
     "the drawer state re-seats the rails as an overlay");
   assert.match(block, /\.shell-scrim/, "the scrim seats under the drawer");
   assert.match(block, /\.phone-drawer-toggle/, "the shell-level drawer toggle");
+  // The viewport-saboteur live-pass regression (781b9e2): the toggle node
+  // appends unconditionally, so ABOVE 640px it must be display:none — a bare
+  // in-flow button would auto-place into an implicit second grid row and
+  // steal desk height (its click is a no-op while the rails are display:none).
+  assert.match(CSS,
+    /(\n|\/\*[^*]*\*\/\s*)\.phone-drawer-toggle \{\s*\n\s*display: none;/,
+    "the toggle is silent by default — the 640px block turns it on");
 });
 
 test("the phone drawer is a shell-level pane toggle (shell.js contract)", () => {
