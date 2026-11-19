@@ -35,7 +35,12 @@
 // exception — it spends the GIFTING member's coins on a CHOSEN member's term):
 //   GET  /api/coins          → balance, today's earned breakdown, plus state
 //   GET  /api/coins/ledger   → the member's own ledger page (bare-id cursor)
-//   GET  /api/coins/shop     → the blaxel shop payload (bundle + balance)
+//   GET  /api/coins/shop     → the blaxel shop payload (bundle + balance +
+//                              the 0056 inventory read)
+//   POST /api/coins/cosmetics → buy a cosmetic (0019 ownership items and the
+//                              0056 inventory SKUs)
+//   POST /api/coins/cosmetics/equip → equip one inventory item per slot
+//   POST /api/coins/cosmetics/consume → spend one use of a consumable pack
 //   POST /api/coins/claim    → the daily activity grant (once per UTC day)
 //   POST /api/coins/voice/tick → a voice-presence time grant (per window)
 //   POST /api/plus/renew     → extend the member's own Goober+ term
@@ -67,7 +72,12 @@ import {
   GC_COIN_VOICE_GRANT,
   GC_COIN_VOICE_TICK_SECONDS,
   GC_COSMETIC_BANNER_PRICE,
+  GC_COSMETIC_CHANNEL_BANNER_PRICE,
   GC_COSMETIC_FLAIR_PRICE,
+  GC_COSMETIC_FRAME_PRICE,
+  GC_COSMETIC_FX_BURST_PRICE,
+  GC_COSMETIC_FX_BURST_USES,
+  GC_COSMETIC_INVENTORY_SKUS,
   GC_COSMETIC_PACK_PRICE,
   GC_MINI_BUNDLE_NAME,
   GC_MINI_PRICE,
@@ -260,6 +270,82 @@ const COSMETIC_OWNERSHIP_INSERT_SQL =
 const OWNERSHIP_READ_SQL =
   "SELECT item FROM gc_cosmetic_ownership WHERE user_id = ?";
 
+// The cosmetic INVENTORY (0056, the 2026-11-19 cosmetics v1 slate): the
+// purchase pair rides the SAME claim idiom, but the spend row is the
+// GUARDED CLAIM itself — its arms are the sufficient-coins check, the NOT-
+// EXISTS-ownership arm (a re-buy loses the race INSIDE the spend, so the
+// 409 can never drain the coin or persist a spend), and (for the per-server
+// channel-banner SKU) the membership arm riding INSIDE the INSERT like the
+// voice tick's. The second statement is the fingerprint consumer: the
+// inventory row only ever lands on the spend row THIS batch minted. The
+// consumable's bump stacks one pack onto the SAME (user_id, item_key) row —
+// the recurring sink is a bump, never a second row.
+const INVENTORY_SPEND_SQL =
+  "INSERT INTO gc_coin_ledger (user_id, delta, source, created_at) " +
+  "SELECT ?, ?, ?, ? " +
+  "WHERE (SELECT COALESCE(SUM(le4.delta), 0) FROM gc_coin_ledger le4 " +
+    "WHERE le4.user_id = ?) >= ? " +
+  "AND NOT EXISTS (" +
+    "SELECT 1 FROM gc_cosmetic_inventory iv WHERE iv.user_id = ? AND iv.item_key = ?" +
+  ") " +
+  "AND (? IS NULL OR EXISTS (" +
+    "SELECT 1 FROM gc_server_members sm WHERE sm.server_id = ? AND sm.user_id = ?" +
+  ")) LIMIT 1";
+
+const INVENTORY_OWN_SQL =
+  "INSERT INTO gc_cosmetic_inventory (user_id, item_key, kind, qty, equipped, server_id, created_at, updated_at) " +
+  "SELECT ?, ?, 'own', 1, 0, ?, ?, ? " +
+  "WHERE EXISTS (SELECT 1 FROM gc_coin_ledger cl WHERE cl.user_id = ? " +
+    "AND cl.source = ? AND cl.delta = ? AND cl.created_at = ?) " +
+  "AND NOT EXISTS (" +
+    "SELECT 1 FROM gc_cosmetic_inventory iv WHERE iv.user_id = ? AND iv.item_key = ?" +
+  ")";
+
+const INVENTORY_BUMP_SQL =
+  "INSERT INTO gc_cosmetic_inventory (user_id, item_key, kind, qty, equipped, server_id, created_at, updated_at) " +
+  "SELECT ?, ?, 'consumable', ?, 0, NULL, ?, ? " +
+  "WHERE EXISTS (SELECT 1 FROM gc_coin_ledger cl WHERE cl.user_id = ? " +
+    "AND cl.source = ? AND cl.delta = ? AND cl.created_at = ?) " +
+  "ON CONFLICT(user_id, item_key) DO UPDATE SET qty = qty + ?, updated_at = ?";
+
+// The inventory read (the shop payload's inventory arm) and the ownership
+// pre-check the equip arm demands BEFORE its batch (a lost equip must never
+// clear the slot's standing state — the batch's clear stands unless the
+// whole route owns the row first).
+const INVENTORY_READ_SQL =
+  "SELECT item_key, kind, qty, equipped, server_id " +
+  "FROM gc_cosmetic_inventory WHERE user_id = ?";
+
+const INVENTORY_OWNED_PROBE_SQL =
+  "SELECT 1 AS owned FROM gc_cosmetic_inventory " +
+  "WHERE user_id = ? AND item_key = ? LIMIT 1";
+
+// The post-batch classification probe (the after-the-fact house style): one
+// indexed pair read, answering "is this member seated in this server".
+const INVENTORY_MEMBERSHIP_SQL =
+  "SELECT 1 FROM gc_server_members sm WHERE sm.server_id = ? AND sm.user_id = ?";
+
+// The equip arm: TWO statements in ONE batch (one transaction) — clear the
+// slot's own SKUs, then set the picked row. The slot's SKU list rides as the
+// IN-list binds (constants.mjs's list, prefix-sharded route-side); "one
+// equipped per slot" is this ROUTE-SIDE arm, never a trigger.
+const INVENTORY_EQUIP_CLEAR_SQL =
+  "UPDATE gc_cosmetic_inventory SET equipped = 0, updated_at = ? " +
+  "WHERE user_id = ? AND item_key IN (";
+
+const INVENTORY_EQUIP_SET_SQL =
+  "UPDATE gc_cosmetic_inventory SET equipped = 1, updated_at = ? " +
+  "WHERE user_id = ? AND item_key = ?";
+
+// The consumable use (economy-skill law 3): ONE guarded UPDATE — the qty > 0
+// arm IS the claim, so two racing uses can never both clear a one-use pack,
+// and a loser is changes = 0 with the ORIGINAL ROW SURVIVING (never deleted,
+// never negative — the CHECK floor and the WHERE floor hold). A missing row
+// is the buy-first refusal at the route's pre-check.
+const INVENTORY_CONSUME_SQL =
+  "UPDATE gc_cosmetic_inventory SET qty = qty - 1, updated_at = ? " +
+  "WHERE user_id = ? AND item_key = ? AND kind = 'consumable' AND qty > 0";
+
 // --- reads -------------------------------------------------------------------
 
 const BALANCE_READ_SQL =
@@ -338,10 +424,32 @@ function publicMiniBundle() {
   };
 }
 
+// The v1 SKU table (inventoryShape): the slot + price ride the SKU PREFIX;
+// the kind is constants.mjs's own. The channel-banner slot is the one
+// server-scoped shape — its purchase demands the per-server row and the
+// membership arm.
+const INVENTORY_SLOT_RULES = [
+  { prefix: "fx_burst_", slot: "fx_burst", price: GC_COSMETIC_FX_BURST_PRICE },
+  { prefix: "frame_", slot: "frame", price: GC_COSMETIC_FRAME_PRICE },
+  { prefix: "channel_banner_", slot: "channel_banner", price: GC_COSMETIC_CHANNEL_BANNER_PRICE },
+];
+
+const INVENTORY_SKUS = new Map(GC_COSMETIC_INVENTORY_SKUS.map((sku) => [sku.itemKey, sku]));
+
+function inventoryShape(itemKey) {
+  const sku = INVENTORY_SKUS.get(itemKey);
+  if (!sku) return null;
+  const rule = INVENTORY_SLOT_RULES.find((entry) => itemKey.startsWith(entry.prefix));
+  return rule
+    ? { itemKey, kind: sku.kind, slot: rule.slot, price: rule.price }
+    : null;
+}
+
 // The cosmetic sink's payload (the economy re-rule): every item exposes BOTH
 // the list and the plus price, plus the caller's actual cost and ownership.
-function publicCosmeticItems(ownedItems, perks) {
+function publicCosmeticItems(ownedItems, perks, inventoryRows = []) {
   const owned = (item) => ownedItems.includes(item);
+  const rows = new Map(inventoryRows.map(publicInventoryRow).map((row) => [row.itemKey, row]));
   return [
     {
       item: "banner",
@@ -367,7 +475,38 @@ function publicCosmeticItems(ownedItems, perks) {
       plusOnly: true,
       owned: owned("banner") && owned("flair"),
     },
+    // The 0056 inventory SKUs (the 2026-11-19 slate's recurring sink): the
+    // same both-prices shape, plus the kind and the caller's OWN state —
+    // a consumable answers its remaining qty, an own item its equip state.
+    ...GC_COSMETIC_INVENTORY_SKUS.map((sku) => {
+      const shape = inventoryShape(sku.itemKey);
+      const row = rows.get(sku.itemKey) || null;
+      const entry = {
+        item: sku.itemKey,
+        price: shape.price,
+        plusPrice: discountedPrice(shape.price, true),
+        cost: discountedPrice(shape.price, perks),
+        owned: row !== null,
+        kind: sku.kind,
+      };
+      return sku.kind === "consumable"
+        ? { ...entry, qty: row === null ? 0 : row.qty }
+        : { ...entry, equipped: row !== null && row.equipped === true };
+    }),
   ];
+}
+
+// The inventory read's public shape (the shop payload's inventory arm): the
+// caller's own rows, camelCased — the qty a consumable holds, the ONE
+// equipped item per slot, and the server a channel-banner row rides.
+function publicInventoryRow(row) {
+  return {
+    itemKey: String(row.item_key || ""),
+    kind: String(row.kind || ""),
+    qty: Number(row.qty) || 0,
+    equipped: row.equipped === 1,
+    serverId: row.server_id === null || row.server_id === undefined ? null : Number(row.server_id),
+  };
 }
 
 // The plus payload: absence (never bought) is a shape, a lapsed term is
@@ -559,19 +698,24 @@ async function handleCoinsShopRoute(request, env) {
   // discount side, and the caller's ownership state.
   const perks = await plusPerkActive(env, userId, nowSeconds());
   const ownership = (await env.GOOBER_DB.prepare(OWNERSHIP_READ_SQL).bind(userId).all()).results || [];
+  const inventoryRows = (await env.GOOBER_DB.prepare(INVENTORY_READ_SQL).bind(userId).all()).results || [];
   return json({
     ...snapshot,
     bundle: publicBundle(),
     mini: publicMiniBundle(),
-    items: publicCosmeticItems(ownership.map((row) => String(row.item || "")), perks),
+    items: publicCosmeticItems(ownership.map((row) => String(row.item || "")), perks, inventoryRows),
+    inventory: inventoryRows.map(publicInventoryRow),
   });
 }
 
 // The cosmetic SINK's one write route (the economy re-rule): buy banner,
-// flair, or the pack. The tier's price (50% off for an ACTIVE term on
-// banner/flair; the pack flat, plus-only) is computed ROUTE-SIDE per the
-// owner's amendment, and the batch's guards carry the balance + NOT-
-// EXISTS-ownership + (for the pack) the plus gate into the statements.
+// flair, the pack — or, since 0056 (the 2026-11-19 cosmetics v1 slate), one
+// of the inventory SKUs (consumable burst packs, frames, the per-server
+// channel-banner skin). The tier's price (50% off for an ACTIVE term on
+// banner/flair; the pack flat, plus-only; the v1 SKUs at their tier) is
+// computed ROUTE-SIDE per the owner's amendment, and the batch's guards
+// carry the balance + NOT-EXISTS-ownership + (for the pack) the plus gate
+// into the statements; the v1 SKUs ride their own batch builder below.
 async function handleCosmeticBuyRoute(request, env) {
   const session = await requireUser(request, env);
   const userId = Number(session.user.id);
@@ -580,6 +724,10 @@ async function handleCosmeticBuyRoute(request, env) {
   const perks = await plusPerkActive(env, userId, nowSeconds());
 
   const item = body && body.item;
+  const sku = typeof item === "string" ? inventoryShape(item) : null;
+  if (sku !== null) {
+    return purchaseInventoryCosmetic(env, userId, sku, perks, body);
+  }
   if (item !== "banner" && item !== "flair" && item !== "pack") {
     throw new HttpError(400, "That cosmetic is not in the shop.");
   }
@@ -620,11 +768,142 @@ async function handleCosmeticBuyRoute(request, env) {
     throw new HttpError(409, "You already own that cosmetic.");
   }
   const ownership = (await env.GOOBER_DB.prepare(OWNERSHIP_READ_SQL).bind(userId).all()).results || [];
+  const inventoryRows = (await env.GOOBER_DB.prepare(INVENTORY_READ_SQL).bind(userId).all()).results || [];
   return json({
     bought: true,
     cost: price,
-    items: publicCosmeticItems(ownership.map((row) => String(row.item || "")), perks),
+    items: publicCosmeticItems(ownership.map((row) => String(row.item || "")), perks, inventoryRows),
+    inventory: inventoryRows.map(publicInventoryRow),
   });
+}
+
+// The 0056 inventory purchase (the 2026-11-19 slate's recurring sink): the
+// kind picks the batch. A CONSUMABLE's spend is the plain balance-guarded
+// claim (a re-buy IS the business: the ON-CONFLICT bump stacks one pack
+// onto the same PK row); an OWN item's spend is the guarded claim with the
+// NOT-EXISTS-ownership + membership arms INSIDE the INSERT, so a re-buy
+// loses the race in the spend and never drains the coin. Both second
+// statements are fingerprint consumers — the inventory row only ever lands
+// on the spend row THIS batch minted, so a skipped spend mints nothing.
+async function purchaseInventoryCosmetic(env, userId, sku, perks, body) {
+  const now = nowSeconds();
+  const serverId = inventoryServerId(sku, body);
+  const cost = discountedPrice(sku.price, perks);
+  const source = "cosmetic";
+  const consumable = sku.kind === "consumable";
+  const results = await env.GOOBER_DB.batch([
+    env.GOOBER_DB.prepare(consumable ? COSMETIC_LEDGER_SPEND_SQL : INVENTORY_SPEND_SQL).bind(
+      userId, -cost, source, now,
+      userId,
+      cost,
+      ...(!consumable ? [userId, sku.itemKey, serverId, serverId, userId] : [])),
+    consumable
+      ? env.GOOBER_DB.prepare(INVENTORY_BUMP_SQL).bind(
+          userId, sku.itemKey, GC_COSMETIC_FX_BURST_USES, now, now,
+          userId, source, -cost, now,
+          GC_COSMETIC_FX_BURST_USES, now)
+      : env.GOOBER_DB.prepare(INVENTORY_OWN_SQL).bind(
+          userId, sku.itemKey, serverId, now, now,
+          userId, source, -cost, now,
+          userId, sku.itemKey),
+  ]);
+  if (Number(results[0]?.meta?.changes) !== 1) {
+    await inventoryPurchaseRefusal(env, userId, sku, serverId);
+  }
+  const [owners, inventoryRows] = await Promise.all([
+    env.GOOBER_DB.prepare(OWNERSHIP_READ_SQL).bind(userId).all(),
+    env.GOOBER_DB.prepare(INVENTORY_READ_SQL).bind(userId).all(),
+  ]);
+  return json({
+    bought: true,
+    cost,
+    items: publicCosmeticItems((owners.results || []).map((row) => String(row.item || "")), perks, inventoryRows.results || []),
+    inventory: (inventoryRows.results || []).map(publicInventoryRow),
+  });
+}
+
+// The per-server SKU's serverId (the channel-banner family): a missing or
+// malformed one is a 400 BEFORE any write, and any other kind carries none.
+function inventoryServerId(sku, body) {
+  if (sku.slot !== "channel_banner") return null;
+  const serverId = body && body.serverId;
+  if (typeof serverId !== "number" || !Number.isInteger(serverId) || serverId <= 0) {
+    throw new HttpError(400, "Choose the server this banner skin is for.");
+  }
+  return serverId;
+}
+
+// The after-the-fact house classification for a refused purchase batch:
+// already-owned is the 409, a foreign server is the 403, everything else is
+// the insufficient-coins copy. Nothing persisted either way (the spend
+// itself was the refused claim).
+async function inventoryPurchaseRefusal(env, userId, sku, serverId) {
+  const owned = await env.GOOBER_DB.prepare(INVENTORY_OWNED_PROBE_SQL)
+    .bind(userId, sku.itemKey).first();
+  if (owned) throw new HttpError(409, "You already own that cosmetic.");
+  if (serverId !== null) {
+    const seated = await env.GOOBER_DB.prepare(INVENTORY_MEMBERSHIP_SQL)
+      .bind(serverId, userId).first();
+    if (!seated) throw new HttpError(403, "You are not a member of that server.");
+  }
+  throw new HttpError(400, "Not enough Goober Coins for that.");
+}
+
+// The equip arm (one equipped per slot, never a trigger): the row's
+// ownership is probed FIRST (a lost equip must never clear the slot's
+// standing state), then ONE batch — clear the slot's SKUs, set the picked
+// row. The response echoes the standing inventory either way.
+async function handleCosmeticEquipRoute(request, env) {
+  const session = await requireUser(request, env);
+  const userId = Number(session.user.id);
+  await rateLimit(request, env, "write", "coins:cosmetic-equip:" + userId);
+  const body = await readJson(request);
+  const sku = typeof body?.itemKey === "string" ? inventoryShape(body.itemKey) : null;
+  if (!sku) throw new HttpError(400, "That cosmetic is not in the shop.");
+
+  const owned = await env.GOOBER_DB.prepare(INVENTORY_OWNED_PROBE_SQL)
+    .bind(userId, sku.itemKey).first();
+  if (!owned) throw new HttpError(403, "Buy that cosmetic in the coin shop first.");
+
+  const now = nowSeconds();
+  const slotSkus = GC_COSMETIC_INVENTORY_SKUS
+    .map((entry) => inventoryShape(entry.itemKey))
+    .filter((shape) => shape.slot === sku.slot)
+    .map((shape) => shape.itemKey);
+  await env.GOOBER_DB.batch([
+    env.GOOBER_DB.prepare(
+      INVENTORY_EQUIP_CLEAR_SQL + slotSkus.map(() => "?").join(", ") + ")",
+    ).bind(now, userId, ...slotSkus),
+    env.GOOBER_DB.prepare(INVENTORY_EQUIP_SET_SQL).bind(now, userId, sku.itemKey),
+  ]);
+  const inventoryRows = (await env.GOOBER_DB.prepare(INVENTORY_READ_SQL).bind(userId).all()).results || [];
+  return json({ equipped: true, itemKey: sku.itemKey, inventory: inventoryRows.map(publicInventoryRow) });
+}
+
+// The consumable use (economy-skill law 3): ONE guarded UPDATE — the qty > 0
+// arm IS the claim, a loser is changes = 0 with the original row surviving.
+// Classified after the fact: an unowned pack is the buy-first 403, an
+// empty one the come-back-with-a-fresh-pack 409.
+async function handleCosmeticConsumeRoute(request, env) {
+  const session = await requireUser(request, env);
+  const userId = Number(session.user.id);
+  await rateLimit(request, env, "write", "coins:cosmetic-consume:" + userId);
+  const body = await readJson(request);
+  const sku = typeof body?.itemKey === "string" ? inventoryShape(body.itemKey) : null;
+  if (!sku) throw new HttpError(400, "That cosmetic is not in the shop.");
+
+  const result = await env.GOOBER_DB
+    .prepare(INVENTORY_CONSUME_SQL)
+    .bind(nowSeconds(), userId, sku.itemKey)
+    .run();
+  if (Number(result.meta?.changes) !== 1) {
+    const owned = await env.GOOBER_DB.prepare(INVENTORY_OWNED_PROBE_SQL)
+      .bind(userId, sku.itemKey).first();
+    if (!owned) throw new HttpError(403, "Buy that cosmetic in the coin shop first.");
+    throw new HttpError(409, "That burst pack is empty.");
+  }
+  const inventoryRows = (await env.GOOBER_DB.prepare(INVENTORY_READ_SQL).bind(userId).all()).results || [];
+  return json({ used: true, inventory: inventoryRows.map(publicInventoryRow) });
 }
 
 async function handleLedgerReadRoute(request, env, url) {
@@ -835,6 +1114,12 @@ export async function handleCoinRoutes(request, env, url, path, method) {
   }
   if (path === "/api/coins/cosmetics" && method === "POST") {
     return handleCosmeticBuyRoute(request, env);
+  }
+  if (path === "/api/coins/cosmetics/equip" && method === "POST") {
+    return handleCosmeticEquipRoute(request, env);
+  }
+  if (path === "/api/coins/cosmetics/consume" && method === "POST") {
+    return handleCosmeticConsumeRoute(request, env);
   }
   if (path === "/api/coins/ledger" && method === "GET") {
     return handleLedgerReadRoute(request, env, url);

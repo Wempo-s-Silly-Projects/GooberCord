@@ -144,6 +144,23 @@ export const GC_SERVER_MINT_DAILY_CAP = 2;
 export const GC_COSMETIC_PACK_PRICE = 250;
 export const GC_COSMETIC_BANNER_PRICE = 100;
 export const GC_COSMETIC_FLAIR_PRICE = 100;
+// The 2026-11-19 cosmetics v1 slate's recurring-sink SKUs (the coin shop's
+// second wave): the burst pack is the CONSUMABLE (5 uses per pack, the
+// ~10-coins/use cycle the sink math wants), the frames ride the blessed
+// 100 tier, and the channel-banner skin sits one tier above (per-server).
+// Prices expose BOTH tiers route-side under GC_PLUS_SINK_DISCOUNT_PERCENT.
+export const GC_COSMETIC_FX_BURST_PRICE = 50;
+export const GC_COSMETIC_FRAME_PRICE = 100;
+export const GC_COSMETIC_CHANNEL_BANNER_PRICE = 150;
+export const GC_COSMETIC_FX_BURST_USES = 5;
+// The SKU keys ARE the 0056 CHECK list (single source of truth: clients
+// import this, never re-declare).
+export const GC_COSMETIC_INVENTORY_SKUS = [
+  { itemKey: "fx_burst_confetti", kind: "consumable" },
+  { itemKey: "frame_gold", kind: "own" },
+  { itemKey: "frame_neon", kind: "own" },
+  { itemKey: "channel_banner_dusk", kind: "own" },
+];
 export const GC_PLUS_SINK_DISCOUNT_PERCENT = 50;
 
 // The COMMUNITY SEATS (2026-11-18 re-code wave): the Morning Paper's and the

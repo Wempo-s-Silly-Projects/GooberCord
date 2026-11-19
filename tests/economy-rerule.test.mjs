@@ -281,12 +281,19 @@ test("GET /api/coins/shop exposes BOTH prices per item, the caller's cost, and o
   const response = await dispatch(authed("GET", "/api/coins/shop"), envWithLimiters({ GOOBER_DB: db }));
   assert.equal(response.status, 200);
   const body = await bodyOf(response);
-  // A non-buyer sees the LIST prices both ways (own cost = list).
+  // A non-buyer sees the LIST prices both ways (own cost = list). The 0056
+  // inventory SKUs ride beside them (the 2026-11-19 cosmetics v1 slate):
+  // the consumable answers its qty, the own items their equip state.
   assert.deepEqual(body.items, [
     { item: "banner", price: 100, plusPrice: 50, cost: 100, owned: false },
     { item: "flair", price: 100, plusPrice: 50, cost: 100, owned: false },
     { item: "pack", price: 250, plusPrice: 250, cost: 250, plusOnly: true, owned: false },
+    { item: "fx_burst_confetti", price: 50, plusPrice: 25, cost: 50, owned: false, kind: "consumable", qty: 0 },
+    { item: "frame_gold", price: 100, plusPrice: 50, cost: 100, owned: false, kind: "own", equipped: false },
+    { item: "frame_neon", price: 100, plusPrice: 50, cost: 100, owned: false, kind: "own", equipped: false },
+    { item: "channel_banner_dusk", price: 150, plusPrice: 75, cost: 150, owned: false, kind: "own", equipped: false },
   ]);
+  assert.deepEqual(body.inventory, [], "the 0056 inventory read rides the shop payload");
   // The bundle's pricing amendment answers both prices too.
   assert.equal(body.bundle.price, 500);
   assert.equal(body.bundle.renewalPrice, 400);
@@ -324,7 +331,12 @@ test("POST /api/coins/cosmetics buys banner in an atomic batch: the negative row
       { item: "banner", price: 100, plusPrice: 50, cost: 100, owned: true },
       { item: "flair", price: 100, plusPrice: 50, cost: 100, owned: false },
       { item: "pack", price: 250, plusPrice: 250, cost: 250, plusOnly: true, owned: false },
+      { item: "fx_burst_confetti", price: 50, plusPrice: 25, cost: 50, owned: false, kind: "consumable", qty: 0 },
+      { item: "frame_gold", price: 100, plusPrice: 50, cost: 100, owned: false, kind: "own", equipped: false },
+      { item: "frame_neon", price: 100, plusPrice: 50, cost: 100, owned: false, kind: "own", equipped: false },
+      { item: "channel_banner_dusk", price: 150, plusPrice: 75, cost: 150, owned: false, kind: "own", equipped: false },
     ],
+    inventory: [],
   });
 
   const batch = db.calls.find((call) => call.call === "batch");
