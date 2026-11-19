@@ -30,6 +30,7 @@ import { DatabaseSync } from "node:sqlite";
 import { handleMessageRoutes, sendMessageToChannel } from "../api/messages.mjs";
 import { prepareAttachmentBytes } from "../api/media.mjs";
 import { _resetFilterWordsCacheForTests } from "../api/filterstore.mjs";
+import { _resetServerRulesCacheForTests } from "../api/filterrules.mjs";
 import { randomToken, sha256Hex, nowSeconds } from "../api/core/crypto.mjs";
 import { HttpError, json } from "../api/core/http.mjs";
 import { GC_ATTACHMENT_OBJECT_PREFIX, GC_FREE_MESSAGE_MAX, GC_PLUS_MESSAGE_MAX, RATE_LIMIT_BINDINGS } from "../constants.mjs";
@@ -645,6 +646,172 @@ test("send validation: blank bodies, oversized bodies, and short client ids 400 
     assert.deepEqual(await bodyOf(response), { error: expected });
     assert.deepEqual(db.calls.filter((call) => call.call === "batch" || call.call === "run"), []);
   }
+});
+
+// --- the alert-only hits: best-effort writes that SURFACE on failure ---------------
+
+// The 0010 machinery needs its isolate cache cold every send; the site-wide
+// legacy list stays OFF (its site_settings row reads null) so the per-server
+// rules decide the hit.
+const ALERT_RULE_ROW = {
+  id: 1,
+  server_id: 1,
+  name: "alert rule",
+  terms: JSON.stringify([{ text: "badword" }]),
+  exempt_role_ids: "[]",
+  exempt_channel_ids: "[]",
+  actions: JSON.stringify(["alert"]),
+  is_care: 0,
+  check_names: 0,
+  block_message: null,
+  timeout_minutes: null,
+  created_by: null,
+  created_at: 100,
+  updated_at: 100,
+};
+
+const ALERT_RULES_TEST = (sql) => sql.includes("FROM gc_filter_rules WHERE server_id = ?");
+const ALERT_RULES_ROUTE = (row = ALERT_RULE_ROW) => ({
+  test: ALERT_RULES_TEST,
+  all: async () => ({ results: [row] }),
+});
+const CHANNEL_SERVER_TEST = (sql) =>
+  sql.includes("SELECT server_id FROM gc_channels WHERE id = ?");
+
+// console.capture: the failure-path pins assert the swallowed-write logs via
+// the worker-dispatch module's stub idiom (a captured array, restored after).
+function captureConsoleErrors() {
+  const original = console.error;
+  const captured = [];
+  console.error = (...args) => captured.push(args);
+  return {
+    captured,
+    restore() {
+      console.error = original;
+    },
+  };
+}
+
+test("a send's filter-alert write failure still stores the message AND surfaces the lost signal", async () => {
+  _resetFilterWordsCacheForTests();
+  _resetServerRulesCacheForTests();
+  const { row, headers } = await sessionFixtures();
+  const db = fakeDb([
+    sessionRoute(row),
+    { test: CHANNEL_ACCESS_TEST, first: async () => ({ id: CHANNEL_ID, server_id: 1, kind: "text" }) },
+    { test: CHANNEL_SERVER_TEST, first: async () => ({ server_id: 1 }) },
+    { test: SITE_SETTINGS_TEST, first: async () => null },
+    ALERT_RULES_ROUTE(),
+    // The post-insert alert link batch FAILS (D1 outage): the send survives.
+    {
+      test: (sql) => sql.includes("INSERT INTO gc_filter_alerts"),
+      run: async () => { throw new Error("boom"); },
+    },
+    { test: MESSAGE_RESELECT_TEST, run: async () => ({ meta: { changes: 1, last_row_id: 11 }, results: [messageRow({ id: 11, body: "alert badword" })] }) },
+  ]);
+  const consoleCapture = captureConsoleErrors();
+  let response;
+  try {
+    response = await dispatch(
+      postJson(`/api/channels/${CHANNEL_ID}/messages`, { body: "alert badword", clientMessageId: "cccccccc" }, headers),
+      envWithLimiters({ GOOBER_DB: db }),
+    );
+  } finally {
+    consoleCapture.restore();
+  }
+
+  // The never-500-the-message rule stands: the alert write's failure never
+  // touches the deliverable response.
+  assert.equal(response.status, 201);
+  assert.equal((await bodyOf(response)).message.id, 11);
+  // But the swallowed moderation signal is VISIBLE now: the failure logs the
+  // message id + channel so the desk can audit the lost alert.
+  assert.equal(consoleCapture.captured.length, 1);
+  assert.equal(consoleCapture.captured[0][0], "Filter alert write failed:");
+  assert.deepEqual(consoleCapture.captured[0][2], { channelId: CHANNEL_ID, messageId: 11 });
+});
+
+test("a send's owner-timeout write failure surfaces before the send succeeds", async () => {
+  _resetFilterWordsCacheForTests();
+  _resetServerRulesCacheForTests();
+  const { row, headers } = await sessionFixtures();
+  const db = fakeDb([
+    sessionRoute(row),
+    { test: CHANNEL_ACCESS_TEST, first: async () => ({ id: CHANNEL_ID, server_id: 1, kind: "text" }) },
+    { test: CHANNEL_SERVER_TEST, first: async () => ({ server_id: 1 }) },
+    { test: SITE_SETTINGS_TEST, first: async () => null },
+    ALERT_RULES_ROUTE({
+      ...ALERT_RULE_ROW,
+      actions: JSON.stringify(["alert", "timeout"]),
+    }),
+    // The timeout write itself fails; the alert link batch still succeeds.
+    {
+      test: (sql) => sql.includes("UPDATE gc_server_members SET timed_out_until = ?"),
+      run: async () => { throw new Error("boom"); },
+    },
+    { test: MESSAGE_RESELECT_TEST, run: async () => ({ meta: { changes: 1, last_row_id: 11 }, results: [messageRow({ id: 11, body: "alert badword" })] }) },
+  ]);
+  const consoleCapture = captureConsoleErrors();
+  let response;
+  try {
+    response = await dispatch(
+      postJson(`/api/channels/${CHANNEL_ID}/messages`, { body: "alert badword", clientMessageId: "cccccccc" }, headers),
+      envWithLimiters({ GOOBER_DB: db }),
+    );
+  } finally {
+    consoleCapture.restore();
+  }
+
+  assert.equal(response.status, 201);
+  assert.equal((await bodyOf(response)).message.id, 11);
+  assert.equal(consoleCapture.captured.length, 1);
+  assert.equal(consoleCapture.captured[0][0], "Timeout write failed:");
+  assert.deepEqual(consoleCapture.captured[0][2], { channelId: CHANNEL_ID, serverId: 1 });
+});
+
+test("an edit's filter-alert write failure still stores the edit AND surfaces the lost signal", async () => {
+  _resetFilterWordsCacheForTests();
+  _resetServerRulesCacheForTests();
+  const { row, headers } = await sessionFixtures();
+  const edited = messageRow({ id: 5, body: "edited badword", edited_at: 999 });
+  const db = fakeDb([
+    sessionRoute(row),
+    { test: SITE_SETTINGS_TEST, first: async () => null },
+    // The edited message lives in a server channel, so the edit-lane gates
+    // run: membership + layers (empty overwrites = the graceful default),
+    // the member-state gate OFF (no row), then the rules gate.
+    { test: (sql) => sql.includes("FROM gc_messages m JOIN gc_channels c"), first: async () => ({ channel_id: CHANNEL_ID, server_id: 1, kind: "text" }) },
+    { test: (sql) => sql.includes("SELECT 1 FROM gc_server_members"), first: async () => 1 },
+    { test: (sql) => sql.includes("SELECT role FROM gc_server_members"), first: async () => ({ role: "member" }) },
+    { test: (sql) => sql.includes("FROM gc_member_roles gmr"), all: async () => ({ results: [] }) },
+    { test: (sql) => sql.includes("FROM gc_channel_overwrites o"), all: async () => ({ results: [] }) },
+    { test: CHANNEL_SERVER_TEST, first: async () => ({ server_id: 1 }) },
+    { test: (sql) => sql.includes("FROM gc_server_members m JOIN users u"), first: async () => null },
+    ALERT_RULES_ROUTE(),
+    {
+      test: (sql) => sql.includes("INSERT INTO gc_filter_alerts"),
+      run: async () => { throw new Error("boom"); },
+    },
+    { test: EDIT_UPDATE_TEST, run: async () => ({ meta: { changes: 1 } }) },
+    { test: MESSAGE_BY_ID_TEST, first: async () => edited },
+    { test: ATTACH_ONE_TEST, all: async () => ({ results: [] }) },
+  ]);
+  const consoleCapture = captureConsoleErrors();
+  let response;
+  try {
+    response = await dispatch(
+      jsonRequest("PATCH", "/api/messages/5", { body: "edited badword" }, headers),
+      envWithLimiters({ GOOBER_DB: db }),
+    );
+  } finally {
+    consoleCapture.restore();
+  }
+
+  assert.equal(response.status, 200);
+  assert.equal((await bodyOf(response)).message.body, "edited badword");
+  assert.equal(consoleCapture.captured.length, 1);
+  assert.equal(consoleCapture.captured[0][0], "Filter alert write failed:");
+  assert.deepEqual(consoleCapture.captured[0][2], { channelId: CHANNEL_ID, messageId: 5 });
 });
 
 // --- the 0021 body tiers: free 2000, plus 4000 -------------------------------------

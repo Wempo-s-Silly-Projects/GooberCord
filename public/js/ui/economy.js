@@ -120,6 +120,13 @@ export async function loadLedger(before) {
 // non-member are never toasts), and only the granted case may surface, at
 // most once a day. Join loss or a WS drop calls stop() — no catch-up ticks
 // queue while disconnected.
+//
+// The catch only ever sees REJECTED tick calls — api() throws on a network
+// fault or a non-2xx status — so a network/5xx failure is swallowed BUT
+// surfaced one quiet console.warn per session (no DOM churn, the seat stays
+// alive). A granted:false cap/gate case rides the 200 response as data and
+// never reaches the catch: the silent-in-response contract is untouched.
+let tickFailureSurfaced = false;
 export function startVoiceTicks(channelId) {
   const snapshot = store.get("coins") || {};
   const windowSeconds = Number(snapshot.voice?.windowSeconds) > 0
@@ -137,9 +144,13 @@ export function startVoiceTicks(channelId) {
       });
       if (result?.balance !== undefined) store.set({ coins: result });
       if (result?.granted) onVoiceEarn();
-    } catch {
-      // A failed tick is routine (cap and gate cases ride granted:false);
-      // the loop keeps its seat until stop() ends it.
+    } catch (error) {
+      if (!tickFailureSurfaced) {
+        tickFailureSurfaced = true;
+        const status = Number.isInteger(error?.status) ? " (" + error.status + ")" : "";
+        console.warn("coins tick failed — retrying next tick" + status);
+      }
+      // The loop keeps its seat either way until stop() ends it.
     }
   }, windowSeconds * 1000);
   return stop;
