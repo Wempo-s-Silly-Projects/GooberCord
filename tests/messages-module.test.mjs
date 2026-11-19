@@ -28,10 +28,11 @@ import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
 
 import { handleMessageRoutes, sendMessageToChannel } from "../api/messages.mjs";
+import { prepareAttachmentBytes } from "../api/media.mjs";
 import { _resetFilterWordsCacheForTests } from "../api/filterstore.mjs";
 import { randomToken, sha256Hex, nowSeconds } from "../api/core/crypto.mjs";
 import { HttpError, json } from "../api/core/http.mjs";
-import { GC_FREE_MESSAGE_MAX, GC_PLUS_MESSAGE_MAX, RATE_LIMIT_BINDINGS } from "../constants.mjs";
+import { GC_ATTACHMENT_OBJECT_PREFIX, GC_FREE_MESSAGE_MAX, GC_PLUS_MESSAGE_MAX, RATE_LIMIT_BINDINGS } from "../constants.mjs";
 
 const ORIGIN = "http://localhost";
 const USER_ID = 7;
@@ -786,6 +787,188 @@ test("sendMessageToChannel is callable without a request and keys a null client 
     batch.statements[2].sql,
     /client_message_id IS NULL ORDER BY m\.id DESC LIMIT 1$/,
   );
+});
+
+// --- the send's attachment: the R2 byte law (media.mjs's shared store) ------------
+
+// The smallest PNG the intake sanitizer accepts (the media r2-port file's
+// fixtures' shape): signature, IHDR (13 data bytes), IEND.
+function pngChunk(type, data = new Uint8Array(0)) {
+  const out = new Uint8Array(12 + data.length);
+  const length = data.length;
+  out[0] = (length >>> 24) & 0xff;
+  out[1] = (length >>> 16) & 0xff;
+  out[2] = (length >>> 8) & 0xff;
+  out[3] = length & 0xff;
+  for (let i = 0; i < 4; i++) out[4 + i] = type.charCodeAt(i);
+  out.set(data, 8);
+  return out;
+}
+
+function pngImage() {
+  const parts = [
+    new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    pngChunk("IHDR", new Uint8Array(13)),
+    pngChunk("IEND"),
+  ];
+  const out = new Uint8Array(parts.reduce((total, part) => total + part.length, 0));
+  let at = 0;
+  for (const part of parts) {
+    out.set(part, at);
+    at += part.length;
+  }
+  return out;
+}
+
+// A Map-backed fake R2 bucket (the media r2-port file's shape): the put's
+// store plus a call log for the ordering verdicts.
+function fakeR2() {
+  const store = new Map();
+  const calls = [];
+  return {
+    store,
+    calls,
+    async get(key) {
+      calls.push({ op: "get", key });
+      return store.has(key)
+        ? { key, arrayBuffer: async () => store.get(key).slice(0).buffer }
+        : null;
+    },
+    async put(key, value) {
+      calls.push({ op: "put", key });
+      store.set(key, new Uint8Array(value));
+    },
+    async delete(key) {
+      calls.push({ op: "delete", key });
+      return store.get(key) !== undefined;
+    },
+  };
+}
+
+const SEND_ATTACHMENT_INSERT = (lastRowId, changes = 1) => ({
+  test: (sql) => sql.startsWith("INSERT INTO gc_attachments"),
+  run: async () => ({ meta: { changes, last_row_id: lastRowId } }),
+});
+
+const SEND_RESELECT = {
+  test: MESSAGE_RESELECT_TEST,
+  run: async () => ({
+    meta: { changes: 1, last_row_id: 13 },
+    results: [messageRow({ id: 13, body: "with a png" })],
+  }),
+};
+
+// The direct primitive call: sendMessageToChannel(env, user, CHANNEL_ID,
+// body, null, preparedAttachment) with the media module's own prepare.
+function sendAttachmentRoutes(attachmentRoute) {
+  return [
+    { test: SITE_SETTINGS_TEST, first: async () => ({ value: "", updated_at: 1 }) },
+    attachmentRoute,
+    SEND_RESELECT,
+  ];
+}
+
+test("a send with an attachment under GC_MEDIA commits the row alone and awaits the R2 put before the send resolves", async () => {
+  _resetFilterWordsCacheForTests();
+  const user = { id: USER_ID, username: "wempos", role: "member" };
+  const r2 = fakeR2();
+  const db = fakeDb(sendAttachmentRoutes(SEND_ATTACHMENT_INSERT(21)));
+  const { message } = await sendMessageToChannel(
+    { GOOBER_DB: db, GC_MEDIA: r2 },
+    user,
+    CHANNEL_ID,
+    "with a png",
+    null,
+    prepareAttachmentBytes(pngImage()),
+  );
+  assert.equal(message.id, 13);
+  // The put is AWAITED on the send path: the object is already in the
+  // bucket (gc-attachments/<row id>) when the send resolves — no background
+  // ride left to settle after the delivery.
+  assert.deepEqual(r2.calls, [{ op: "put", key: GC_ATTACHMENT_OBJECT_PREFIX + "21" }]);
+  assert.deepEqual(Uint8Array.from(r2.store.get(GC_ATTACHMENT_OBJECT_PREFIX + "21")), pngImage());
+  // The byte store of record: the batch carried the attachment row ALONE —
+  // no chunk write-through under the binding.
+  const batch = db.calls.find((call) => call.call === "batch");
+  assert.ok(batch.statements.some((statement) => statement.sql.startsWith("INSERT INTO gc_attachments")));
+  assert.ok(!batch.statements.some((statement) => statement.sql.includes("INSERT INTO gc_attachment_chunks")));
+});
+
+test("a failed R2 put on the send's attachment sweeps the byte-less pending row and fails the send 503", async () => {
+  _resetFilterWordsCacheForTests();
+  const user = { id: USER_ID, username: "wempos", role: "member" };
+  const r2 = fakeR2();
+  r2.put = async () => {
+    r2.calls.push({ op: "put" });
+    throw new Error("bucket down");
+  };
+  const db = fakeDb(sendAttachmentRoutes(SEND_ATTACHMENT_INSERT(21)));
+  await assert.rejects(
+    sendMessageToChannel(
+      { GOOBER_DB: db, GC_MEDIA: r2 },
+      user,
+      CHANNEL_ID,
+      "with a png",
+      null,
+      prepareAttachmentBytes(pngImage()),
+    ),
+    (error) => error instanceof HttpError && error.status === 503,
+  );
+  assert.deepEqual(r2.calls.map((call) => call.op), ["put"]);
+  // The sweep: the byte-less pending attachment row leaves (the committed
+  // message row STAYS — the batch is one D1 execute, it cannot un-commit);
+  // the 503 is the send's undelivered verdict, so a delivered-never with an
+  // R2-failed attachment is unschedulable.
+  const sweep = db.calls.find(
+    (call) => call.call === "run" && call.sql.startsWith("DELETE FROM gc_attachments WHERE message_id = ?") && call.sql.includes("status = 'pending'"),
+  );
+  assert.ok(sweep, "the compensating attachment sweep ran");
+  assert.deepEqual(sweep.bound, [13]);
+  // The sweep lands BEFORE anything downstream resolved on the attachment's
+  // behalf — the attachment read after it finds nothing.
+  const attachmentRead = db.calls.find((call) => call.call === "all" && call.sql.includes("FROM gc_attachments"));
+  assert.ok(!attachmentRead);
+});
+
+test("an idempotent replay whose attachment already exists neither re-puts nor re-sweeps", async () => {
+  _resetFilterWordsCacheForTests();
+  const user = { id: USER_ID, username: "wempos", role: "member" };
+  const r2 = fakeR2();
+  const db = fakeDb([
+    { test: SITE_SETTINGS_TEST, first: async () => ({ value: "", updated_at: 1 }) },
+    { test: (sql) => sql.startsWith("INSERT INTO gc_messages"), run: async () => ({ meta: { changes: 0, last_row_id: 0 } }) },
+    SEND_ATTACHMENT_INSERT(0, 0),
+    SEND_RESELECT,
+  ]);
+  const { created } = await sendMessageToChannel(
+    { GOOBER_DB: db, GC_MEDIA: r2 },
+    user,
+    CHANNEL_ID,
+    "with a png",
+    null,
+    prepareAttachmentBytes(pngImage()),
+  );
+  assert.equal(created, false);
+  assert.deepEqual(r2.calls, [], "the already-attached replay rides no bucket write");
+});
+
+test("a send with an attachment without GC_MEDIA keeps the legacy D1 chunk intake byte-identically", async () => {
+  _resetFilterWordsCacheForTests();
+  const user = { id: USER_ID, username: "wempos", role: "member" };
+  const db = fakeDb(sendAttachmentRoutes(SEND_ATTACHMENT_INSERT(21)));
+  const { message } = await sendMessageToChannel(
+    { GOOBER_DB: db },
+    user,
+    CHANNEL_ID,
+    "with a png",
+    null,
+    prepareAttachmentBytes(pngImage()),
+  );
+  assert.equal(message.id, 13);
+  // The write-through is the no-binding lane's byte store: the batch still
+  // carries the chunk INSERTs (one per 64k page), and no bucket exists at all.
+  const batch = db.calls.find((call) => call.call === "batch");
+  assert.ok(batch.statements.some((statement) => statement.sql.startsWith("INSERT INTO gc_attachment_chunks")));
 });
 
 // --- PATCH /api/messages/:id ------------------------------------------------------

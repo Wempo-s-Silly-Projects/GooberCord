@@ -59,7 +59,14 @@ import {
   timeoutAsOwnerSql,
 } from "./filterrules.mjs";
 import { ensureFilterWords, filterWords } from "./filterstore.mjs";
-import { messageAttachmentStatements, prepareAttachmentBytes, readMultipartWithImage } from "./media.mjs";
+import {
+  SEND_ATTACHMENT_STORE_FAILED_ERROR,
+  messageAttachmentSweepStatement,
+  messageAttachmentStatements,
+  prepareAttachmentBytes,
+  putAttachmentObject,
+  readMultipartWithImage,
+} from "./media.mjs";
 import { attachmentCapBytes, plusActiveExpr, plusPerkActive, publicIsPlus } from "./plus.mjs";
 import {
   effectivePermissions,
@@ -717,12 +724,14 @@ const ATTACHMENT_REFERENCE_UPDATE_SQL =
 // validation, the word filter, the idempotent insert, the channel last_* bump,
 // and the follow-up triple SELECT are ONE atomic batch; the resolved row is
 // what both callers return. With `attachment` prepared (Task 6's multipart
-// send), the attachment's metadata INSERT and its chunk INSERTs ride BETWEEN
-// the last_* bump and the reselect in that same batch — media.mjs owns their
-// SQL, so the idempotency/bump logic is never duplicated by the multipart
-// branch. Returns { message, created } — `created` distinguishes a fresh
-// insert from an idempotent replay of the same (channel, author,
-// client_message_id) triple.
+// send), the attachment's metadata INSERT — and, without GC_MEDIA (local
+// dev), its legacy chunk INSERTs — ride BETWEEN the last_* bump and the
+// reselect in that same batch (with the binding the R2 bucket is the byte
+// store of record and the AWAITED put rides after the commit, fail-closed —
+// media.mjs owns the SQL and the sweep, so the idempotency/bump logic is
+// never duplicated by the multipart branch). Returns { message, created } —
+// `created` distinguishes a fresh insert from an idempotent replay of the
+// same (channel, author, client_message_id) triple.
 export async function sendMessageToChannel(
   env,
   user,
@@ -834,7 +843,13 @@ export async function sendMessageToChannel(
     env.GOOBER_DB.prepare(CHANNEL_LAST_MESSAGE_UPDATE_SQL)
       .bind(channelId, channelId, channelId),
   ];
+  // The attachment's batch slot is recorded BEFORE the pushes below — the
+  // put gate reads that statement's result (changes==1 means THIS batch
+  // wrote the row; a replay whose attachment already exists changed 0 and
+  // neither re-puts nor re-sweeps).
+  let attachmentInsertAt = -1;
   if (preparedAttachment) {
+    attachmentInsertAt = statements.length;
     statements.push(
       ...messageAttachmentStatements(env, authorId, channelId, clientMessageId, preparedAttachment, now),
     );
@@ -890,6 +905,33 @@ export async function sendMessageToChannel(
   const row = results[results.length - 1]?.results?.[0];
   if (!row) {
     throw new HttpError(500, "The message could not be saved. Please try again.");
+  }
+
+  // The attachment's store-of-record put (the send batch's twin of the
+  // standalone intake): the message row is already committed — the batch is
+  // one D1 execute — so the compensating path is the ATTACHMENT's. The put
+  // is AWAITED before the send resolves (never a delivered send with an
+  // R2-failed attachment), and a failed put sweeps the byte-less pending row
+  // and fails the send 503. The idempotent retry re-rides the whole batch:
+  // the message insert changes nothing, the attachment reinserts through the
+  // batch's NOT EXISTS guard (the sweep emptied the slot) and re-puts. A
+  // last_row_id the batch never named is treated exactly like a failed put.
+  if (preparedAttachment && env.GC_MEDIA &&
+      Number(results[attachmentInsertAt]?.meta?.changes) === 1) {
+    const attachmentId = Number(results[attachmentInsertAt]?.meta?.last_row_id);
+    let stored = false;
+    if (Number.isInteger(attachmentId) && attachmentId > 0) {
+      try {
+        await putAttachmentObject(env, attachmentId, preparedAttachment.bytes);
+        stored = true;
+      } catch {
+        stored = false;
+      }
+    }
+    if (!stored) {
+      await messageAttachmentSweepStatement(env, Number(row.id)).run();
+      throw new HttpError(503, SEND_ATTACHMENT_STORE_FAILED_ERROR);
+    }
   }
 
   const attachmentIds = await loadAttachmentIds(env, Number(row.id), authorId);

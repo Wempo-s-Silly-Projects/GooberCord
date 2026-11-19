@@ -30,7 +30,7 @@ import { handleMediaRoutes } from "../api/media.mjs";
 import { sniffAudioMime, audioResponse } from "../api/core/audio.mjs";
 import { randomToken, sha256Hex, nowSeconds } from "../api/core/crypto.mjs";
 import { HttpError, json } from "../api/core/http.mjs";
-import { RATE_LIMIT_BINDINGS, GC_SOUNDBOARD_MAX_PER_SERVER, GC_SOUNDBOARD_SOUND_MAX_BYTES } from "../constants.mjs";
+import { RATE_LIMIT_BINDINGS, GC_ATTACHMENT_OBJECT_PREFIX, GC_SOUNDBOARD_MAX_PER_SERVER, GC_SOUNDBOARD_SOUND_MAX_BYTES } from "../constants.mjs";
 
 const ORIGIN = "http://localhost";
 const USER_ID = 7;
@@ -121,7 +121,9 @@ async function jsonCreate(routes, body, method = "POST") {
   return { response, db };
 }
 
-async function multipartCreate(routes, name, fileBytes) {
+// The multipart create: { response, db } — the caller reads the db's recorded
+// calls. `extraEnv` carries the R2-facing bindings (the byte-law pins).
+async function multipartCreate(routes, name, fileBytes, extraEnv = {}) {
   const db = fakeDb([...sessionRoutes(), ...routes]);
   const form = new FormData();
   form.append("name", name);
@@ -132,9 +134,34 @@ async function multipartCreate(routes, name, fileBytes) {
       headers: { ...(await authHeaders()), Origin: ORIGIN },
       body: form,
     }),
-    envWithLimiters({ GOOBER_DB: db }),
+    envWithLimiters({ GOOBER_DB: db, ...extraEnv }),
   );
   return { response, db };
+}
+
+// The Map-backed fake R2 bucket (the media r2-port file's shape): the put's
+// store plus a call log for the ordering verdicts.
+function fakeR2() {
+  const store = new Map();
+  const calls = [];
+  return {
+    store,
+    calls,
+    async get(key) {
+      calls.push({ op: "get", key });
+      return store.has(key)
+        ? { key, arrayBuffer: async () => store.get(key).slice(0).buffer }
+        : null;
+    },
+    async put(key, value) {
+      calls.push({ op: "put", key });
+      store.set(key, new Uint8Array(value));
+    },
+    async delete(key) {
+      calls.push({ op: "delete", key });
+      return store.delete(key);
+    },
+  };
 }
 
 function fakeDb(routes = []) {
@@ -436,7 +463,64 @@ test("the multipart intake stores the sniffed audio through the SAME standalone 
     const attachmentInsert = db.calls.find((call) => call.call === "run" && call.sql.startsWith("INSERT INTO gc_attachments"));
     assert.ok(attachmentInsert, "the standalone intake ran");
     assert.equal(attachmentInsert.bound[1], mime, "the SNIFFED mime rides the row");
+    // No binding (local dev): the legacy chunk write-through stays the byte
+    // store — the batch carries row + chunk INSERTs byte-identically.
+    const legacyBatch = db.calls.find((call) => call.call === "batch");
+    assert.ok(
+      legacyBatch.statements.some((statement) => statement.sql.startsWith("INSERT INTO gc_attachment_chunks")),
+      "no binding: the D1 chunk intake rides",
+    );
   }
+});
+
+// --- the sound lane's R2 byte law (media.mjs's shared standalone intake) ----------
+
+const SOUND_ATTACHMENT_ROUTE = {
+  test: (sql) => sql.startsWith("INSERT INTO gc_attachments"),
+  run: async () => ({ meta: { changes: 1, last_row_id: 77 } }),
+};
+
+test("the sound intake under GC_MEDIA commits the ledger row alone and awaits the R2 put before the 201", async () => {
+  const r2 = fakeR2();
+  const { response, db } = await multipartCreate(
+    [SOUND_ATTACHMENT_ROUTE, ...soundRoutes({ boosts: 2 })],
+    "dropthebass", ID3_MP3, { GC_MEDIA: r2 },
+  );
+  assert.equal(response.status, 201);
+  // The byte store of record: the intake batch carries the ledger row ALONE.
+  const batch = db.calls.find((call) => call.call === "batch");
+  assert.equal(batch.statements.length, 1);
+  assert.ok(batch.statements[0].sql.startsWith("INSERT INTO gc_attachments"));
+  // The put is AWAITED on the intake path: the object is already in the
+  // bucket (gc-attachments/<row id>) by the time the route's 201 returns.
+  assert.equal(r2.calls.length, 1);
+  assert.equal(r2.calls[0].op, "put");
+  assert.equal(r2.calls[0].key, GC_ATTACHMENT_OBJECT_PREFIX + "77");
+  assert.deepEqual(Uint8Array.from(r2.store.get(GC_ATTACHMENT_OBJECT_PREFIX + "77")), ID3_MP3);
+});
+
+test("a failed R2 put on the sound intake sweeps the byte-less pending row and rejects 503", async () => {
+  const r2 = fakeR2();
+  r2.put = async () => {
+    r2.calls.push({ op: "put" });
+    throw new Error("bucket down");
+  };
+  const { response, db } = await multipartCreate(
+    [SOUND_ATTACHMENT_ROUTE, ...soundRoutes({ boosts: 2 })],
+    "dropthebass", ID3_MP3, { GC_MEDIA: r2 },
+  );
+  // Fail closed: exactly one put attempt, then the compensating delete
+  // sweeps the just-inserted pending row and the create rejects — never a
+  // committed byte-less asset, and no gc_sounds row ever references it.
+  assert.equal(response.status, 503);
+  assert.match((await bodyOf(response)).error, /upload could not be stored/);
+  assert.deepEqual(r2.calls.map((call) => call.op), ["put"]);
+  const rollback = db.calls.find(
+    (call) => call.call === "run" && call.sql.startsWith("DELETE FROM gc_attachments WHERE id = ?") && call.sql.includes("status = 'pending'"),
+  );
+  assert.ok(rollback, "the compensating pending-row sweep ran");
+  assert.deepEqual(rollback.bound, [77]);
+  assert.ok(!db.calls.some((call) => /INSERT INTO gc_sounds/.test(call.sql || "")));
 });
 
 test("a duplicate name is the UNIQUE violation answered 409; a bad name is the shape 400", async () => {
