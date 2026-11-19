@@ -27,21 +27,29 @@ import { t } from "../i18n.js";
 // --- mirrored constants (G-4: MAX_ATTACHMENT_BYTES, GC_UPLOAD_PART_BYTES and
 // GC_UPLOAD_LANE_MAX_BYTES (constants.mjs) — the caps the backend enforces
 // (api/uploads.mjs:225 and 261), never raised client-side. chat.js imports
-// these; they are declared ONCE here.
+// these; they are declared ONCE here (wave-19: the tier pairs joined this
+// seat as mirrors, the tier resolver attachmentCapBytes stays server-side;
+// the 125 MiB lane bound stays the working lane's engineering ceiling — the
+// 1 GiB tier arm parks behind the chunk byte leg's R2 flip, the shared-D1
+// row's law).
 export const UI_ATTACHMENT_FREE_MAX = 20971520; // MAX_ATTACHMENT_BYTES
 export const UI_UPLOAD_PART_BYTES = 1024000; // GC_UPLOAD_PART_BYTES (GC_UPLOAD_PART_CHUNKS 16 × ATTACHMENT_CHUNK_BYTES 64_000)
 export const UI_UPLOAD_LANE_MAX_BYTES = 131072000; // GC_UPLOAD_LANE_MAX_BYTES
+export const UI_ATTACHMENT_MINI_MAX = 52428800; // GC_MINI_ATTACHMENT_BYTES
+export const UI_ATTACHMENT_PLUS_MAX = 1073741824; // GC_PLUS_ATTACHMENT_BYTES
 
 // The uploadId shape the commit + abandon routes resolve (api/uploads.mjs:211
 // UPLOAD_ID_RE) — a malformed token never wires either route.
 const UPLOAD_ID_OK_RE = /^[A-Za-z0-9_-]{12}$/;
 
-// The single-shot lane's own predicate: the D1 chunked lane owns ONLY the
-// sizes the standalone intake (readMultipartWithImage's default 20 MiB cap,
-// api/media.mjs:697) cannot take — sizes past the lane's own GC_UPLOAD_LANE_
-// MAX_BYTES are no door either, whatever the cap table's ceiling says.
-export function ridesChunkLane(fileSize) {
-  return fileSize > UI_ATTACHMENT_FREE_MAX && fileSize <= UI_UPLOAD_LANE_MAX_BYTES;
+// The chunked lane's own predicate (wave-19: tier-aware): the D1 chunked
+// lane belongs ONLY to a full-plus term (api/uploads.mjs:234 — Mini and free
+// never pass the lane's tier gate; a Mini member's 20-50 MiB file rides the
+// single-shot pair instead of a server 403), and it opens ONLY for the sizes
+// past the free cap and inside the working lane bound (the 125 MiB ceiling
+// below the parked 1 GiB tier arm — GC_UPLOAD_LANE_MAX_BYTES above).
+export function ridesChunkLane(fileSize, tier = null) {
+  return tier === "plus" && fileSize > UI_ATTACHMENT_FREE_MAX && fileSize <= UI_UPLOAD_LANE_MAX_BYTES;
 }
 
 // openChunkedUpload(file) → { send, cancel }: one door act = the composer's

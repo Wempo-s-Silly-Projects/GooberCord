@@ -89,6 +89,20 @@ export async function attachmentCapBytes(env, userId, now) {
   };
 }
 
+// The SINGLE-SHOT cap mapping (wave-19, the upload tiers): the single-buffer
+// intake lanes admit what the chunked lane does NOT own — a full-plus term's
+// window stays the free pair (anything larger rides the lane, whose ceiling
+// is its own GC_PLUS_ATTACHMENT_BYTES), a Mini term rides exactly the blessed
+// 50 MiB pair, and free (the resolver's null tier) never gains a byte. The
+// routes pass this pair into readMultipartWithImage / prepareAttachmentBytes
+// — never the resolver's raw tier pair (a plus term's 1 GiB is the LANE's
+// ceiling, never a whole-buffered single-shot admit).
+export function singleShotAttachmentCaps(caps) {
+  return caps && caps.tier === "mini"
+    ? { fileBytes: caps.fileBytes, requestBytes: caps.requestBytes }
+    : { fileBytes: MAX_ATTACHMENT_BYTES, requestBytes: MAX_ATTACHMENT_REQUEST_BYTES };
+}
+
 // The MINI-inclusive perk predicate (2026-11-17 matrix): the perks whose
 // matrix line carries "Goober+ Mini ... everything Mini has" — the 0020
 // custom-emoji-anywhere gate and the super-reaction tier — pass ANY ACTIVE

@@ -42,6 +42,7 @@ import {
   MAX_ATTACHMENT_BYTES,
   MAX_ATTACHMENT_REQUEST_BYTES,
 } from "../constants.mjs";
+import { attachmentCapBytes, singleShotAttachmentCaps } from "./plus.mjs";
 import {
   blobToUint8Array,
   imageResponse,
@@ -330,8 +331,8 @@ export async function insertStandaloneAttachment(env, uploaderId, prepared, now,
   return id;
 }
 
-export async function createAttachment(env, uploaderId, fileBytes) {
-  const prepared = prepareAttachmentBytes(fileBytes);
+export async function createAttachment(env, uploaderId, fileBytes, maxFileBytes = MAX_ATTACHMENT_BYTES) {
+  const prepared = prepareAttachmentBytes(fileBytes, maxFileBytes);
   const id = await insertStandaloneAttachment(
     env,
     uploaderId,
@@ -445,10 +446,8 @@ async function assembledChunkBytes(env, attachmentId) {
 // above the small lanes' single-buffer cap streams paged — SERVING_PAGE_ROWS
 // chunk rows per query (64 × 64,000 = 4,096,000 bytes), piped through one
 // TransformStream writer, so the 128 MB isolate never holds more than one
-// page and a lane-bound file (~125 MiB) needs 32 reads — headroom under the
-// free plan's 50-queries-per-invocation row both this comment and
-// constants.mjs cite. The page size is spelled as the literal 64 in the SQL
-// to stay one constant's truth (SERVING_PAGE_ROWS here).
+// page. The page size is spelled as the literal 64 in the SQL to stay one
+// constant's truth (SERVING_PAGE_ROWS here).
 const SERVING_PAGE_ROWS = 64;
 
 // Returns the streaming Response, or null for a chunk set that is not a
@@ -694,10 +693,21 @@ async function handleAttachmentServingRoute(request, env, attachmentId) {
 async function handleUploadAttachmentRoute(request, env, ctx) {
   const session = await requireUser(request, env);
   await rateLimit(request, env, "upload", "user:" + session.user.id);
-  const files = (await readMultipartWithImage(request)).files;
+  // The SINGLE-SHOT window is the tier's own (wave-19: free 20 MiB, Mini the
+  // blessed 50 MiB pair, full-plus staying 20 MiB here — its larger files
+  // ride the chunk lane, api/uploads.mjs:234). singleShotAttachmentCaps in
+  // api/plus.mjs maps the resolver's tier pair; tooLargeError paints the
+  // member's own number ("Images must be 50 MiB or smaller." for Mini).
+  const singleShot = singleShotAttachmentCaps(
+    await attachmentCapBytes(env, Number(session.user.id), nowSeconds()),
+  );
+  const files = (await readMultipartWithImage(request, {
+    maxFileBytes: singleShot.fileBytes,
+    maxRequestBytes: singleShot.requestBytes,
+  })).files;
   if (files.length !== 1) throw new HttpError(400, "Attach exactly one image.");
 
-  const attachment = await createAttachment(env, Number(session.user.id), files[0]);
+  const attachment = await createAttachment(env, Number(session.user.id), files[0], singleShot.fileBytes);
   return json({ attachment: { id: attachment.id, status: attachment.status } }, 201);
 }
 

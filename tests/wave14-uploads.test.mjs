@@ -68,7 +68,8 @@ test("the client mirrors ride the G-4 literal law with provenance, declared ONCE
   // One seat: chat.js re-exports (the existing ui-chat pin keeps working) and
   // never re-declares the mirror out from under uploads.js.
   assert.doesNotMatch(CHAT, /export const UI_ATTACHMENT_FREE_MAX/);
-  assert.match(CHAT, /export \{ UI_ATTACHMENT_FREE_MAX \};/);
+  assert.match(CHAT, /export \{ UI_ATTACHMENT_FREE_MAX, UI_ATTACHMENT_MINI_MAX, UI_ATTACHMENT_PLUS_MAX \};/,
+    "wave-19: the re-export seats the tier mirrors too (declared ONCE in uploads.js)");
 });
 
 test("the part-bytes mirror EQUALS the constants.mjs formula result — computed, not asserted", () => {
@@ -112,10 +113,14 @@ test("the door slices bounded by GC_UPLOAD_PART_BYTES and reads the lane predica
   assert.match(UPLOADS_UI,
     /const part = file\.slice\(seq \* UI_UPLOAD_PART_BYTES, partEnd\);/,
     "each slice rides the mirrored part bytes, not an invented slice size");
-  assert.match(UPLOADS_UI, /export function ridesChunkLane\(fileSize\)/);
+  // Wave-19 hold: the predicate is tier-aware — the D1 chunked lane belongs
+  // only to a full-plus term (api/uploads.mjs:234), Mini rides the single-shot
+  // pair instead of a server 403; the WORKING bound (GC_UPLOAD_LANE_MAX_BYTES)
+  // is still the ceiling — the 1 GiB tier arm stays held (T-INFRA-CHUNK-R2).
+  assert.match(UPLOADS_UI, /export function ridesChunkLane\(fileSize, tier = null\)/);
   assert.match(UPLOADS_UI,
-    /return fileSize > UI_ATTACHMENT_FREE_MAX && fileSize <= UI_UPLOAD_LANE_MAX_BYTES;/,
-    "the chunked lane owns ONLY what the 20 MiB standalone intake cannot take");
+    /return tier === "plus" && fileSize > UI_ATTACHMENT_FREE_MAX && fileSize <= UI_UPLOAD_LANE_MAX_BYTES;/,
+    "the chunked lane owns ONLY what the 20 MiB standalone intake cannot take, for full-plus alone");
 });
 
 test("the door wires the three LIVE arms with the server's own field names", () => {
@@ -185,8 +190,8 @@ test("the composer routes beyond-the-threshold files through the door", () => {
   assert.match(CHAT, /import \{[^}]*openChunkedUpload[^}]*\} from "\.\/uploads\.js";/,
     "the mirrors + door import from the one module (the wave-13 idiom)");
   assert.match(CHAT, /import \{[^}]*ridesChunkLane[^}]*\} from "\.\/uploads\.js";/);
-  assert.match(CHAT, /if \(ridesChunkLane\(file\.size\)\) \{/,
-    "files the 20 MiB standalone intake cannot take ride the door");
+  assert.match(CHAT, /if \(ridesChunkLane\(file\.size, laneTier\)\) \{/,
+    "files the 20 MiB standalone intake cannot take ride the door (wave-19: the tier rides the predicate)");
   assert.match(CHAT, /openChunkedUpload\(file\)/, "one door act per composer act");
 });
 
@@ -272,9 +277,18 @@ test("the sink law: uploads mint nothing", () => {
   assert.doesNotMatch(UPLOADS_UI, /coin|ledger|balance/, "no coins ride the door");
 });
 
-test("the tier gate never rides the client — the mirrors carry no tier numbers", () => {
-  assert.doesNotMatch(UPLOADS_UI, /mini|tier|tierCap|GC_MINI|GC_PLUS/i,
-    "the door knows no tiers — attachmentCapBytes stays server-side (api/uploads.mjs:233)");
+test("the tier gate never rides the client as invented numbers — the mirrors are pinned, the resolver stays server-side", () => {
+  // Wave-19 retarget: the tier pairs joined uploads.js as MIRRORS (every
+  // number wave19-tiers.test.mjs pins against constants.mjs BOTH ways); the
+  // door still never invents a threshold and the tiers resolver
+  // attachmentCapBytes stays server-side (api/uploads.mjs:233).
+  assert.doesNotMatch(UPLOADS_UI, /attachmentCapBytes\(/,
+    "the tier resolver stays server-side — the client carries mirrors only");
+  assert.doesNotMatch(
+    UPLOADS_UI.match(/export const UI_\w+ = \d+;/g)?.join("\n") ?? "",
+    /= (?!20971520;|1024000;|131072000;|52428800;|1073741824;)\d+;/,
+    "every mirror rides the pinned five literals, never an invented one",
+  );
 });
 
 // --- the freeze (the wave-9 lesson, six instances) --------------------------

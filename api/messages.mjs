@@ -69,7 +69,7 @@ import {
   readMultipartWithImage,
   scheduleAttachmentObjectDelete,
 } from "./media.mjs";
-import { attachmentCapBytes, plusActiveExpr, plusPerkActive, publicIsPlus } from "./plus.mjs";
+import { attachmentCapBytes, plusActiveExpr, plusPerkActive, publicIsPlus, singleShotAttachmentCaps } from "./plus.mjs";
 import {
   effectivePermissions,
   enforceVerificationLevel,
@@ -1205,9 +1205,17 @@ function referenceFromBody(raw) {
 // sanitize) as the standalone upload — a body field is still required.
 async function handleSendMessageWithImageRoute(request, env, channelId, session) {
   // The plus upload tier rides the member's own row (the free pair for a
-  // non-buyer or a grace member — attachmentCapBytes in api/plus.mjs).
+  // non-buyer or a grace member — attachmentCapBytes in api/plus.mjs). The
+  // reader takes the SINGLE-SHOT pair mapped by singleShotAttachmentCaps
+  // (wave-19: Mini rides the blessed 50 MiB here; a full-plus term's request
+  // options never ride the raw tier pair — the 1 GiB row is the LANE's
+  // ceiling, not this route's whole-buffered window).
   const caps = await attachmentCapBytes(env, Number(session.user.id), nowSeconds());
-  const { fields, files } = await readMultipartWithImage(request, caps);
+  const singleShot = singleShotAttachmentCaps(caps);
+  const { fields, files } = await readMultipartWithImage(request, {
+    maxFileBytes: singleShot.fileBytes,
+    maxRequestBytes: singleShot.requestBytes,
+  });
   if (files.length > 1) throw new HttpError(400, "Attach at most one image.");
 
   const userId = Number(session.user.id);
@@ -1217,7 +1225,8 @@ async function handleSendMessageWithImageRoute(request, env, channelId, session)
   // Same pair of layer gates as the JSON send (VIEW vanishes, SEND 403s).
   await enforceChannelBits(env, channel, userId, ["VIEW", "SEND"]);
 
-  const preparedAttachment = files.length === 1 ? prepareAttachmentBytes(files[0], caps.fileBytes) : null;
+  const preparedAttachment =
+    files.length === 1 ? prepareAttachmentBytes(files[0], singleShot.fileBytes) : null;
   const bodyValue = typeof fields.body === "string" ? fields.body : undefined;
   const clientMessageId =
     fields.clientMessageId === undefined || fields.clientMessageId === ""

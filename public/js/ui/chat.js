@@ -53,6 +53,8 @@ import {
   openChunkedUpload,
   ridesChunkLane,
   UI_ATTACHMENT_FREE_MAX,
+  UI_ATTACHMENT_MINI_MAX,
+  UI_ATTACHMENT_PLUS_MAX,
   UI_UPLOAD_LANE_MAX_BYTES,
 } from "./uploads.js";
 
@@ -66,9 +68,9 @@ export const UI_GIF_PAGE_DEFAULT = 12;
 export const UI_GIF_PAGE_MAX = 24;
 // Wave-14 hand-off: UI_ATTACHMENT_FREE_MAX is declared ONCE in uploads.js
 // (G-4) — re-exported here so the composer's existing consumers keep working.
-export { UI_ATTACHMENT_FREE_MAX };
-export const UI_ATTACHMENT_MINI_MAX = 52428800; // GC_MINI_ATTACHMENT_BYTES
-export const UI_ATTACHMENT_PLUS_MAX = 1073741824; // GC_PLUS_ATTACHMENT_BYTES
+// Wave-19 hand-off: the tier mirrors joined the same seat (the 125 MiB lane
+// mirror stays seated — the working bound below the parked 1 GiB tier arm).
+export { UI_ATTACHMENT_FREE_MAX, UI_ATTACHMENT_MINI_MAX, UI_ATTACHMENT_PLUS_MAX };
 export const UI_REACTIONS_COMMON = ["👍", "❤️", "😂", "😮", "😢", "🙏", "🔥"];
 export const UI_REACTIONS_SUPER = ["✨", "💫", "🌟", "🎆", "🎇", "🌈", "🪄", "🩷"]; // GC_PLUS_REACTIONS
 export const UI_VOICE_MAX_PARTICIPANTS = 6; // GC_VOICE_MAX_PARTICIPANTS (the join button says "Full")
@@ -1056,17 +1058,24 @@ function buildComposer(channelId, channel, column) {
     const file = attachFile.files?.[0];
     if (!file) return;
     attachFile.value = "";
-    const tierCap = me?.isPlus && plusFullTerm(me)
-      ? UI_ATTACHMENT_PLUS_MAX
-      : me?.plusTier === "mini" ? UI_ATTACHMENT_MINI_MAX : UI_ATTACHMENT_FREE_MAX;
+    // The tier is computed once (wave-19) and answers BOTH the paint and the
+    // lane door: the tier cap paints the tier's own ceiling — full-plus's
+    // blessed 1 GiB paint, Mini's 50 MiB pair (single-shot, the
+    // readMultipartWithImage admit), free 20 MiB — never a re-declared one.
+    // The WORKING lane's own bound (the 125 MiB engineering ceiling below the
+    // parked 1 GiB tier arm — the chunk byte leg still rides D1) keeps its
+    // own answer beside it: a size past the bound paints the lane cap, never
+    // a byte sent to a server refusal.
+    const laneTier = me?.isPlus && plusFullTerm(me)
+      ? "plus"
+      : me?.plusTier === "mini" ? "mini" : null;
+    const tierCap = laneTier === "plus" ? UI_ATTACHMENT_PLUS_MAX
+      : laneTier === "mini" ? UI_ATTACHMENT_MINI_MAX : UI_ATTACHMENT_FREE_MAX;
     if (file.size > tierCap) {
       errorLine.textContent = t("gc.chat.attach.tooLarge", { mib: Math.round(tierCap / 1048576) });
       return;
     }
     if (file.size > UI_UPLOAD_LANE_MAX_BYTES) {
-      // Beyond the D1 chunk lane's own bound there is no door either
-      // (constants.mjs GC_UPLOAD_LANE_MAX_BYTES) — paint the lane cap, never
-      // send a byte to be refused.
       errorLine.textContent = t("gc.chat.attach.tooLarge", { mib: Math.round(UI_UPLOAD_LANE_MAX_BYTES / 1048576) });
       return;
     }
@@ -1075,12 +1084,13 @@ function buildComposer(channelId, channel, column) {
       return;
     }
     try {
-      if (ridesChunkLane(file.size)) {
+      if (ridesChunkLane(file.size, laneTier)) {
         // Wave-14: the chunked door — the first part opens the upload, the
         // commit births the row, the send links it by id; the strip paints
-        // the slice count actually sent (never an invented bar). The cap
-        // gates stay server-answered: a smaller-perk member's attempt rides
-        // the server's own refusal, painted verbatim below.
+        // the slice count actually sent (never an invented bar). Wave-19: the
+        // door opens only for a full-plus term (the predicate is tier-aware),
+        // so a smaller-perk member's oversized answer never rides the server's
+        // lane 403 — the tier cap refused the byte upstairs.
         laneDoor = openChunkedUpload(file);
         const laneProgress = h("span", { class: "muted",
           text: t("gc.chat.attach.laneProgress", { done: 0, total: laneDoor.totalParts }) });

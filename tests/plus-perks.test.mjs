@@ -271,6 +271,14 @@ const termRoute = (renews_until) => ({
   first: async () => (renews_until === null ? null : { renews_until }),
 });
 const emptyCosmeticsRoute = { test: COSMETICS_ROWR_TEST, first: async () => null };
+// Wave-19: the /me tier seat — the route's own named-bind read (the :uid
+// shape) answers the ROW { active, plusTier }, never the perk truth's
+// { renews_until } shape.
+const TIER_ROW_TEST = (sql) => sql.startsWith("SELECT renews_until > :now AS active, tier AS plusTier");
+const tierRowRoute = (active, plusTier) => ({
+  test: TIER_ROW_TEST,
+  first: async () => ({ active, plusTier }),
+});
 
 // --- /api/me: the badge, the folded cosmetics -------------------------------------
 
@@ -279,12 +287,14 @@ test("GET /api/me folds the boolean badge: an active term reads isPlus true", as
     sessionRoute,
     { test: ACCENTS_TEST, first: async () => ({ accent_color: "#abc", tagline: "plus owner" }) },
     { test: COSMETICS_ROWR_TEST, first: async () => ({ banner_color: "#1a2b3c", flair_text: "certified" }) },
-    termRoute(NOW + 1000),
+    tierRowRoute(1, "plus"),
   ]);
   const response = await dispatch(authed("GET", "/api/me"), envWithLimiters({ GOOBER_DB: db }));
   assert.equal(response.status, 200);
   const body = await bodyOf(response);
   assert.equal(body.user.isPlus, true);
+  // Wave-19: the active term's tier paints (the composer's laneTier reads it).
+  assert.equal(body.user.plusTier, "plus");
   assert.deepEqual(
     { banner: body.user.banner, flair: body.user.flair },
     { banner: "#1a2b3c", flair: "certified" },
@@ -297,7 +307,7 @@ test("GET /api/me: grace mints the FALSE badge with perks off, and the cosmetics
     sessionRoute,
     { test: ACCENTS_TEST, first: async () => null },
     { test: COSMETICS_ROWR_TEST, first: async () => ({ banner_color: null, flair_text: null }) },
-    termRoute(NOW - 1),
+    tierRowRoute(0, "mini"),
   ]);
   const response = await dispatch(authed("GET", "/api/me"), envWithLimiters({ GOOBER_DB: db }));
   assert.equal(response.status, 200);
@@ -306,6 +316,9 @@ test("GET /api/me: grace mints the FALSE badge with perks off, and the cosmetics
   // display shape's decision here via the strict perk term — grace reads
   // false on /api/me, the coin-shop view keeps its own grace-inclusive one.
   assert.equal(body.user.isPlus, false);
+  // Wave-19: a lapsed term adds NO plusTier key (the absence idiom) — the
+  // strict-active law gates the tier seat, not the tier's own stored value.
+  assert.equal("plusTier" in body.user, false);
   assert.equal("banner" in body.user, false, "an unset banner adds NO key (the additive idiom)");
   assert.equal("flair" in body.user, false);
 });
@@ -604,10 +617,16 @@ test("every surface binds the badge's `now` FIRST in textual order (the fragment
 
 // --- the media tier wiring -----------------------------------------------------------
 
-test("the media intake consumes the tier pair (messages.mjs passes attachmentCapBytes through)", () => {
+// WAVE-19 RETARGET: the send-with-image route never rode the raw tier pair —
+// readMultipartWithImage's options are maxFileBytes/maxRequestBytes, so the
+// old `readMultipartWithImage(request, caps)` destructured nothing and a
+// tier member's request gate silently stayed at the free cap. The route now
+// passes the SINGLE-SHOT pair singleShotAttachmentCaps maps (Mini's blessed
+// 50 MiB; full-plus stays 20 MiB here — its 1 GiB row is the LANE's ceiling).
+test("the media intake consumes the single-shot pair (messages.mjs maps the tier)", () => {
   const messages = readFileSync(new URL("../api/messages.mjs", import.meta.url), "utf8");
-  assert.match(messages, /import \{ attachmentCapBytes, plusActiveExpr, plusPerkActive, publicIsPlus \} from "\.\/plus\.mjs";/);
+  assert.match(messages, /attachmentCapBytes, plusActiveExpr, plusPerkActive, publicIsPlus, singleShotAttachmentCaps/);
   assert.match(messages, /attachmentCapBytes\(env, Number\(session\.user\.id\), nowSeconds\(\)\)/);
-  assert.match(messages, /readMultipartWithImage\(request, caps\)/);
-  assert.match(messages, /prepareAttachmentBytes\(files\[0\], caps\.fileBytes\)/);
+  assert.match(messages, /maxFileBytes: singleShot\.fileBytes/);
+  assert.match(messages, /prepareAttachmentBytes\(files\[0\], singleShot\.fileBytes\)/);
 });

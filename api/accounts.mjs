@@ -567,11 +567,11 @@ async function handleMeRoute(request, env) {
   // byte-for-byte by tests/contract-parity.test.mjs, so the Goober+ perks
   // fields CANNOT ride its SELECT. They land here instead, as one additive
   // read of the signed-in member's own row; everything the session carried
-  // is returned unchanged, the two perks keys are purely added.
+  // is returned unchanged, the added keys ride the additive shape.
   if (session.user) {
     const now = nowSeconds();
     const userId = Number(session.user.id);
-    const [perks, cosmeticsRow, plusActive] = await Promise.all([
+    const [perks, cosmeticsRow, plusRow] = await Promise.all([
       env.GOOBER_DB.prepare(
         "SELECT accent_color, tagline FROM users WHERE id = ? LIMIT 1",
       ).bind(userId).first(),
@@ -582,13 +582,21 @@ async function handleMeRoute(request, env) {
       // The badge/perk truth: the strict active term (renews_until > now) —
       // grace members keep a lapsed badge with perks OFF. api/plus.mjs's
       // two-predicate note explains the split from publicPlus's display.
-      plusPerkActive(env, userId, now),
+      // The tier rides the SAME row (wave-19: the upload tiers' client face —
+      // me.plusTier seats the composer's tier mirrors; no row, no key).
+      env.GOOBER_DB.prepare(
+        "SELECT renews_until > :now AS active, tier AS plusTier FROM gc_plus_state WHERE user_id = :uid LIMIT 1",
+      ).bind({ now, uid: userId }).first(),
     ]);
     const cosmetics = publicCosmetics(cosmeticsRow);
     const user = {
       ...session.user,
       ...userAccentColorTagline(perks),
-      isPlus: plusActive,
+      isPlus: Boolean(plusRow?.active),
+      // The upload tiers' seat (wave-19): only an ACTIVE term's tier paints —
+      // a lapsed term answers the strict-active law, absence adds no key
+      // (the accent pair's idiom).
+      ...(plusRow?.active && plusRow?.plusTier ? { plusTier: plusRow.plusTier } : {}),
       // Additive, the accent pair's idiom: an unset banner/flair adds NO key
       // (the 0005 shape is untouched for a member who never decorated).
       ...(cosmetics.banner !== null ? { banner: cosmetics.banner } : {}),
