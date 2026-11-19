@@ -19,7 +19,8 @@
 // The locale lane — the ONE i18n module (the kit's law: vanilla imperative,
 // no deps, no bundler). English is the only bundle that must be complete;
 // every other locale is pure data in public/locales/<lang>.json, fetched
-// with force-cache and applied progressively so a first paint never waits.
+// no-cache over the app-build stamp and applied progressively so the boot
+// never waits on a non-en seat.
 //
 // Copy laws the loader carries (docs/i18n/glossary.md is the rulebook):
 //   - locale JSON is DATA, never markup: the binding pass sets textContent
@@ -30,9 +31,9 @@
 //     that is the translators' law, not the loader's, but t() never
 //     rewrites what a bundle hands it.
 
-// The bundle seats this repo ships. A navigator-derived tag must sit in
-// this list (with the base-script fallback); a stored human choice may
-// name any seat — a 404 just fails open to English.
+// The bundle seats this repo ships. Every seat that reaches the lane —
+// navigator-derived or stored — rides the shipped-base gate below; the en
+// floor catches whatever the gate refuses.
 export const BUNDLE_LANGS = ["en", "es", "de", "fr", "pt", "ru", "ja", "zh", "ar"];
 
 const STORE_KEY = "lang";
@@ -151,7 +152,11 @@ export async function initI18n() {
   try {
     enBundle = await loadBundle("en");
   } catch {
-    try { enBundle = await fetch(bundleUrl("en"), { cache: "reload" }).then((r) => r.json()); } catch { /* the catalog takes {}, tails stay visible */ }
+    // the poisoned-copy retry: ONE uncached re-fetch
+    try {
+      const retry = await fetch(bundleUrl("en"), { cache: "reload" });
+      enBundle = await retry.json();
+    } catch { /* the catalog takes {}, tails stay visible */ }
   }
   catalog.set("en", enBundle ?? {});
   // Boot scrub (defense-in-depth): a stored row the seat gate rejects is
@@ -185,6 +190,7 @@ export async function initI18n() {
   setHtmlLang("en");
   return lang;
 }
+
 // setLang(next) — the switcher's seat: stores the choice (per-viewer, the
 // browser-storage law's convenience tier), loads the bundle, flips the
 // bound copy in place. Refusals fail open to English like every other lane.

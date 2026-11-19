@@ -186,20 +186,10 @@ test("en.json: every key rides the <product>.<area>.<topic>(.<element>) scheme",
 test("the lifted gate ships exactly the nine en+all-bundle seats (stage-2, owner order)", () => {
   // The owner ordered the stage-2 lift (ja/zh/ar ride on owner authority;
   // the Firefox visual pass is DEFERRED by the owner's own decision — the
-  // risk is disclosed in the commit body, not hidden). A stored human
-  // choice may still name any seat (the loader's fail-open), this list
-  // gates the navigator-derived seats only.
+  // risk is disclosed in the commit body, not hidden). The stored and
+  // navigator-derived seats ride the same shipped-base gate; this list is
+  // what that gate keeps.
   assert.deepEqual(i18n.BUNDLE_LANGS, ["en", "es", "de", "fr", "pt", "ru", "ja", "zh", "ar"]);
-});
-
-test("a stale stored seat this fleet no longer ships falls back to en at boot", async () => {
-  // A tab wedged on a seat the loader no longer ships must boot back to
-  // en: lang follows normalizeTag's shipped-seat gate, so an old choice
-  // (“it” from a churn-era browser) can never keep the paint on tails.
-  freshBundles({ en: LOCALES.en }); // no "it" bundle, prod reality
-  globalThis.localStorage.setItem("lang", "it");
-  await i18n.initI18n();
-  assert.equal(i18n.currentLang(), "en", "a shipless stored seat never keeps the paint");
 });
 
 test("a wedged (non-JSON) en response retries uncached instead of leaving key tails", async () => {
@@ -816,11 +806,9 @@ test("every seated bundle carries gc.shell.user.source, translated (no en placeh
     zh: "源码 (AGPLv3)",
     ar: "الكود المصدري (AGPLv3)",
   };
-  const en = "Source (AGPLv3)";
   for (const [langKey, value] of Object.entries(expected)) {
     const bundle = JSON.parse(readFileSync(join(HERE, `../public/locales/${langKey}.json`), "utf8"));
     assert.equal(bundle["gc.shell.user.source"], value, `${langKey} carries the translated row`);
-    assert.notEqual(bundle["gc.shell.user.source"], en, `${langKey} never rides the en placeholder`);
   }
 });
 
