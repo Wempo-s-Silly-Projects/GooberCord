@@ -79,7 +79,9 @@ const UNREADABLE_ERROR =
 // helper stays a no-op without the binding (local dev keeps the D1-only
 // chunk intake and serving byte-identically).
 
-const attachmentObjectKey = (attachmentId) => GC_ATTACHMENT_OBJECT_PREFIX + attachmentId;
+// The lane's store-of-record key (exported for the chunk lane's commit —
+// api/uploads.mjs assembles its final object at the SAME key family).
+export const attachmentObjectKey = (attachmentId) => GC_ATTACHMENT_OBJECT_PREFIX + attachmentId;
 
 // The isolate's execution context (routes receive it last; tests may pass a
 // stub). A ctx without waitUntil (or none at all) runs the task inline
@@ -265,8 +267,9 @@ const attachmentResult = (id, prepared) => ({
 
 // The 503 copy for the store-of-record put's failure — the upload is
 // rejected, the intake asks for a retry, and the copy names the server, not
-// the image.
-const STORE_FAILED_ERROR =
+// the image. (Exported: the chunk lane's failed staging put answers the
+// SAME family, never fresh copy — wave-20.)
+export const STORE_FAILED_ERROR =
   "The upload could not be stored right now. Please try again.";
 
 // The fail-closed rollback: only the row the R2-flow batch just wrote (still

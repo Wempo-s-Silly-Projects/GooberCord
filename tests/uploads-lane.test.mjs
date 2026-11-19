@@ -16,13 +16,16 @@
 // GNU Affero General Public License along with this program.  If not,
 // see <https://www.gnu.org/licenses/>
 
-// The LARGE-FILE upload lane, D1-ONLY (owner ruling, Nov 17: "no park, and
-// no r2"): pins for the chunked intake's staged rows (the gc_upload_parts
-// staging table, migration 0025), the commit's aggregate verification + one
-// batch move, the abandon's staging delete, media.mjs's paged large-row
-// serving, and the send route's attach-by-id. NO test here passes
-// env.UPLOAD_BUCKET — the lane never touches one, and that absence IS the
-// D1-only pin (the old design's 503 dormancy gate died with R2).
+// The LARGE-FILE upload lane, its BYTE LEG on R2 (wave-20, the owner R2
+// revival order: staging payloads ride GC_MEDIA at gc-lane-staging/<uploadId>/
+// <seq>; the D1 gc_upload_parts rows carry only the relational arms — the
+// 0025 data column is NOT NULL, so each row binds a 1-byte marker, never a
+// payload byte). Pins: the bucket-backed part staging, the commit's
+// aggregate gate + count-arm row birth + streamed store-of-record assembly,
+// the abandon/sweep object deletes, media.mjs's paged large-row serving,
+// and the send route's attach-by-id. The bucket is an in-memory fake
+// (tests/wave20-chunk-r2.test.mjs shapes it); no part of the lane writes a
+// payload byte into D1.
 import test from "node:test";
 import assert from "node:assert/strict";
 
@@ -34,8 +37,8 @@ import { randomToken, sha256Hex, nowSeconds } from "../api/core/crypto.mjs";
 import { HttpError, json } from "../api/core/http.mjs";
 import {
   ATTACHMENT_CHUNK_BYTES,
+  GC_PLUS_ATTACHMENT_BYTES,
   GC_UPLOAD_CHUNKS_MAX,
-  GC_UPLOAD_LANE_MAX_BYTES,
   GC_UPLOAD_PART_BYTES,
   GC_UPLOAD_PART_CHUNKS,
   GC_UPLOAD_PART_REQUEST_BYTES,
@@ -97,13 +100,48 @@ function fakeDb(routes = []) {
   return db;
 }
 
+// The in-memory bucket fake (the wave-20 shape: put/get/head/delete,
+// draining streams on put so a streamed assembly completes).
+function fakeLaneR2() {
+  const objects = new Map();
+  const calls = [];
+  return {
+    calls,
+    objects,
+    async put(key, value) {
+      calls.push({ op: "put", key });
+      objects.set(key, new Uint8Array(await new Response(value).arrayBuffer()));
+    },
+    async get(key) {
+      calls.push({ op: "get", key });
+      const bytes = objects.get(key);
+      if (!bytes) return null;
+      return { body: new Blob([bytes]).stream(), size: bytes.length };
+    },
+    async head(key) {
+      calls.push({ op: "head", key });
+      const bytes = objects.get(key);
+      return bytes ? { size: bytes.length } : null;
+    },
+    async delete(key) {
+      calls.push({ op: "delete", key });
+      objects.delete(key);
+    },
+  };
+}
+
 const SESSION_READ_TEST = (sql) => sql.includes("FROM sessions s LEFT JOIN users u");
 const PLUS_TIER_TEST = (sql) => sql.includes("FROM gc_plus_state WHERE user_id = ?");
 const ATTACHMENT_ROW_TEST = (sql) =>
   sql.includes("SELECT id, uploader_id, status, mime, size_bytes FROM gc_attachments");
-// The commit's verification aggregate and the staging reads, route-distinct.
-const STAGING_VERIFY_TEST = (sql) => sql.includes("MIN(CASE WHEN length(data)") && sql.includes("FROM gc_upload_parts");
-const STAGING_HEAD_TEST = (sql) => sql.includes("FROM gc_upload_parts WHERE upload_id = ? AND uploader_id = ? AND seq = 0");
+// The commit's verification aggregate, ride-distinct (the RELATIONAL arms
+// only — the D1 sum arm retired with the byte column).
+const STAGING_VERIFY_TEST = (sql) =>
+  /SELECT COUNT\(\*\) AS n, MIN\(seq\) AS lo, MAX\(seq\) AS hi FROM gc_upload_parts/.test(sql);
+const ROW_BIRTH_TEST = (sql) =>
+  sql.startsWith("INSERT INTO gc_attachments") && sql.includes("'pending'");
+const STAGING_CLEAR_TEST = (sql) =>
+  sql === "DELETE FROM gc_upload_parts WHERE upload_id = ? AND uploader_id = ?";
 const STAGING_MARKER_TEST = (sql) =>
   sql.startsWith("SELECT 1 FROM gc_upload_parts WHERE upload_id = ? AND uploader_id = ? AND seq = 0");
 const IDENTITY_TUPLE_TEST = (sql) =>
@@ -175,18 +213,16 @@ const fullParts = (count) => Array.from({ length: count }, () => pngPart());
 
 // --- pins -------------------------------------------------------------------------
 
-test("the lane's constants: 1 MiB parts as 16 proven chunks, 128 of them, the ~125 MiB bound derivable", () => {
+test("the lane's constants: 1 MiB parts as 16 proven chunks, the parts window derived from the tier", () => {
   assert.equal(GC_UPLOAD_PART_CHUNKS, 16);
   assert.equal(GC_UPLOAD_PART_BYTES, 16 * ATTACHMENT_CHUNK_BYTES, "the part is chunks, not a raw number"); // 1,024,000
   assert.equal(GC_UPLOAD_PART_REQUEST_BYTES, GC_UPLOAD_PART_BYTES + 512 * 1024);
-  assert.equal(GC_UPLOAD_PARTS_MAX, 128); // parity-limits.md gc working lane row
-  assert.equal(GC_UPLOAD_CHUNKS_MAX, 128 * 16);
-  assert.equal(GC_UPLOAD_LANE_MAX_BYTES, 131_072_000, "the engineering bound is 128 parts x 1,024,000");
+  assert.equal(GC_UPLOAD_PARTS_MAX, Math.ceil(GC_PLUS_ATTACHMENT_BYTES / GC_UPLOAD_PART_BYTES),
+    "the parts window derives from the 1 GiB tier the lane rides (1049)");
+  assert.equal(GC_UPLOAD_CHUNKS_MAX, GC_UPLOAD_PARTS_MAX * GC_UPLOAD_PART_CHUNKS);
+  assert.equal(GC_PLUS_ATTACHMENT_BYTES, 1_073_741_824, "the lane ceiling is the tier's own bound");
   assert.equal(MAX_ATTACHMENT_BYTES, 20_971_520, "the free tier rides Discord's Aug-2026 20 MiB raise");
 });
-
-// The D1-ONLY pin: every test below dispatches with NO env.UPLOAD_BUCKET at
-// all — the routes never consult one (the 503 dormancy gate died with R2).
 
 test("the tier gate: free and Mini members are refused before any stage write", async () => {
   for (const refusal of [
@@ -211,8 +247,9 @@ test("the tier gate: free and Mini members are refused before any stage write", 
   }
 });
 
-test("the part intake: the first part slices into 16 staged chunk rows and NO row is born yet", async () => {
+test("the part intake: the payload rides the bucket and one marker row is staged, NO bytes in D1, NO row born yet", async () => {
   const fixture = await sessionFixtures();
+  const r2 = fakeLaneR2();
   const db = fakeDb([sessionRoute(fixture.row), plusTierRoute("plus")]);
   const response = await dispatchUploads(
     new Request(ORIGIN + "/api/uploads/chunks", {
@@ -220,22 +257,32 @@ test("the part intake: the first part slices into 16 staged chunk rows and NO ro
       headers: { Origin: ORIGIN, ...fixture.headers },
       body: chunkForm(0, pngPart(), { size: String(LARGE_TOTAL) }),
     }),
-    envWithLimiters({ GOOBER_DB: db }),
+    envWithLimiters({ GOOBER_DB: db, GC_MEDIA: r2 }),
   );
   assert.equal(response.status, 201);
   const body = await response.json();
   assert.match(body.uploadId, /^[A-Za-z0-9_-]{12}$/);
 
+  // The payload rode the bucket at the lane's own key family.
+  assert.deepEqual(
+    r2.calls.filter((call) => call.op === "put").map((call) => call.key),
+    ["gc-lane-staging/" + body.uploadId + "/0"],
+  );
+  assert.equal(r2.objects.get("gc-lane-staging/" + body.uploadId + "/0")?.length, GC_UPLOAD_PART_BYTES,
+    "the staged payload is the part's own bytes");
+
+  // One staged row per part; the 0025 data column (NOT NULL, no DDL wave)
+  // carries the 1-byte marker — never a payload byte.
   const batch = db.calls.find((call) => call.call === "batch");
   assert.ok(batch);
-  assert.equal(batch.statements.length, GC_UPLOAD_PART_CHUNKS, "a full part is exactly 16 chunk rows");
-  batch.statements.forEach((statement, index) => {
-    assert.match(statement.sql, /INSERT OR REPLACE INTO gc_upload_parts/);
-    assert.equal(statement.bound[0], body.uploadId);
-    assert.equal(statement.bound[1], USER_ID);
-    assert.equal(statement.bound[2], index, "the chunk seqs follow the part's slice order");
-    assert.equal(statement.bound[3].length, ATTACHMENT_CHUNK_BYTES, "every slice rides the 64,000-byte grid");
-  });
+  assert.equal(batch.statements.length, 1, "one staged row per part");
+  const statement = batch.statements[0];
+  assert.match(statement.sql, /INSERT OR REPLACE INTO gc_upload_parts/);
+  assert.equal(statement.bound[0], body.uploadId);
+  assert.equal(statement.bound[1], USER_ID);
+  assert.equal(statement.bound[2], 0, "the row's seq is the PART's seq");
+  assert.equal(statement.bound[3].length, 1, "the byte column is the marker, not the payload");
+  assert.notEqual(statement.bound[3].length, ATTACHMENT_CHUNK_BYTES);
 
   // The row is BORN AT COMMIT: no gc_attachments write rode part one (its
   // mime could never be a truthful CHECK value yet).
@@ -243,11 +290,12 @@ test("the part intake: the first part slices into 16 staged chunk rows and NO ro
     call.call === "batch" || call.call === "run" ||
     (call.call === "first" && /INSERT INTO gc_attachments/.test(call.sql)));
   assert.equal(rowWrites.length, 1, "the one batch is the staging write; the metadata row never appeared");
-  assert.doesNotMatch(batch.statements[0].sql, /gc_attachments/);
+  assert.doesNotMatch(statement.sql, /gc_attachments/);
 });
 
 test("continuations require the SAME member's staged upload; a foreign id is the shared 404", async () => {
   const fixture = await sessionFixtures();
+  const r2 = fakeLaneR2();
   const db = fakeDb([
     sessionRoute(fixture.row),
     plusTierRoute("plus"),
@@ -259,7 +307,7 @@ test("continuations require the SAME member's staged upload; a foreign id is the
       headers: { Origin: ORIGIN, ...fixture.headers },
       body: chunkForm(0, pngPart(), { size: String(LARGE_TOTAL) }),
     }),
-    envWithLimiters({ GOOBER_DB: db }),
+    envWithLimiters({ GOOBER_DB: db, GC_MEDIA: r2 }),
   );
   const { uploadId } = await open.json();
   assert.equal((await dispatchUploads(
@@ -268,11 +316,11 @@ test("continuations require the SAME member's staged upload; a foreign id is the
       headers: { Origin: ORIGIN, ...fixture.headers },
       body: chunkForm(1, pngPart(), { uploadId }),
     }),
-    envWithLimiters({ GOOBER_DB: db }),
+    envWithLimiters({ GOOBER_DB: db, GC_MEDIA: r2 }),
   )).status, 200);
-  // The continuation's slice starts at part 1's chunk grid.
+  // The continuation stages its own part seq (one row, one object).
   const secondBatch = db.calls.filter((call) => call.call === "batch")[1];
-  assert.equal(secondBatch.statements[0].bound[2], GC_UPLOAD_PART_CHUNKS, "part 1's rows start at chunk seq 16");
+  assert.equal(secondBatch.statements[0].bound[2], 1, "the continuation's row rides PART seq 1");
 
   // A foreign uploadId (never staged by anyone) 404s and writes nothing: the
   // ownership marker is the staging table's own first row.
@@ -314,13 +362,13 @@ test("the part shape's guards: a 128th part index, an empty body, and an over-pa
   const over = await send(0, new Uint8Array(GC_UPLOAD_PART_BYTES + 1), { size: String(LARGE_TOTAL) });
   assert.equal(over.status, 413);
   assert.match(await over.text(), /more than 1 MiB/);
-  assert.equal((await send(0, pngPart(), { size: String(GC_UPLOAD_LANE_MAX_BYTES + 1) })).status, 400,
-    "a declared total above the lane bound is not a large upload");
+  assert.equal((await send(0, pngPart(), { size: String(GC_PLUS_ATTACHMENT_BYTES + 1) })).status, 400,
+    "a declared total above the tier bound is not a large upload");
   assert.equal((await send(0, pngPart(), { size: String(MAX_ATTACHMENT_BYTES) })).status, 400,
     "the small lanes keep everything at or under the single-buffer cap");
 });
 
-test("the COMMIT verifies, sniffs from the staged first chunk, births the pending row, and moves the set in ONE batch", async () => {
+test("the COMMIT verifies the relational arms, sniffs from the bucket, births the pending row, and assembles the store-of-record object", async () => {
   const fixture = await sessionFixtures();
   const open = await dispatchUploads(
     new Request(ORIGIN + "/api/uploads/chunks", {
@@ -328,25 +376,24 @@ test("the COMMIT verifies, sniffs from the staged first chunk, births the pendin
       headers: { Origin: ORIGIN, ...fixture.headers },
       body: chunkForm(0, pngPart(), { size: String(LARGE_TOTAL) }),
     }),
-    envWithLimiters({ GOOBER_DB: fakeDb([sessionRoute(fixture.row), plusTierRoute("plus")]) }),
+    envWithLimiters({ GOOBER_DB: fakeDb([sessionRoute(fixture.row), plusTierRoute("plus")]), GC_MEDIA: fakeLaneR2() }),
   );
   const { uploadId } = await open.json();
 
-  // The aggregate answers a lawful 6-part set: 96 chunk rows, 0..95, the
-  // full-chunk sum, no short row (the last chunk fills exactly at a
-  // part-sized total).
+  // A lawful 24-part set staged in the bucket: seqs 0..23, the full-chunk
+  // grid (a part-sized total leaves no short part), PNG magic in part 0.
+  const stagedR2 = fakeLaneR2();
+  for (let seq = 0; seq < 24; seq += 1) {
+    stagedR2.objects.set("gc-lane-staging/" + uploadId + "/" + seq, pngPart());
+  }
+  const objectKey = "gc-attachments/4242";
   const commitDb = fakeDb([
     sessionRoute(fixture.row),
-    {
-      test: STAGING_VERIFY_TEST,
-      first: async () => ({ n: 6 * GC_UPLOAD_PART_CHUNKS, lo: 0, hi: 6 * GC_UPLOAD_PART_CHUNKS - 1, totalSize: LARGE_TOTAL, firstShort: null }),
-    },
-    { test: STAGING_HEAD_TEST, first: async () => ({ data: pngChunkHead() }) },
-    // The move's changes are its row count (one chunk row per staged chunk).
-    { test: (sql) => sql.startsWith("INSERT INTO gc_attachment_chunks"),
-      run: async () => ({ meta: { changes: 6 * GC_UPLOAD_PART_CHUNKS } }) },
-    // The identity tuple resolves the born row's id (read after the batch).
+    plusTierRoute("plus"),
+    { test: STAGING_VERIFY_TEST, first: async () => ({ n: 24, lo: 0, hi: 23 }) },
+    { test: ROW_BIRTH_TEST, run: async () => ({ meta: { changes: 1 } }) },
     { test: IDENTITY_TUPLE_TEST, first: async () => ({ id: 4242 }) },
+    { test: STAGING_CLEAR_TEST, run: async () => ({ meta: { changes: 24 } }) },
   ]);
   const commit = await dispatchUploads(
     new Request(ORIGIN + "/api/uploads/" + uploadId + "/commit", {
@@ -354,55 +401,55 @@ test("the COMMIT verifies, sniffs from the staged first chunk, births the pendin
       headers: { "Content-Type": "application/json", Origin: ORIGIN, ...fixture.headers },
       body: JSON.stringify({ size: LARGE_TOTAL }),
     }),
-    envWithLimiters({ GOOBER_DB: commitDb }),
+    envWithLimiters({ GOOBER_DB: commitDb, GC_MEDIA: stagedR2 }),
   );
   assert.equal(commit.status, 201);
   const body = await commit.json();
   assert.equal(body.attachment.status, "pending");
   assert.equal(body.attachment.id, 4242);
 
-  // The one atomic batch: row → move → clear, each folding the staged set's
-  // count/sum arms (the verify→commit gap: a set that raced past the verify
-  // read writes NOTHING — the row is born under the arms, the clear holds
-  // until the chunks carry the batch's identity).
+  // The one D1 batch: the row born under the folded count arm (the
+  // verify→commit gap) — the mime rides the bucket seq-0 sniff.
   const batch = commitDb.calls.find((call) => call.call === "batch");
   assert.ok(batch);
-  assert.equal(batch.statements.length, 3);
+  assert.equal(batch.statements.length, 1);
   assert.match(batch.statements[0].sql, /INSERT INTO gc_attachments/);
   assert.match(batch.statements[0].sql,
     /SELECT NULL, \?, \?, \?, 'pending', NULL, NULL, \?/,
     "eight expressions for eight columns (size_bytes keeps its own bind)");
-  assert.match(batch.statements[0].sql, /COUNT\(\*\) FROM gc_upload_parts WHERE upload_id = \? AND uploader_id = \?\) = \?/);
+  assert.match(batch.statements[0].sql,
+    /\(SELECT COUNT\(\*\) FROM gc_upload_parts WHERE upload_id = \? AND uploader_id = \?\) = \?/,
+    "the count arm is the born row's race guard");
   assert.equal(batch.statements[0].bound[0], USER_ID);
   assert.equal(batch.statements[0].bound[1], "image/png", "the SNIFFED mime is what rides the row");
   assert.equal(batch.statements[0].bound[2], LARGE_TOTAL);
-  // The arms' own binds: the count pair + expected count (96), the sum pair
-  // + expected sum (the declared total).
-  assert.deepEqual(batch.statements[0].bound.slice(-6), [uploadId, USER_ID, 6 * GC_UPLOAD_PART_CHUNKS, uploadId, USER_ID, LARGE_TOTAL]);
+  // The arms' own binds: the pair + expected part count (24).
+  assert.deepEqual(batch.statements[0].bound.slice(-3), [uploadId, USER_ID, 24]);
 
-  assert.match(batch.statements[1].sql, /INSERT INTO gc_attachment_chunks \(attachment_id, seq, data\)/);
-  assert.match(batch.statements[1].sql, /SELECT \(SELECT id FROM gc_attachments WHERE message_id IS NULL/);
-  assert.match(batch.statements[1].sql, /FROM gc_upload_parts WHERE upload_id = \? AND uploader_id = \?/);
-  // The move folds the SAME arms.
-  assert.match(batch.statements[1].sql, /\) = \? AND/);
-  assert.deepEqual(batch.statements[1].bound.slice(-6), [uploadId, USER_ID, 6 * GC_UPLOAD_PART_CHUNKS, uploadId, USER_ID, LARGE_TOTAL]);
+  // The assembled object: the media module's key, the exact streamed sum,
+  // the byte order the seqs carried.
+  const assembled = stagedR2.objects.get(objectKey);
+  assert.ok(assembled, "the store-of-record object landed");
+  assert.equal(assembled.length, LARGE_TOTAL);
+  assert.equal(assembled[0], PNG_MAGIC[0], "part 0's bytes lead");
+  assert.equal(assembled[GC_UPLOAD_PART_BYTES], PNG_MAGIC[0], "part 1's bytes lead");
+  assert.equal(assembled[(23 * GC_UPLOAD_PART_BYTES) + 1], PNG_MAGIC[1], "the last part closes");
 
-  // The clear holds until the chunks carry the batch's identity.
-  assert.match(batch.statements[2].sql, /^DELETE FROM gc_upload_parts/);
-  assert.match(batch.statements[2].sql, /AND EXISTS \(SELECT 1 FROM gc_attachment_chunks WHERE attachment_id =/);
-  assert.deepEqual(batch.statements[2].bound, [uploadId, USER_ID, USER_ID, "image/png", LARGE_TOTAL, batch.statements[2].bound[5]]);
+  // The staging rides the D1 gate and the objects FOLLOWED the rows.
+  const clear = commitDb.calls.find((call) => call.call === "run" && STAGING_CLEAR_TEST(call.sql));
+  assert.ok(clear, "the staging rows left once the object was durable");
+  const deleted = stagedR2.calls.filter((call) => call.op === "delete" && call.key.startsWith("gc-lane-staging/"));
+  assert.equal(deleted.length, 24, "every staged part object died with its row");
+  assert.ok(stagedR2.objects.get(objectKey), "the store-of-record object survives");
+
+  // No chunk bytes ever re-land in D1.
+  assert.equal(commitDb.calls.some((call) => (call.sql || "").includes("gc_attachment_chunks")), false,
+    "the byte leg never re-lands in D1");
 });
 
-// The first chunk head the commit sniffs: 64,000 PNG-magic bytes.
-function pngChunkHead() {
-  const chunk = new Uint8Array(ATTACHMENT_CHUNK_BYTES);
-  chunk.set(PNG_MAGIC, 0);
-  return chunk;
-}
-
-test("the COMMIT's verification: a hole, a misplaced short row, a disputed sum, or a non-image never writes a row", async () => {
+test("the COMMIT's refusals: a hole, a seq stranger, a disputed streamed sum, or a non-image never writes a row", async () => {
   const { row: sessionRows, headers } = await sessionFixtures();
-  const commitWith = (aggregate, head) =>
+  const commitWith = (aggregate, bucket) =>
     dispatchUploads(
       new Request(ORIGIN + "/api/uploads/BBBBBBBBBBBB/commit", {
         method: "POST",
@@ -411,52 +458,69 @@ test("the COMMIT's verification: a hole, a misplaced short row, a disputed sum, 
       }),
       envWithLimiters({ GOOBER_DB: fakeDb([
         sessionRoute(sessionRows),
+        plusTierRoute("plus"),
         { test: STAGING_VERIFY_TEST, first: aggregate ? async () => aggregate : null },
-        { test: STAGING_HEAD_TEST, first: async () => ({ data: head ?? pngChunkHead() }) },
-      ]) }),
+        { test: ROW_BIRTH_TEST, run: async () => ({ meta: { changes: 1 } }) },
+        { test: IDENTITY_TUPLE_TEST, first: async () => ({ id: 4242 }) },
+      ]), GC_MEDIA: bucket }),
     );
+  const seedStaging = (bucket, partBytes) => {
+    for (let seq = 0; seq < 24; seq += 1) {
+      bucket.objects.set("gc-lane-staging/BBBBBBBBBBBB/" + seq, partBytes(seq));
+    }
+    return bucket;
+  };
 
-  // A hole in the staged seq run: a short row rides at 48, not the tail
-  // (n = 95 of the lawful 96 — the client can retry part 5).
-  const hole = await commitWith({ n: 95, lo: 0, hi: 94, totalSize: LARGE_TOTAL - 64000, firstShort: 48 });
+  // A hole in the staged run: 23 parts for a 24-part set (the client can
+  // retry part 23).
+  const hole = await commitWith({ n: 23, lo: 0, hi: 22 }, fakeLaneR2());
   assert.equal(hole.status, 400);
   assert.equal((await hole.text()).includes(UPLOAD_INCOMPLETE_ERROR), true);
 
-  // A short row that is NOT the last one, with correct totals otherwise.
-  const misplaced = await commitWith({ n: 96, lo: 0, hi: 95, totalSize: LARGE_TOTAL, firstShort: 0 });
-  assert.equal(misplaced.status, 400);
+  // A contiguity stranger: 24 rows whose seqs ride 1..24.
+  const stranger = await commitWith({ n: 24, lo: 1, hi: 24 }, fakeLaneR2());
+  assert.equal(stranger.status, 400);
 
-  // A declared total the staged sum disputes.
-  const wrongSum = await commitWith({ n: 96, lo: 0, hi: 95, totalSize: LARGE_TOTAL - 1, firstShort: null });
-  assert.equal(wrongSum.status, 400);
+  // The bucket's streamed sum disputes the declared total (the size arm's
+  // relocated evidence): a lawful relational spread over short-staged parts
+  // whose heads sniff PNG (the sum arm answers, never the sniff).
+  const shortPart = () => {
+    const part = new Uint8Array(ATTACHMENT_CHUNK_BYTES);
+    part.set(PNG_MAGIC, 0);
+    return part;
+  };
+  const shortSum = await commitWith({ n: 24, lo: 0, hi: 23 },
+    seedStaging(fakeLaneR2(), shortPart));
+  assert.equal(shortSum.status, 400);
+  assert.equal((await shortSum.text()).includes(UPLOAD_INCOMPLETE_ERROR), true);
 
-  // Not an image: the sniff runs on the STORED first chunk, not a client claim.
-  const notImage = await commitWith({ n: 96, lo: 0, hi: 95, totalSize: LARGE_TOTAL, firstShort: null },
-    new Uint8Array(ATTACHMENT_CHUNK_BYTES).fill(7));
+  // Not an image: the sniff rides the bucket's seq-0 object, not a claim.
+  const notImage = await commitWith({ n: 24, lo: 0, hi: 23 },
+    seedStaging(fakeLaneR2(), () => new Uint8Array(ATTACHMENT_CHUNK_BYTES).fill(7)));
   assert.equal(notImage.status, 400);
   assert.equal((await notImage.text()).includes(UPLOAD_ONLY_IMAGES_ERROR), true);
 
   // Nobody's id: the aggregate read misses, the shared 404 (never an oracle).
-  const nobody = await commitWith(null);
+  const nobody = await commitWith(null, fakeLaneR2());
   assert.equal(nobody.status, 404);
   assert.equal((await nobody.text()).includes(UPLOAD_UNKNOWN_ERROR), true);
-
-  // A declared total inside neither lane: the same 400 as the chunk route's.
-  void UPLOAD_ONLY_IMAGES_ERROR;
 });
 
-test("a staged set that raced past the verify read: the folded arms answer 400 with the staging rows intact", async () => {
-  // The lawful aggregate, but the batch's MOVE reports zero changes (the
-  // in-statement arms read the raced set): no row births, no staging clearing,
-  // the shared retry-copy answers.
+test("a staged set that raced past the verify read: the count arm answers 400 with the staging rows intact", async () => {
+  // The lawful aggregate, but the row birth's count arm reads the raced set
+  // and refuses (changes 0): no row births, no staging clearance, no bucket
+  // traffic, the shared retry-copy answers.
   const { row: sessionRows, headers } = await sessionFixtures();
+  const r2 = fakeLaneR2();
+  for (let seq = 0; seq < 24; seq += 1) {
+    r2.objects.set("gc-lane-staging/CCCCCCCCCCCC/" + seq, pngPart());
+  }
   const db = fakeDb([
     sessionRoute(sessionRows),
+    plusTierRoute("plus"),
     { test: STAGING_VERIFY_TEST,
-      first: async () => ({ n: 96, lo: 0, hi: 95, totalSize: LARGE_TOTAL, firstShort: null }) },
-    { test: STAGING_HEAD_TEST, first: async () => ({ data: pngChunkHead() }) },
-    { test: (sql) => sql.startsWith("INSERT INTO gc_attachment_chunks"),
-      run: async () => ({ meta: { changes: 0 } }) },
+      first: async () => ({ n: 24, lo: 0, hi: 23 }) },
+    { test: ROW_BIRTH_TEST, run: async () => ({ meta: { changes: 0 } }) },
   ]);
   const response = await dispatchUploads(
     new Request(ORIGIN + "/api/uploads/CCCCCCCCCCCC/commit", {
@@ -464,14 +528,14 @@ test("a staged set that raced past the verify read: the folded arms answer 400 w
       headers: { "Content-Type": "application/json", Origin: ORIGIN, ...headers },
       body: JSON.stringify({ size: LARGE_TOTAL }),
     }),
-    envWithLimiters({ GOOBER_DB: db }),
+    envWithLimiters({ GOOBER_DB: db, GC_MEDIA: r2 }),
   );
   assert.equal(response.status, 400);
   assert.equal((await response.text()).includes(UPLOAD_INCOMPLETE_ERROR), true);
-  // The clear statement carries its hold-back arm, so a refused move keeps
-  // the staged set exactly as it was.
-  const batch = db.calls.find((call) => call.call === "batch");
-  assert.match(batch.statements[2].sql, /AND EXISTS \(SELECT 1 FROM gc_attachment_chunks/);
+  // Nothing assembled, no object deleted: the staged set rides untouched for
+  // the retry.
+  assert.equal(r2.calls.some((call) => call.key === "gc-attachments/4242"), false);
+  assert.equal(r2.calls.filter((call) => call.op === "delete").length, 0);
 });test("the abandon: one guarded staging delete riding the uploader's own id; a malformed id never queries", async () => {
   const { row: sessionRows, headers } = await sessionFixtures();
   const db = fakeDb([sessionRoute(sessionRows)]);
@@ -543,7 +607,7 @@ test("the staged cap: an uploader at the cap cannot mint a fresh staging, the ca
       headers: { Origin: ORIGIN, ...fixtures.headers },
       body: chunkForm(0, pngPart(), { size: String(LARGE_TOTAL) }),
     }),
-    envWithLimiters({ GOOBER_DB: db }),
+    envWithLimiters({ GOOBER_DB: db, GC_MEDIA: fakeLaneR2() }),
   );
   const fixture = await sessionFixtures();
   const fullDb = fakeDb([
@@ -611,6 +675,14 @@ test("the clear statement itself refuses a clip-referenced token and still clear
   const orphan = await db.prepare(ABANDON_CLEAR_SQL).bind("ORPHANEDAAAA", USER_ID).run();
   assert.equal(Number(orphan.meta.changes), 1, "an unreferenced token still clears");
 });
+
+// The first chunk head the D1 serving path assembles: 64,000 PNG-magic bytes
+// (the small-row serving fixtures live on the D1 chunk table, untouched).
+function pngChunkHead() {
+  const chunk = new Uint8Array(ATTACHMENT_CHUNK_BYTES);
+  chunk.set(PNG_MAGIC, 0);
+  return chunk;
+}
 
 // --- media.mjs's paged large-row serving ------------------------------------------
 
@@ -758,7 +830,7 @@ test("the send route's attach-by-id: the batch re-guards the owned standalone ro
     { test: PLUS_TIER_TEST, first: async () => ({ renews_until: nowSeconds() + 3600, tier: "plus" }) },
     // The pre-check's owned read (a lane-bound standalone row, unattached).
     { test: (sql) => sql.includes("SELECT size_bytes FROM gc_attachments WHERE id = ? AND message_id IS NULL AND uploader_id = ?"),
-      first: async () => ({ size_bytes: GC_UPLOAD_LANE_MAX_BYTES }) },
+      first: async () => ({ size_bytes: GC_PLUS_ATTACHMENT_BYTES }) },
     // The send's reselect after the batch.
     { test: (sql) => sql.includes("FROM gc_messages m JOIN users u") && sql.includes("client_message_id") && sql.includes("ORDER BY m.id DESC LIMIT 1"),
       run: async () => ({ meta: { changes: 1 }, results: [{ id: 12, author_id: USER_ID, author_name: "wempos", body: "the big one", client_message_id: null, source: null, created_at: 100, edited_at: null }] }) },
@@ -831,7 +903,7 @@ test("the attach-by-id refusals: free is the 403, unowned and over-cap rows are 
   // the bound cap exactly as the real WHERE clause would.
   const mini = fakeDb([...base, plusTierRoute("mini"), {
     test: OWNED_TEST,
-    first: async (bound) => (GC_UPLOAD_LANE_MAX_BYTES <= Number(bound[2]) ? { size_bytes: GC_UPLOAD_LANE_MAX_BYTES } : null),
+    first: async (bound) => (GC_PLUS_ATTACHMENT_BYTES <= Number(bound[2]) ? { size_bytes: GC_PLUS_ATTACHMENT_BYTES } : null),
   }]);
   const miniResponse = await dispatchMessages(sendRequest(), envWithLimiters({ GOOBER_DB: mini }), "/api/channels/3/messages");
   assert.equal(miniResponse.status, 400);
@@ -859,7 +931,7 @@ test("the DO path's primitive: a reference rides sendMessageToChannel directly a
     { test: (sql) => sql.includes("FROM site_settings"), first: async () => ({ value: "", updated_at: 1 }) },
     plusTierRoute("plus"),
     { test: (sql) => sql.includes("SELECT size_bytes FROM gc_attachments WHERE id = ? AND message_id IS NULL AND uploader_id = ?"),
-      first: async () => ({ size_bytes: GC_UPLOAD_LANE_MAX_BYTES }) },
+      first: async () => ({ size_bytes: GC_PLUS_ATTACHMENT_BYTES }) },
     { test: (sql) => sql.includes("FROM gc_messages m JOIN users u") && sql.includes("client_message_id") && sql.includes("ORDER BY m.id DESC LIMIT 1"),
       run: async () => ({ meta: { changes: 1 }, results: [{ id: 9, author_id: USER_ID, author_name: "wempos", body: "ref send", client_message_id: null, source: null, created_at: 100, edited_at: null }] }) },
   ]);

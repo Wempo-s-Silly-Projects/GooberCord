@@ -68,8 +68,8 @@ export const UI_GIF_PAGE_DEFAULT = 12;
 export const UI_GIF_PAGE_MAX = 24;
 // Wave-14 hand-off: UI_ATTACHMENT_FREE_MAX is declared ONCE in uploads.js
 // (G-4) — re-exported here so the composer's existing consumers keep working.
-// Wave-19 hand-off: the tier mirrors joined the same seat (the 125 MiB lane
-// mirror stays seated — the working bound below the parked 1 GiB tier arm).
+// Wave-19 hand-off: the tier mirrors joined the same seat (the lane mirror
+// stays seated — wave-20: it rides the tier's own 1 GiB, the byte leg is R2).
 export { UI_ATTACHMENT_FREE_MAX, UI_ATTACHMENT_MINI_MAX, UI_ATTACHMENT_PLUS_MAX };
 export const UI_REACTIONS_COMMON = ["👍", "❤️", "😂", "😮", "😢", "🙏", "🔥"];
 export const UI_REACTIONS_SUPER = ["✨", "💫", "🌟", "🎆", "🎇", "🌈", "🪄", "🩷"]; // GC_PLUS_REACTIONS
@@ -1062,10 +1062,10 @@ function buildComposer(channelId, channel, column) {
     // lane door: the tier cap paints the tier's own ceiling — full-plus's
     // blessed 1 GiB paint, Mini's 50 MiB pair (single-shot, the
     // readMultipartWithImage admit), free 20 MiB — never a re-declared one.
-    // The WORKING lane's own bound (the 125 MiB engineering ceiling below the
-    // parked 1 GiB tier arm — the chunk byte leg still rides D1) keeps its
-    // own answer beside it: a size past the bound paints the lane cap, never
-    // a byte sent to a server refusal.
+    // The WORKING lane's own bound (wave-20: the tier's own 1 GiB ceiling —
+    // UI_UPLOAD_LANE_MAX_BYTES now seats UI_ATTACHMENT_PLUS_MAX, the byte leg
+    // rides R2) keeps its own answer beside it: a size past the bound paints
+    // the lane cap, never a byte sent to a server refusal.
     const laneTier = me?.isPlus && plusFullTerm(me)
       ? "plus"
       : me?.plusTier === "mini" ? "mini" : null;

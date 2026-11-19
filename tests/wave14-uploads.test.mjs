@@ -52,18 +52,20 @@ const NEW_KEYS = ["gc.chat.attach.laneProgress"];
 
 // --- the frozen constants are the single source -------------------------------
 
-test("constants.mjs seats the lane's own two caps (read, never edited)", () => {
+test("constants.mjs seats the lane's caps (read, never edited; wave-20: the retired arm stays retired)", () => {
   assert.match(CONSTANTS, /export const GC_UPLOAD_PART_BYTES = GC_UPLOAD_PART_CHUNKS \* ATTACHMENT_CHUNK_BYTES;/);
-  assert.match(CONSTANTS, /export const GC_UPLOAD_LANE_MAX_BYTES = GC_UPLOAD_PARTS_MAX \* GC_UPLOAD_PART_BYTES;/);
+  assert.doesNotMatch(CONSTANTS, /GC_UPLOAD_LANE_MAX_BYTES/,
+    "the 125 MiB D1-bound arm retired with the byte leg (wave-20)");
+  assert.match(CONSTANTS, /export const GC_UPLOAD_PARTS_MAX = Math\.ceil\(GC_PLUS_ATTACHMENT_BYTES \/ GC_UPLOAD_PART_BYTES\);/);
   assert.match(CONSTANTS, /export const MAX_ATTACHMENT_BYTES = 20_971_520;/);
 });
 
 test("the client mirrors ride the G-4 literal law with provenance, declared ONCE", () => {
   assert.match(UPLOADS_UI, /G-4: MAX_ATTACHMENT_BYTES, GC_UPLOAD_PART_BYTES and/);
-  assert.match(UPLOADS_UI, /GC_UPLOAD_LANE_MAX_BYTES \(constants\.mjs\)/);
+  assert.match(UPLOADS_UI, /GC_PLUS_ATTACHMENT_BYTES' 1 GiB \(constants\.mjs\)/);
   assert.match(UPLOADS_UI, /export const UI_ATTACHMENT_FREE_MAX = 20971520;/);
   assert.match(UPLOADS_UI, /export const UI_UPLOAD_PART_BYTES = 1024000;/);
-  assert.match(UPLOADS_UI, /export const UI_UPLOAD_LANE_MAX_BYTES = 131072000;/);
+  assert.match(UPLOADS_UI, /export const UI_UPLOAD_LANE_MAX_BYTES = UI_ATTACHMENT_PLUS_MAX;/);
   assert.doesNotMatch(UPLOADS_UI, /import .*constants\.mjs/, "the client never imports constants.mjs");
   // One seat: chat.js re-exports (the existing ui-chat pin keeps working) and
   // never re-declares the mirror out from under uploads.js.
@@ -79,14 +81,14 @@ test("the part-bytes mirror EQUALS the constants.mjs formula result — computed
   // from constants.mjs and demands byte-equality with the mirror, BOTH ways.
   const chunks = Number(CONSTANTS.match(/export const GC_UPLOAD_PART_CHUNKS = (\d+);/)?.[1]);
   const chunkBytes = Number(CONSTANTS.match(/export const ATTACHMENT_CHUNK_BYTES = (\d+);/)?.[1]);
-  const partsMax = Number(CONSTANTS.match(/export const GC_UPLOAD_PARTS_MAX = (\d+);/)?.[1]);
   assert.equal(chunks * chunkBytes, 1024000, "the backend's own formula");
   const mirrorPart = Number(UPLOADS_UI.match(/export const UI_UPLOAD_PART_BYTES = (\d+);/)?.[1]);
   assert.equal(mirrorPart, chunks * chunkBytes,
     "UI_UPLOAD_PART_BYTES EQUALS GC_UPLOAD_PART_BYTES (constants.mjs), never an invented figure");
-  const mirrorLane = Number(UPLOADS_UI.match(/export const UI_UPLOAD_LANE_MAX_BYTES = (\d+);/)?.[1]);
-  assert.equal(mirrorLane, partsMax * (chunks * chunkBytes),
-    "UI_UPLOAD_LANE_MAX_BYTES EQUALS GC_UPLOAD_PARTS_MAX × GC_UPLOAD_PART_BYTES");
+  // Wave-20: the lane mirror is the tier mirror's number, COMPUTED — a second
+  // 1 GiB literal would be fresh drift.
+  assert.match(UPLOADS_UI, /export const UI_UPLOAD_LANE_MAX_BYTES = UI_ATTACHMENT_PLUS_MAX;/,
+    "the lane mirror seats the tier mirror's number, computed");
 });
 
 // --- the frozen backend route table (read, never edited) ---------------------
@@ -113,10 +115,11 @@ test("the door slices bounded by GC_UPLOAD_PART_BYTES and reads the lane predica
   assert.match(UPLOADS_UI,
     /const part = file\.slice\(seq \* UI_UPLOAD_PART_BYTES, partEnd\);/,
     "each slice rides the mirrored part bytes, not an invented slice size");
-  // Wave-19 hold: the predicate is tier-aware — the D1 chunked lane belongs
-  // only to a full-plus term (api/uploads.mjs:234), Mini rides the single-shot
-  // pair instead of a server 403; the WORKING bound (GC_UPLOAD_LANE_MAX_BYTES)
-  // is still the ceiling — the 1 GiB tier arm stays held (T-INFRA-CHUNK-R2).
+  // Wave-19's tier-aware predicate, wave-20's open window: the D1 chunked
+  // lane belongs only to a full-plus term (api/uploads.mjs tier gate), Mini
+  // rides the single-shot pair instead of a server 403; the ceiling is the
+  // tier's own 1 GiB (UI_UPLOAD_LANE_MAX_BYTES seats UI_ATTACHMENT_PLUS_MAX,
+  // computed — the retired 125 MiB arm stays retired, T-INFRA-CHUNK-R2 DONE).
   assert.match(UPLOADS_UI, /export function ridesChunkLane\(fileSize, tier = null\)/);
   assert.match(UPLOADS_UI,
     /return tier === "plus" && fileSize > UI_ATTACHMENT_FREE_MAX && fileSize <= UI_UPLOAD_LANE_MAX_BYTES;/,
@@ -286,8 +289,8 @@ test("the tier gate never rides the client as invented numbers — the mirrors a
     "the tier resolver stays server-side — the client carries mirrors only");
   assert.doesNotMatch(
     UPLOADS_UI.match(/export const UI_\w+ = \d+;/g)?.join("\n") ?? "",
-    /= (?!20971520;|1024000;|131072000;|52428800;|1073741824;)\d+;/,
-    "every mirror rides the pinned five literals, never an invented one",
+    /= (?!20971520;|1024000;|52428800;|1073741824;)\d+;/,
+    "every mirror rides the pinned four literals, never an invented one",
   );
 });
 

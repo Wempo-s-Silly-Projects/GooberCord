@@ -16,19 +16,18 @@
 // GNU Affero General Public License along with this program.  If not,
 // see <https://www.gnu.org/licenses/>
 
-// Wave 19 — the upload tiers (the 2026-11-19 slate, HELD SHAPE): the owner's
-// BLESSED matrix (constants.mjs GC_MINI_ATTACHMENT_BYTES 50 MiB /
+// Wave 19 — the upload tiers (the 2026-11-19 slate): the owner's BLESSED
+// matrix (constants.mjs GC_MINI_ATTACHMENT_BYTES 50 MiB /
 // GC_PLUS_ATTACHMENT_BYTES 1 GiB + the request pairs) becomes what the ROUTES
 // admit THROUGH the single-shot intake — free never gains a byte, Mini rides
 // the 50 MiB pair, Plus keeps the 20 MiB single-shot beside its lane. The 1
-// GiB LANE-ceiling arm is HELD: the chunk byte leg is D1-only (api/uploads.mjs
-// never touches R2), so a 1 GiB staging writes ~1 GiB of gc_attachment_chunks
-// rows into the SHARED forum D1 — the 125 MiB working bound stays the lane's
-// ceiling until the chunk byte leg flips to R2 (T-INFRA-CHUNK-R2). The client
-// mirrors pin computed-equality against constants.mjs BOTH ways (the wave-14
-// C1 lesson) and me.plusTier seats the composer's tier face. Backend wave
-// (wave-12 precedent: additive wiring, no verb mutations, the untouched
-// modules byte-frozen).
+// GiB LANE-ceiling arm OPENS in wave-20 (the chunk byte leg rode to R2 —
+// GC_UPLOAD_LANE_MAX_BYTES retired, the lane ceiling is GC_PLUS_ATTACHMENT_
+// BYTES exactly, the commit re-verifies the tier); the pins below retarget
+// to the open truth. The client mirrors pin computed-equality against
+// constants.mjs BOTH ways (the wave-14 C1 lesson) and me.plusTier seats the
+// composer's tier face. Backend wave (wave-12 precedent: additive wiring, no
+// verb mutations, the untouched modules byte-frozen).
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -47,7 +46,6 @@ import {
   GC_PLUS_ATTACHMENT_BYTES,
   MAX_ATTACHMENT_BYTES,
   RATE_LIMIT_BINDINGS,
-  GC_UPLOAD_LANE_MAX_BYTES,
 } from "../constants.mjs";
 
 const HERE = dirname(new URL(import.meta.url).pathname);
@@ -230,6 +228,20 @@ function partRequest(seq, bytes, extra = {}) {
   });
 }
 const LANE_PART = new Uint8Array(1_024_000);
+// The wave-20 bucket fake (the tiny { put, get, head, delete } store).
+function wave20Bucket() {
+  const calls = [];
+  return {
+    calls,
+    async put(key, value) {
+      calls.push({ op: "put", key });
+      await new Response(value).arrayBuffer();
+    },
+    async get() { return null; },
+    async head() { return null; },
+    async delete(key) { calls.push({ op: "delete", key }); },
+  };
+}
 
 // --- the resolver truth (the blessed pairs, per term) --------------------------
 
@@ -306,23 +318,27 @@ test("a free member never gains a byte: one past 20 MiB answers the free 413 ver
   assert.equal((await response.json()).error, "Images must be 20 MiB or smaller.");
 });
 
-test("the lane's ceiling stays the working bound: 1 GiB refuses for full-plus (the held tier arm)", async () => {
+// The 1 GiB lane arm OPENED (wave-20): the byte leg rides GC_MEDIA, so a
+// full-plus first part at the tier's own ceiling stages through the bucket.
+test("the lane's ceiling is the tier's own bound: 1 GiB first part stages for full-plus", async () => {
   const { row, headers } = await sessionFixtures();
   const db = fakeDb([sessionRoute(row), tierRoute("plus")]);
+  const r2 = wave20Bucket();
   const response = await dispatchUploads(
     partRequest(0, LANE_PART, { size: String(GC_PLUS_ATTACHMENT_BYTES), headers }),
-    envWithLimiters({ GOOBER_DB: db }),
+    envWithLimiters({ GOOBER_DB: db, GC_MEDIA: r2 }),
   );
-  assert.equal(response.status, 400,
-    "the 1 GiB lane arm stays HELD — GC_UPLOAD_LANE_MAX_BYTES is the ceiling");
-  assert.equal((await response.json()).error, "That file size is not a large upload.");
+  assert.equal(response.status, 201,
+    `the 1 GiB lane arm is OPEN — GC_PLUS_ATTACHMENT_BYTES admits (got ${response.status})`);
+  assert.match(await response.json().then((body) => body.uploadId), /^[A-Za-z0-9_-]{12}$/);
+  assert.ok(r2.calls.some((call) => call.op === "put"), "the first part staged in the bucket");
 });
 
-test("the lane refuses one past GC_UPLOAD_LANE_MAX_BYTES (first part AND commit, full-plus)", async () => {
+test("the lane refuses one past GC_PLUS_ATTACHMENT_BYTES (first part AND commit, full-plus)", async () => {
   const { row, headers } = await sessionFixtures();
   const db = fakeDb([sessionRoute(row), tierRoute("plus")]);
   const first = await dispatchUploads(
-    partRequest(0, LANE_PART, { size: String(GC_UPLOAD_LANE_MAX_BYTES + 1), headers }),
+    partRequest(0, LANE_PART, { size: String(GC_PLUS_ATTACHMENT_BYTES + 1), headers }),
     envWithLimiters({ GOOBER_DB: db }),
   );
   assert.equal(first.status, 400);
@@ -332,7 +348,7 @@ test("the lane refuses one past GC_UPLOAD_LANE_MAX_BYTES (first part AND commit,
     new Request(ORIGIN + "/api/uploads/laney19Lane1/commit", {
       method: "POST",
       headers: { Origin: ORIGIN, ...headers },
-      body: JSON.stringify({ size: GC_UPLOAD_LANE_MAX_BYTES + 1 }),
+      body: JSON.stringify({ size: GC_PLUS_ATTACHMENT_BYTES + 1 }),
     }),
     envWithLimiters({ GOOBER_DB: db }),
   );
@@ -358,48 +374,40 @@ test("the client mirrors equal constants.mjs BOTH ways (the C1 law)", () => {
   const mirrorFree = Number(ui.match(/export const UI_ATTACHMENT_FREE_MAX = (\d+);/)?.[1]);
   const mirrorMini = Number(ui.match(/export const UI_ATTACHMENT_MINI_MAX = (\d+);/)?.[1]);
   const mirrorPlus = Number(ui.match(/export const UI_ATTACHMENT_PLUS_MAX = (\d+);/)?.[1]);
-  const mirrorLane = Number(ui.match(/export const UI_UPLOAD_LANE_MAX_BYTES = (\d+);/)?.[1]);
   const numeral = (match) => Number(match?.[1].replaceAll("_", ""));
   const backendMini = numeral(CONSTANTS_TEXT.match(/export const GC_MINI_ATTACHMENT_BYTES = ([\d_]+);/));
   const backendPlus = numeral(CONSTANTS_TEXT.match(/export const GC_PLUS_ATTACHMENT_BYTES = ([\d_]+);/));
-  // The lane bound stays a COMPUTED constant (GC_UPLOAD_PARTS_MAX ×
-  // GC_UPLOAD_PART_BYTES — no numeral literal to extract); its two mirrors
-  // pin against the imported constant, and the lane numeral sits beside it.
-  const backendLane = numeral(CONSTANTS_TEXT.match(/export const GC_UPLOAD_PARTS_MAX = ([\d_]+);/))
-    * numeral(CONSTANTS_TEXT.match(/export const GC_UPLOAD_PART_CHUNKS = ([\d_]+);/))
-    * numeral(CONSTANTS_TEXT.match(/export const ATTACHMENT_CHUNK_BYTES = ([\d_]+);/));
+  // The lane mirror is COMPUTED from the tier mirror (no numeral literal to
+  // extract — wave-20 opened the ceiling to the tier's own bound).
+  const laneMirrorSeats = ui.match(/export const UI_UPLOAD_LANE_MAX_BYTES = UI_ATTACHMENT_PLUS_MAX;/);
   // forward: mirror EQUALS the extracted backend literal;
   // backward: the backend literal EQUALS the mirror (never an invented number).
   assert.equal(mirrorFree, MAX_ATTACHMENT_BYTES);
   assert.equal(mirrorMini, backendMini);
   assert.equal(mirrorPlus, backendPlus);
-  assert.equal(mirrorLane, GC_UPLOAD_LANE_MAX_BYTES);
+  assert.ok(laneMirrorSeats, "the lane mirror seats the tier mirror's number");
   assert.equal(backendMini, mirrorMini);
   assert.equal(backendPlus, mirrorPlus);
-  assert.equal(backendLane, mirrorLane);
   assert.equal(backendPlus, 1_073_741_824);
   assert.equal(backendMini, 52_428_800);
-  assert.equal(backendLane, 131_072_000);
 });
 
-test("the lane mirror stays seated with the working 125 MiB bound", () => {
-  assert.match(UPLOADS_UI, /export const UI_UPLOAD_LANE_MAX_BYTES = 131072000;/,
-    "the working lane bound's mirror rides the doors' seat");
-  assert.match(CONSTANTS_TEXT, /export const GC_UPLOAD_LANE_MAX_BYTES =/,
-    "the backend lane bound stays seated");
-  assert.doesNotMatch(CONSTANTS_TEXT, /1[-_]073[-_]741[-_]824\s*\*|1073741824/,
-    "constants.mjs never raises the lane bound to the parked 1 GiB arm");
+test("the lane mirror rides the tier's own 1 GiB bound (wave-20)", () => {
+  assert.match(UPLOADS_UI, /export const UI_UPLOAD_LANE_MAX_BYTES = UI_ATTACHMENT_PLUS_MAX;/,
+    "the lane bound's mirror rides the tier mirror, computed");
+  assert.doesNotMatch(CONSTANTS_TEXT, /GC_UPLOAD_LANE_MAX_BYTES/,
+    "the backend's retired 125 MiB arm stays retired");
+  assert.doesNotMatch(UPLOADS_UI, /131072000/,
+    "the client mirror never carries the retired bound");
 });
 
-test("the lane predicate is tier-aware inside the working bound", () => {
+test("the lane predicate is tier-aware inside the tier's own ceiling", () => {
   assert.equal(uploadsModule.ridesChunkLane(MAX_ATTACHMENT_BYTES + 1, "plus"), true,
     "the lane opens just past 20 MiB for full-plus");
-  assert.equal(uploadsModule.ridesChunkLane(GC_UPLOAD_LANE_MAX_BYTES, "plus"), true,
-    "the lane opens to exactly the working bound (125 MiB) for full-plus");
-  assert.equal(uploadsModule.ridesChunkLane(GC_UPLOAD_LANE_MAX_BYTES + 1, "plus"), false,
-    "past the working bound is no door — the 1 GiB tier arm stays held");
-  assert.equal(uploadsModule.ridesChunkLane(GC_PLUS_ATTACHMENT_BYTES, "plus"), false,
-    "1 GiB itself answers the lane cap, never the tier's ceiling (held)");
+  assert.equal(uploadsModule.ridesChunkLane(GC_PLUS_ATTACHMENT_BYTES, "plus"), true,
+    "the lane opens to exactly the tier's ceiling (1 GiB) for full-plus");
+  assert.equal(uploadsModule.ridesChunkLane(GC_PLUS_ATTACHMENT_BYTES + 1, "plus"), false,
+    "past the tier ceiling is no door — the free 20 MiB cap refused it anyway");
   assert.equal(uploadsModule.ridesChunkLane(GC_MINI_ATTACHMENT_BYTES, "mini"), false,
     "Mini never rides the lane");
   assert.equal(uploadsModule.ridesChunkLane(MAX_ATTACHMENT_BYTES + 1, null), false,
@@ -413,7 +421,7 @@ test("the composer wires the tier through the lane predicate", () => {
   assert.match(CHAT, /const laneTier = /,
     "the tier is computed once beside the tierCap");
   assert.match(CHAT, /if \(file\.size > UI_UPLOAD_LANE_MAX_BYTES\)/,
-    "the working bound keeps its own refusal beside the tier cap (the held 1 GiB arm never reaches the wire)");
+    "the tier-ceiling lane bound keeps its own refusal beside the tier cap");
   assert.match(CHAT, /UI_ATTACHMENT_PLUS_MAX\s*\n?\s*: laneTier === "mini"\s*\?\s*UI_ATTACHMENT_MINI_MAX/,
     "the tier cap paints the tier's own ceiling");
 });

@@ -50,7 +50,6 @@ import {
   ROW_INSERT_SQL,
   STAGING_ARMS_SQL,
   STAGING_CLEAR_SQL,
-  STAGING_MOVE_SQL,
 } from "../api/uploads.mjs";
 import { randomToken, sha256Hex, nowSeconds } from "../api/core/crypto.mjs";
 import { HttpError, json } from "../api/core/http.mjs";
@@ -462,38 +461,47 @@ function commitFixtureDb() {
 }
 
 function seedStaged(db) {
-  const data = new Uint8Array(COMMIT_CHUNK_BYTES);
-  data[0] = 0x89; // PNG magic, mimicking a real staged first chunk
-  data[1] = 0x50;
+  // The wave-20 truth: a staging row carries NO chunk bytes — 1-byte marker
+  // rows ride the part seqs (the byte leg is the bucket's), so the fixture
+  // seeds the marker shape, never a byte-carrying BLOB.
+  const marker = new Uint8Array(1);
   db.prepare(
     "INSERT INTO gc_upload_parts (upload_id, uploader_id, seq, data, created_at) VALUES (?, ?, ?, ?, ?)",
-  ).run(COMMIT_UPLOAD_ID, COMMIT_UPLOADER, 0, data, COMMIT_NOW);
+  ).run(COMMIT_UPLOAD_ID, COMMIT_UPLOADER, 0, marker, COMMIT_NOW);
 }
 
-// The batch exactly as handleCommitUploadRoute assembles it: the resolved
-// SQL text and the route's bind order (row + move carry uploader, mime, size,
-// created_at ahead of the arms' uploadId/uploader pair; the clear's identity
-// tuple tail resolves against the row the batch just birthed).
+// The batch exactly as handleCommitUploadRoute assembles it (wave-20): the
+// resolved SQL text and the route's bind order — NO move arm (the byte leg
+// retired to the bucket; the row, the clear, nothing between), and the row's
+// own binds carry no byte payload.
 function resolvedCommitBinds({ count, sum }) {
   return {
     rowSql: ROW_INSERT_SQL + STAGING_ARMS_SQL,
     rowBinds: [COMMIT_UPLOADER, COMMIT_MIME, sum, COMMIT_NOW,
-      COMMIT_UPLOAD_ID, COMMIT_UPLOADER, count, COMMIT_UPLOAD_ID, COMMIT_UPLOADER, sum],
-    moveSql: STAGING_MOVE_SQL,
-    moveBinds: [COMMIT_UPLOADER, COMMIT_MIME, sum, COMMIT_NOW, COMMIT_UPLOAD_ID, COMMIT_UPLOADER,
-      COMMIT_UPLOAD_ID, COMMIT_UPLOADER, count, COMMIT_UPLOAD_ID, COMMIT_UPLOADER, sum],
+      COMMIT_UPLOAD_ID, COMMIT_UPLOADER, count],
     clearSql: STAGING_CLEAR_SQL,
-    clearBinds: [COMMIT_UPLOAD_ID, COMMIT_UPLOADER, COMMIT_UPLOADER, COMMIT_MIME, sum, COMMIT_NOW],
+    clearBinds: [COMMIT_UPLOAD_ID, COMMIT_UPLOADER],
   };
 }
 
-test("the resolved commit batch EXECUTES in real sqlite: the row carries the staged sum, chunks follow the identity", () => {
+test("the resolved commit batch EXECUTES in real sqlite: the row carries the declared size, no byte payload anywhere", () => {
   const db = commitFixtureDb();
   try {
     seedStaged(db);
+    // The staged truth, asserted in the SAME real sqlite: every staging
+    // row's data column holds ONLY the 1-byte marker — a byte-carrying row
+    // would be the wave-20 violation itself.
+    const staged = db.prepare("SELECT seq, length(data) AS marker FROM gc_upload_parts ORDER BY seq").all();
+    assert.equal(staged.length, 1);
+    assert.equal(staged[0].marker, 1, "staging rows hold ONLY 1-byte markers (the byte leg is the bucket's)");
     const batch = resolvedCommitBinds({ count: 1, sum: COMMIT_CHUNK_BYTES });
+    // The wave-20 seam: the batch's row SQL carries no move arm — no
+    // gc_attachment_chunks statement rides behind the row birth.
+    assert.doesNotMatch(batch.rowSql, /gc_attachment_chunks/,
+      "the move arm retired with the byte leg");
+    assert.ok(batch.rowBinds.every((bind) => typeof bind === "string" || typeof bind === "number"),
+      "the row's binds carry no byte payload");
     db.prepare(batch.rowSql).run(...batch.rowBinds);
-    db.prepare(batch.moveSql).run(...batch.moveBinds);
     db.prepare(batch.clearSql).run(...batch.clearBinds);
 
     const row = db.prepare(
@@ -504,7 +512,7 @@ test("the resolved commit batch EXECUTES in real sqlite: the row carries the sta
     assert.equal(row.uploader_id, COMMIT_UPLOADER);
     assert.equal(row.mime, COMMIT_MIME);
     assert.equal(row.size_bytes, COMMIT_CHUNK_BYTES,
-      "size_bytes is the staged sum (the 7-for-8 shape would have drifted it)");
+      "size_bytes rides the route's declared size (the streamed sum's arm was the intake-time gate)");
     assert.equal(row.status, "pending");
     assert.equal(row.created_at, COMMIT_NOW);
     // The identity tuple (uploader, mime, size, created_at) resolves the born row.
@@ -512,13 +520,9 @@ test("the resolved commit batch EXECUTES in real sqlite: the row carries the sta
       "SELECT id FROM gc_attachments WHERE message_id IS NULL AND uploader_id = ? " +
         "AND mime = ? AND size_bytes = ? AND created_at = ? ORDER BY id DESC LIMIT 1",
     ).get(COMMIT_UPLOADER, COMMIT_MIME, COMMIT_CHUNK_BYTES, COMMIT_NOW);
-    assert.ok(identity, "the identity tuple resolves (the move AND the clear share it)");
-    const chunks = db.prepare(
-      "SELECT COUNT(*) AS n FROM gc_attachment_chunks WHERE attachment_id = ?",
-    ).get(identity.id);
-    assert.equal(chunks.n, 1, "the staged chunk moved under the born row");
+    assert.ok(identity, "the identity tuple resolves (the birth and the clear share it)");
     assert.equal(db.prepare("SELECT COUNT(*) AS n FROM gc_upload_parts").get().n, 0,
-      "the staging rows cleared behind the moved chunks");
+      "the staging rows cleared once the count arm birthed exactly one row");
   } finally {
     db.close();
   }
@@ -527,19 +531,17 @@ test("the resolved commit batch EXECUTES in real sqlite: the row carries the sta
 test("a raced staged set (the arms mismatch) births NOTHING and the staging stays for the retry", () => {
   const db = commitFixtureDb();
   try {
-    seedStaged(db); // one 64,000-byte chunk on disk
-    // The route's verify read claimed 2 chunks / 128,000 bytes; the arms read
-    // the raced set and refuse inside the statements themselves.
+    seedStaged(db); // one 1-byte marker row (the byte leg is the bucket's)
+    // The route's verify read claimed 2 parts / 128,000 bytes; the birth arm
+    // reads the raced set and refuses inside the statement — the birth is
+    // the batch's sole gate (wave-20: no move arm rides behind it, the clear
+    // runs only after a DURABLE assembly, so the staging survives unrun).
     const batch = resolvedCommitBinds({ count: 2, sum: 128000 });
     db.prepare(batch.rowSql).run(...batch.rowBinds);
-    db.prepare(batch.moveSql).run(...batch.moveBinds);
-    db.prepare(batch.clearSql).run(...batch.clearBinds);
     assert.equal(db.prepare("SELECT COUNT(*) AS n FROM gc_attachments").get().n, 0,
       "no row was born against the raced set");
-    assert.equal(db.prepare("SELECT COUNT(*) AS n FROM gc_attachment_chunks").get().n, 0,
-      "nothing moved");
     assert.equal(db.prepare("SELECT COUNT(*) AS n FROM gc_upload_parts").get().n, 1,
-      "the clear's hold-back arm kept the staged set exactly as the caller staged it");
+      "the staging stays exactly as the caller staged it (the clear rides only behind a durable assembly)");
   } finally {
     db.close();
   }

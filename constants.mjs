@@ -247,40 +247,30 @@ export const GC_MINI_ATTACHMENT_REQUEST_BYTES = GC_MINI_ATTACHMENT_BYTES + 512 *
 export const GC_PLUS_ATTACHMENT_BYTES = 1_073_741_824;
 export const GC_PLUS_ATTACHMENT_REQUEST_BYTES = GC_PLUS_ATTACHMENT_BYTES + 512 * 1024;
 
-// The LARGE-FILE upload lane — D1-ONLY since 2026-11-17 (owner ruling: "no
-// park, and no r2"): a part request carries GC_UPLOAD_PART_CHUNKS of the
-// proven 64 KiB intake chunks in ONE batched write (the shipped small
-// intake already lands up to 320 chunk statements in a single batch — the
-// measured envelope — so 16 sits far inside it), sliced off one ≤-part-sized
-// body. All parts ride the gc_upload_parts staging table (migration 0025);
-// the commit moves the set into gc_attachment_chunks and empties it.
+// The LARGE-FILE upload lane — the byte leg rides GC_MEDIA (R2 revival
+// order, owner 2026-11-18: ALL D1 blob/byte storage to the shared bucket,
+// relational rows in D1 — newer by date than the lane's 2026-11-17 "no park,
+// and no r2" ruling). Each staging part puts its payload at
+// gc-lane-staging/<uploadId>/<seq> (api/uploads.mjs) while the gc_upload_parts
+// rows keep the relational arms; the 0025 data column is NOT NULL, so its
+// row write carries a 1-byte marker, never a payload byte (a later migration
+// may drop the column). PART_CHUNKS, PART_BYTES and PART_REQUEST_BYTES stay
+// the envelope's engineering constants:
 export const GC_UPLOAD_PART_CHUNKS = 16;
 export const GC_UPLOAD_PART_BYTES = GC_UPLOAD_PART_CHUNKS * ATTACHMENT_CHUNK_BYTES;
 export const GC_UPLOAD_PART_REQUEST_BYTES = GC_UPLOAD_PART_BYTES + 512 * 1024;
-export const GC_UPLOAD_PARTS_MAX = 128;
-export const GC_UPLOAD_CHUNKS_MAX = GC_UPLOAD_PARTS_MAX * GC_UPLOAD_PART_CHUNKS;
 
-// The WORKING lane's engineering bound (NOT the tier table's wording —
-// flagged): derive from the verified platform rows (both fetched
-// 2026-11-17). GC_UPLOAD_PARTS_MAX × GC_UPLOAD_PART_BYTES = 131,072,000
-// bytes (~125 MiB):
-//   - D1 free plan: 500 MB total database storage (the SHARED forum DB) —
-//     one attachment may not eat a quarter of it; 50 queries per Worker
-//     invocation bound the paged serving (a lane-max file pages at 64
-//     chunk rows per query = 32 reads, headroom under the cap).
-//   - Workers free plan: 10 ms CPU per request (a ≤1 MiB multipart parse +
-//     16-statement batch sits inside it), 128 MB isolate memory (never
-//     holds more than one part or one serving page).
-// GC_PLUS_ATTACHMENT_BYTES keeps its 1 GiB row wherever the parity table
-// shows tier numbers (docs/parity-limits.md UPLOADS), but the WORKING lane
-// refuses above this bound — the tier row wants the owner's wording:
-// "1 GiB (lane bound: 125 MiB today)".
-export const GC_UPLOAD_LANE_MAX_BYTES = GC_UPLOAD_PARTS_MAX * GC_UPLOAD_PART_BYTES;
+// The parts window derives from the tier the lane now rides: the lane
+// ceiling is GC_PLUS_ATTACHMENT_BYTES exactly — the 125 MiB D1-bound working
+// arm retired with the byte leg, wave-20 — so the 1 GiB ceiling needs
+// ceil(1 GiB / 1 MiB-part) = 1049 part seqs:
+export const GC_UPLOAD_PARTS_MAX = Math.ceil(GC_PLUS_ATTACHMENT_BYTES / GC_UPLOAD_PART_BYTES);
+export const GC_UPLOAD_CHUNKS_MAX = GC_UPLOAD_PARTS_MAX * GC_UPLOAD_PART_CHUNKS;
 
 // The staging table's per-uploader cap (GO-HAYWIRE cycle-3): the first-part
 // INSERT mints a fresh random uploadId on every call, so without a per-
 // uploader cap the read bucket bounds only per-request — abandoned stagings
-// could pile up unbounded (PARTS_MAX × PART_BYTES of rows per uploadId). The
+// could pile up unbounded (one marker row per part seq per uploadId). The
 // cap counts the uploader's DISTINCT staging tokens and EXCLUDES tokens an
 // approved gc_sound_pack_sounds clip points at (the pack's own bytes); a
 // candidate's token still counts, so the cap bounds the whole staging pool
