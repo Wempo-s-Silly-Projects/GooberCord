@@ -608,6 +608,13 @@ async function enforceMentionGate(env, serverId, userId, text) {
   throw new HttpError(403, "You can't mention everyone here.");
 }
 
+// errorName(error): the failure's compact label for the best-effort write
+// logs below — D1 errors carry a name/message pair worth one line of context,
+// never a swallowed void.
+function errorName(error) {
+  return error && error.name ? error.name : "UnknownError";
+}
+
 // enforceFilterRules(env, channelId, userId, text, authorId):
 //   -> { careNotice: string|null, pendingAlert: object|null } for the caller
 //      to finish after the insert (an alert-only hit links the stored row),
@@ -685,7 +692,12 @@ async function enforceFilterRules(env, channelId, userId, text, authorId) {
     try {
       await timeoutStatement.run();
     } catch (error) {
-      void error; // the timeout never blocks the already-passing send
+      // The timeout still never blocks the already-passing send, but a
+      // swallowed gate write is a real condition — surface it for the desk.
+      console.error("Timeout write failed:", errorName(error), {
+        channelId: Number(channelId),
+        serverId,
+      });
     }
   }
   return {
@@ -979,7 +991,12 @@ export async function sendMessageToChannel(
         env.GOOBER_DB.prepare(filterAlertPruneSql()).bind(pendingAlert.serverId, pendingAlert.serverId),
       ]);
     } catch (error) {
-      void error;
+      // The alert is still swallowed on the message's behalf (the never-500
+      // rule stands), but the desk can SEE the lost moderation signal now.
+      console.error("Filter alert write failed:", errorName(error), {
+        channelId: Number(channelId),
+        messageId: Number(row.id),
+      });
     }
   }
 
@@ -1296,7 +1313,12 @@ async function handleEditMessageRoute(request, env, messageId) {
         env.GOOBER_DB.prepare(filterAlertPruneSql()).bind(editPendingAlert.serverId, editPendingAlert.serverId),
       ]);
     } catch (error) {
-      void error; // an alert write can never 500 a stored edit (the send's rule)
+      // The edit's alert write can still never 500 the stored edit, but the
+      // lost moderation signal surfaces for the desk.
+      console.error("Filter alert write failed:", errorName(error), {
+        channelId: Number(editedChannel.channel_id),
+        messageId: Number(messageId),
+      });
     }
   }
 
