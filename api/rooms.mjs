@@ -459,28 +459,33 @@ export class ChatRoom extends (workerd?.DurableObject ?? DurableObjectBase) {
   // other socket in the room, so the client-side throttle the typing branch
   // used to trust was an amplification lever — a hostile socket could inject
   // typing frames at wire rate and make the DO relay N-1 copies of each. The
-  // floor is the voice TTL-cache's shape, keyed per (channel, user): repeats
-  // inside GC_TYPING_FLOOR_SECONDS are dropped WITHOUT an error frame or a
-  // close, and a hibernate just resets the window (a failed floor only
-  // loosens the throttle, never widens the gate below).
+  // floor is two halves keyed per (channel, user), lead deslop F1: the PEEK
+  // runs before the gate, so a repeat inside the window drops as a pure
+  // in-memory check — zero D1 reads, because the gate below walks 1-3
+  // queries per frame and a wire-rate repeater must not buy wire-rate reads.
+  // The ARM runs only after a passing gate (the voice cache's own law: a
+  // refused check never consumes a slot). A hibernate just resets the
+  // window; drops come without an error frame or a close.
   static TYPING_FLOOR_MS = GC_TYPING_FLOOR_SECONDS * 1000;
 
   typingFloorCache = new Map(); // `${channelId}:${userId}` → last accepted (ms)
 
-  typingFloorPassed(meta) {
+  typingFloorRepeat(meta) {
+    const last = this.typingFloorCache.get(meta.channelId + ":" + meta.userId);
+    return last !== undefined && Date.now() - last < ChatRoom.TYPING_FLOOR_MS;
+  }
+
+  typingFloorArm(meta) {
+    // Same idle bound as the voice cache: expired entries die on an arm once
+    // the map outgrows its cap, so a long-idle DO never grows unbounded.
     const key = meta.channelId + ":" + meta.userId;
     const now = Date.now();
-    const last = this.typingFloorCache.get(key);
-    if (last !== undefined && now - last < ChatRoom.TYPING_FLOOR_MS) return false;
-    // Same idle bound as the voice cache: expired entries die on a consult
-    // once the map outgrows its cap, so a long-idle DO never grows unbounded.
     if (this.typingFloorCache.size > 512) {
       for (const [entryKey, entryAt] of this.typingFloorCache) {
         if (now - entryAt >= ChatRoom.TYPING_FLOOR_MS) this.typingFloorCache.delete(entryKey);
       }
     }
     this.typingFloorCache.set(key, now);
-    return true;
   }
 
   // The typing frame's M3 re-check — the SAME fragments the msg frame walks
@@ -663,14 +668,15 @@ export class ChatRoom extends (workerd?.DurableObject ?? DurableObjectBase) {
     }
 
     if (type === "typing") {
-      // No persistence. Two gates before the fan-out (GO-HAYWIRE cycle-4):
-      // the M3 member re-check first — a kicked or revoked socket fans out
-      // nothing and hears nothing back — then the per-(channel, user) floor,
-      // which bounds the N-1 amplification the formerly client-only throttle
-      // left open. Inside the window the frame is dropped silently: no error
+      // No persistence. Three gates before the fan-out (GO-HAYWIRE cycle-4):
+      // the in-memory floor PEEK first — a repeat drops here with zero D1
+      // reads — then the M3 member re-check (a kicked or revoked socket fans
+      // out nothing and hears nothing back), then the floor ARM, which never
+      // runs for a refused frame. A floored repeat is silent: no error
       // frame, no close.
+      if (this.typingFloorRepeat(meta)) return;
       if (!(await this.typingAllowed(meta))) return;
-      if (!this.typingFloorPassed(meta)) return;
+      this.typingFloorArm(meta);
       this.broadcastJson(socket, { type: "broadcast", kind: "typing", userId: meta.userId });
       return;
     }
