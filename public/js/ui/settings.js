@@ -353,6 +353,60 @@ function reactionTagsPanel(serverId) {
   return panel;
 }
 
+// --- the audit log's read (W26-1: the Logs panel) -----------------------------
+
+// The audit trail's face: a READ-ONLY panel riding the ONE auto-GET per visit
+// (the defaults law — the panel's own open pulls the page). The backend
+// serves the newest-first page and answers the non-manage tier with the
+// 403-shaped EMPTY page (the read's guard sits INSIDE its SQL, the shape
+// never varies), so the valid-empty array's paint alone is the honest empty
+// state, never an error face. Every row renders through the h() text seats
+// (no innerHTML in this lane, ever); actor/target/ref/timestamp are
+// server-native data painted verbatim, never t()'d — only the action line
+// rides i18n, composed per entry's actionKey over the en-only seats (the
+// other bundles stay keyless until ratified; the loader's missing-key law
+// keeps an unseen actionKey's tail visible).
+function auditLogsPanel(serverId) {
+  const errorLine = inlineError();
+  const note = h("p", { class: "muted", "aria-live": "polite" });
+  const panel = h("div", { class: "panel" },
+    h("h3", { text: t("gc.settings.audit.heading") }), note, errorLine);
+  const listSeat = h("div", { class: "audit-list" });
+  // The page's one paint: a malformed payload (entries not an array) seats
+  // the failed-load face (the c20 law the sibling panels carry) — the VALID
+  // empty array's paint alone is the empty state.
+  const paintPage = (payload) => {
+    const rows = Array.isArray(payload?.entries) ? payload.entries : null;
+    if (rows === null) {
+      listSeat.replaceChildren(h("p", {
+        class: "form-error", role: "alert", "aria-live": "polite",
+        text: t("gc.tags.loadFailed"),
+      }));
+      return;
+    }
+    note.textContent = t("gc.settings.audit.count", { count: rows.length });
+    listSeat.replaceChildren(h("div", { class: "manage-list" },
+      rows.length === 0
+        ? h("p", { class: "empty-state", text: t("gc.settings.audit.empty") })
+        : h("div", { class: "manage-list" }, ...rows.map((entry) =>
+          h("div", { class: "manage-row audit-row" },
+            h("span", { class: "manage-name audit-action",
+              text: t("gc.settings.audit.actions." + entry.actionKey) }),
+            h("span", { class: "muted",
+              text: "#" + entry.actorId
+                + (entry.targetUserId === null ? "" : " → #" + entry.targetUserId)
+                + (entry.targetRef ? " · " + entry.targetRef : "") }),
+            h("span", { class: "muted audit-when", text: entry.createdAt }))))));
+  };
+  panel.append(listSeat);
+  // The panel's one auto-GET per visit (the defaults law); refusals paint
+  // the payload's error string verbatim (G-2).
+  api(`/api/servers/${serverId}/audit`).then(paintPage).catch((error) => {
+    errorLine.textContent = error.message;
+  });
+  return panel;
+}
+
 // --- E1: the server settings page ---------------------------------------------
 
 export function renderServerSettings(route, mount) {
@@ -365,6 +419,9 @@ export function renderServerSettings(route, mount) {
     // The reaction tags join the mod-facing build (wave-13) — the same
     // additive registration, still before the owner-only seats.
     nodes.push(reactionTagsPanel(serverId));
+    // The audit log's read joins the manage-class build (W26-1) — the same
+    // additive registration, still before the owner-only seats.
+    nodes.push(auditLogsPanel(serverId));
     if (server.role === "owner") nodes.push(deletePanel(serverId), transferPanel(serverId));
     return nodes;
   });
