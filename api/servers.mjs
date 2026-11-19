@@ -2911,6 +2911,160 @@ async function handleDeleteChannelRoute(request, env, serverId, channelId, ctx) 
   return json({ ok: true });
 }
 
+// --- wave 8 (T-PARITY-LEAVE): leave server + transfer ownership -----------------
+
+// The membership gate/classification row: the string-tier role plus the
+// fields the transfer demote re-inserts (one read — never a second shape).
+const MEMBERSHIP_ROW_SQL =
+  "SELECT role, joined_at, nickname, timed_out_until, created_by_invite, rules_accepted_at " +
+  "FROM gc_server_members WHERE server_id = ? AND user_id = ? LIMIT 1";
+
+// POST /api/servers/:id/leave — a member removes their OWN membership row.
+// All authority in-statement: the DELETE's WHERE binds the caller's own row,
+// the membership arm that row rides, and the owner-refusal NOT-EXISTS arm —
+// a plain member's run deletes only their own row, and the owner's refusal
+// holds even race-on. Non-members share the unknown-server 404 (no
+// existence oracle), and mentions/bookmarks survive a leave by design
+// (history-kept law; no mint, no spend — outside economy scope).
+async function handleLeaveServerRoute(request, env, serverId) {
+  const session = await requireUser(request, env);
+  const userId = Number(session.user.id);
+
+  await rateLimit(request, env, "write", "servers-leave:" + serverId);
+
+  // The gate read: a non-member 404s, and the owner refusal (parity-mirrored)
+  // is decided here before any write — the 409 points at the transfer route.
+  const membership = await env.GOOBER_DB.prepare(MEMBERSHIP_ROW_SQL)
+    .bind(serverId, userId).first();
+  if (!membership) {
+    throw new HttpError(404, "That server does not exist or you are not in it.");
+  }
+  if (membership.role === "owner") {
+    throw new HttpError(
+      409,
+      "Transfer ownership before leaving. POST /api/servers/" + serverId +
+        "/transfer-ownership",
+    );
+  }
+
+  const deleted = await env.GOOBER_DB.prepare(
+    "DELETE FROM gc_server_members WHERE server_id = ? AND user_id = ? " +
+      "AND EXISTS (SELECT 1 FROM gc_server_members WHERE server_id = ? AND user_id = ?) " +
+      "AND NOT " + OWNER_EXISTS_SQL,
+  ).bind(serverId, userId, serverId, userId, serverId, userId).run();
+
+  if (Number(deleted.meta?.changes) !== 1) {
+    // The row vanished between the gate and the DELETE (race-on leave): the
+    // one delete stays a no-op — never a double-delete — and the
+    // classification re-read answers 404, or the 409 when a raced transfer
+    // made the caller the owner.
+    const current = await env.GOOBER_DB.prepare(MEMBERSHIP_ROW_SQL)
+      .bind(serverId, userId).first();
+    if (current && current.role === "owner") {
+      throw new HttpError(
+        409,
+        "Transfer ownership before leaving. POST /api/servers/" + serverId +
+          "/transfer-ownership",
+      );
+    }
+    throw new HttpError(404, "That server does not exist or you are not in it.");
+  }
+
+  return json({ left: true, serverId }, 200);
+}
+
+// POST /api/servers/:id/transfer-ownership — the owner hands the server to an
+// active member. The whole swap is ONE batch (D1 commits or rolls back
+// whole): the promote's WHERE carries the caller's owner arm AND the target's
+// active-member arm, and the demote rides the promote-landed rider. The
+// demote is DELETE + exact re-INSERT, because the owner guard trigger
+//  (migration 0001) ABORTs any UPDATE that demotes an owner row — the
+// trigger's intent (no STRAY demote) transfers WITH the ownership flow; the
+// re-insert preserves the row's fields verbatim from the gate read.
+const TRANSFER_RACE_MESSAGE =
+  "The server's ownership changed while you were transferring. Reload and try again.";
+
+async function handleTransferOwnershipRoute(request, env, serverId) {
+  const session = await requireUser(request, env);
+  const me = Number(session.user.id);
+  const body = await readJson(request);
+  if (!Number.isSafeInteger(body.userId) || body.userId < 1) {
+    throw new HttpError(400, "userId must be a user id.");
+  }
+  const targetUserId = body.userId;
+
+  await rateLimit(request, env, "write", "servers-transfer:" + serverId);
+
+  // The gate read: non-members share the unknown-server 404; non-owners the
+  // shared 403 (authority also rides the promote's owner arm in-statement).
+  const membership = await env.GOOBER_DB.prepare(MEMBERSHIP_ROW_SQL)
+    .bind(serverId, me).first();
+  if (!membership) {
+    throw new HttpError(404, "That server does not exist or you are not in it.");
+  }
+  if (membership.role !== "owner") {
+    throw new HttpError(403, "You do not have permission to do that.");
+  }
+  // The owner handing to themselves: an idempotent no-op, never an error.
+  if (targetUserId === me) {
+    return json({ transferred: false, serverId, ownerId: me }, 200);
+  }
+
+  // Statement 0: promote the active member. The demote below fires only
+  // behind the promote-landed rider, so any refused arm leaves the batch a
+  // committed no-op — never an ownerless or half-swapped server. 'blocked'
+  // tiers don't exist on the roster schema (owner/moderator/member, every
+  // member row active); the target arm's role IS NOT NULL is the active
+  // predicate.
+  const promote = env.GOOBER_DB.prepare(
+    "UPDATE gc_server_members SET role = 'owner' WHERE server_id = ? AND user_id = ? " +
+      "AND EXISTS (SELECT 1 FROM gc_server_members od WHERE od.server_id = ? AND od.user_id = ? AND od.role = 'owner') " +
+      "AND EXISTS (SELECT 1 FROM gc_server_members mb WHERE mb.server_id = ? AND mb.user_id = ? AND mb.role IS NOT NULL)",
+  ).bind(serverId, targetUserId, serverId, me, serverId, targetUserId);
+
+  // Statement 1: demote the old owner — the row leaves, guarded by the owner
+  // arm AND the promote having landed.
+  const demoteDelete = env.GOOBER_DB.prepare(
+    "DELETE FROM gc_server_members WHERE server_id = ? AND user_id = ? AND role = 'owner' " +
+      "AND " + OWNER_EXISTS_SQL +
+      " AND EXISTS (SELECT 1 FROM gc_server_members pt WHERE pt.server_id = ? AND pt.user_id = ? AND pt.role = 'owner')",
+  ).bind(serverId, me, serverId, me, serverId, targetUserId);
+
+  // Statement 2: the exact re-insert — the demoted owner keeps their row as a
+  // plain member, fields preserved verbatim, guarded by the row-is-gone rider
+  // and the promote-landed rider.
+  const demoteInsert = env.GOOBER_DB.prepare(
+    "INSERT INTO gc_server_members (server_id, user_id, role, joined_at, nickname, timed_out_until, created_by_invite, rules_accepted_at) " +
+      "SELECT ?, ?, 'member', ?, ?, ?, ?, ? " +
+      "WHERE NOT EXISTS (SELECT 1 FROM gc_server_members WHERE server_id = ? AND user_id = ?) " +
+      "AND EXISTS (SELECT 1 FROM gc_server_members pt WHERE pt.server_id = ? AND pt.user_id = ? AND pt.role = 'owner')",
+  ).bind(
+    serverId, me, membership.joined_at, membership.nickname,
+    membership.timed_out_until, membership.created_by_invite,
+    membership.rules_accepted_at,
+    serverId, me, serverId, targetUserId,
+  );
+
+  const results = await env.GOOBER_DB.batch([promote, demoteDelete, demoteInsert]);
+  const promoteChanges = Number(results[0]?.meta?.changes) || 0;
+  const demoteChanges = Number(results[1]?.meta?.changes) || 0;
+  const reinsertChanges = Number(results[2]?.meta?.changes) || 0;
+  if (promoteChanges === 1 && demoteChanges === 1 && reinsertChanges === 1) {
+    return json({ transferred: true, serverId, ownerId: targetUserId }, 200);
+  }
+
+  // Diagnostic only: authority already rode the batch's arms. The caller
+  // still owning the server means the TARGET arm refused (404 — the same
+  // wording a kick's missing target answers); anything else is the ownership
+  // racing away underneath, answered 409.
+  const current = await env.GOOBER_DB.prepare(MEMBERSHIP_ROW_SQL)
+    .bind(serverId, me).first();
+  if (current && current.role === "owner") {
+    throw new HttpError(404, "That member is not in this server.");
+  }
+  throw new HttpError(409, TRANSFER_RACE_MESSAGE);
+}
+
 // --- server DELETE: the owner's one-act delete (the shaver) -----------------------
 
 // Owner-only, and the SAME discipline the channel DELETE set: every statement
@@ -3539,6 +3693,22 @@ export async function handleServerRoutes(request, env, url, path, method, ctx) {
     : null;
   if (serverDeleteMatch) {
     return handleDeleteServerRoute(request, env, Number(serverDeleteMatch[1]), ctx);
+  }
+
+  // Wave 8 (T-PARITY-LEAVE): the member exit + the owner handover, beside the
+  // server-wide mutations they mirror.
+  const leaveMatch = method === "POST"
+    ? path.match(/^\/api\/servers\/(0|[1-9][0-9]*)\/leave$/)
+    : null;
+  if (leaveMatch) {
+    return handleLeaveServerRoute(request, env, Number(leaveMatch[1]));
+  }
+
+  const transferMatch = method === "POST"
+    ? path.match(/^\/api\/servers\/(0|[1-9][0-9]*)\/transfer-ownership$/)
+    : null;
+  if (transferMatch) {
+    return handleTransferOwnershipRoute(request, env, Number(transferMatch[1]));
   }
 
   const channelsMatch = method === "POST"
