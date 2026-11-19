@@ -32,7 +32,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import { HttpError } from "../api/core/http.mjs";
-import { handleMediaRoutes, createAttachment } from "../api/media.mjs";
+import { handleMediaRoutes, createAttachment, deleteAttachmentObjectRide } from "../api/media.mjs";
 import { handleAvatarRoutes } from "../api/avatars.mjs";
 import { randomToken, sha256Hex, nowSeconds } from "../api/core/crypto.mjs";
 import {
@@ -304,9 +304,12 @@ test("a failed R2 put rolls the byte-less row back — the upload rejects 503", 
     createAttachment(env, USER_ID, image),
     (error) => error instanceof HttpError && error.status === 503,
   );
-  // Exactly one put was attempted, then the compensating delete swept the
-  // just-inserted pending row; the batch never carried a chunk statement.
-  assert.deepEqual(r2.calls.map((call) => call.op), ["put"]);
+  // Exactly one put was attempted, then the compensating sweep: the
+  // just-inserted pending row deleted AND its object-delete ride scheduled
+  // (the rolled-back row now leaves no orphan behind — FINDING 2), and the
+  // batch never carried a chunk statement.
+  assert.deepEqual(r2.calls.map((call) => call.op), ["put", "delete"]);
+  assert.equal(r2.calls[1].key, GC_ATTACHMENT_OBJECT_PREFIX + "41");
   const batch = db.calls.find((call) => call.call === "batch");
   assert.ok(batch);
   assert.equal(batch.statements.length, 1);
@@ -553,6 +556,29 @@ test("a successful reject without the GC_MEDIA binding schedules nothing", async
   assert.deepEqual(JSON.parse(await response.text()), { rejected: true, id: 41 });
   assert.equal(ctx.tasks.length, 0);
   assert.equal(r2.calls.length, 0);
+});
+
+// --- the exported object-delete ride (out-of-scope callers' one-liner) ------------
+
+test("deleteAttachmentObjectRide schedules one delete through ctx, no-op without the binding", async () => {
+  const r2 = fakeR2();
+  const env = envWithLimiters({ GC_MEDIA: r2 });
+  const ctx = fakeCtx();
+
+  deleteAttachmentObjectRide(env, ctx, 41);
+  assert.equal(ctx.tasks.length, 1);
+  await settled(ctx);
+  assert.deepEqual(
+    r2.calls.filter((call) => call.op === "delete").map((call) => call.key),
+    [GC_ATTACHMENT_OBJECT_PREFIX + "41"],
+  );
+
+  // The no-binding dev lane answers the same one-line ride with nothing.
+  const bindingless = envWithLimiters({});
+  const silent = fakeCtx();
+  deleteAttachmentObjectRide(bindingless, silent, 41);
+  assert.equal(silent.tasks.length, 0);
+  assert.equal(r2.calls.filter((call) => call.op === "delete").length, 1);
 });
 
 // --- avatars: R2 avatars/<id> first, D1 avatar_data fallback -----------------------

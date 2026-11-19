@@ -109,6 +109,14 @@ export function scheduleAttachmentObjectDelete(env, ctx, attachmentId) {
   scheduleBackgroundTask(ctx, env.GC_MEDIA.delete(attachmentObjectKey(attachmentId)));
 }
 
+// The same ride under its own export, for the byte-life callers outside
+// media.mjs (the message-attachment delete lane and the soundboard/emoji
+// follow-ups): each death path's D1 verdict stays the gate, the bucket
+// follow stays a one-line best-effort ride.
+export function deleteAttachmentObjectRide(env, ctx, attachmentId) {
+  scheduleAttachmentObjectDelete(env, ctx, attachmentId);
+}
+
 // --- multipart parsing -----------------------------------------------------------
 
 // Reads a task-6 intake body, always returning the uniform { fields, files }
@@ -282,8 +290,10 @@ const STANDALONE_ROW_DELETE_SQL =
 // the AWAITED store-of-record put. A failed put rolls the just-inserted
 // byte-less row back and rejects 503: bytes are durable in R2 or no row
 // survives (a crash between the two leaves a pending row the empty chunk set
-// 404s, and a reviewer's reject removes). No R2 delete fires for the
-// rolled-back row: a put that threw almost certainly left nothing behind.
+// 404s, and a reviewer's reject removes). The rollback's object delete is the
+// same best-effort ride as every other byte-death path — a put that threw
+// almost certainly left nothing behind, so it sweeps only the rare
+// timeout-after-write object.
 // Returns the inserted row's id; each caller keeps its own wire shape.
 export async function insertStandaloneAttachment(env, uploaderId, prepared, now, failedInsertErrorCopy) {
   if (env.GC_MEDIA) {
@@ -300,12 +310,17 @@ export async function insertStandaloneAttachment(env, uploaderId, prepared, now,
     } catch {
       // Best-effort sweep: a D1 failure in the delete itself must never mask
       // the 503 (worst case is the pending byte-less row the serving path
-      // already 404s and the reviewer queue can remove).
+      // already 404s and the reviewer queue can remove). The row's death
+      // rides the same object-delete as every other byte-death path in this
+      // module — a put that threw almost certainly left nothing behind, so
+      // the common case is a no-op sweep (the rare timeout-after-write
+      // object must never orphan).
       try {
         await env.GOOBER_DB.prepare(STANDALONE_ROW_DELETE_SQL).bind(id).run();
       } catch {
         // the 503 below is the contract; the row removal rides best-effort
       }
+      deleteAttachmentObjectRide(env, undefined, id);
       throw new HttpError(503, STORE_FAILED_ERROR);
     }
     return id;
