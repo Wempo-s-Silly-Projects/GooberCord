@@ -104,9 +104,27 @@ test("the capsules panel module exists and wires the four LIVE doors", () => {
     "DELETE /api/servers/:id/capsules/:cid (api/capsules.mjs:170 route arm)");
 });
 
-test("the store lane mirrors the GET list — one lane, one shape", () => {
-  assert.match(CAPSULES_UI, /const MINE_LANE = "mineCapsules";/);
-  assert.match(CAPSULES_UI, /store\.set\(\{ \[MINE_LANE\]: Array\.isArray\(payload\?\.capsules\) \? payload\.capsules : \[\] \}\);/);
+// TEST-MOVE (deslop fix-round-1, T-WAVE-11 HIGH): the flat "mineCapsules"
+// lane was the wave-10 house violation — per-server lanes key by server
+// (members.js:39 roster:${serverId}, expressions.js:50
+// expressions:${serverId}). The pin retargets to the keyed shape; the key
+// itself gets its own pin below.
+test("the store lane mirrors the GET list — one lane per server, one shape", () => {
+  assert.match(CAPSULES_UI, /const mineKey = \(serverId\) => `mineCapsules:\$\{serverId\}`;/,
+    "the rosterKey/expressionsKey idiom (members.js:39, expressions.js:50)");
+  assert.match(CAPSULES_UI, /store\.set\(\{ \[mineKey\(serverId\)\]: Array\.isArray\(payload\?\.capsules\) \? payload\.capsules : \[\] \}\);/);
+});
+
+test("the mine lane keys per-server — server-1 rows never answer server-2's URL", () => {
+  // The wave-10 flat lane: set once on server 1's visit, read on server 2's
+  // render — server 1's roster paints under server 2's URL. The read side
+  // AND the lane-miss check both carry the rendered server's key.
+  assert.match(CAPSULES_UI, /const mineKey = \(serverId\) => `mineCapsules:\$\{serverId\}`;/);
+  assert.match(CAPSULES_UI, /const lane = store\.get\(mineKey\(serverId\)\);/,
+    "the lane-miss check reads THIS server's lane");
+  assert.match(CAPSULES_UI, /capsuleRows\(store\.get\(mineKey\(serverId\)\), serverId\)/,
+    "the painted rows read THIS server's lane");
+  assert.doesNotMatch(CAPSULES_UI, /"mineCapsules"/, "the flat lane is retired, not left dead");
 });
 
 test("the mine payload's rows paint id, channelId, revealAt, sealed — no invented read", () => {
@@ -126,6 +144,13 @@ test("the panel rides the server-scoped task-page idiom and registers in the she
   assert.match(SHELL, /t\("gc\.shell\.nav\.capsules"\)/);
   assert.match(SHELL, /href: `\/s\/\$\{server\.id\}\/capsules`/,
     "the server rail door navigates the active server's capsules page");
+});
+
+test("a sealed-shape 200 never paints an undefined body seat (deslop fix-round-1 LOW)", () => {
+  assert.match(CAPSULES_UI, /revealed\?\.sealed === false/,
+    "the body paints only on the unsealed shape — the author's pre-postmark 200 stays a schedule");
+  assert.match(CAPSULES_UI, /typeof revealed\.body === "string"/,
+    "the absent-body 200 keeps the schedule paint (the savedStamp guard family)");
 });
 
 // --- the defaults law -----------------------------------------------------------

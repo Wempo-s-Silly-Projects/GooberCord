@@ -24,10 +24,10 @@
 // /api/servers/:id/capsules/:cid. The list payload carries pointer rows only
 // (id, channelId, revealAt, sealed — NO body): the letter's text rides
 // EXACTLY ONE read, the member-initiated reveal GET, and paints once through
-// its own textContent seat, never t()'d, never interpolated. The store lane
-// ("mineCapsules") mirrors the GET list. The empty schedule is a valid
-// painted state (the defaults law), never an error; every refusal renders
-// the server's own string verbatim (G-2).
+// its own textContent seat, never t()'d, never interpolated. The store
+// lanes key PER-SERVER (the rosterKey/expressionsKey idiom). The empty
+// schedule is a valid painted state (the defaults law), never an error;
+// every refusal renders the server's own string verbatim (G-2).
 import { h } from "../core/dom.js";
 import { api } from "../core/api.js";
 import store from "../core/store.js";
@@ -38,13 +38,15 @@ import { t } from "../i18n.js";
 
 // GET /api/servers/:serverId/capsules/mine — the author's own list mirrors
 // into the store lane; pointer rows only (capsules.mjs reads the body
-// column nowhere).
-const MINE_LANE = "mineCapsules";
+// column nowhere). The lane keys by server (members.js:39
+// roster:${serverId}): a flat lane set on one server's visit could be read
+// on another's render — server 1's roster painting under server 2's URL.
+const mineKey = (serverId) => `mineCapsules:${serverId}`;
 
 export async function loadMineCapsules(serverId) {
   const payload = await api(`/api/servers/${serverId}/capsules/mine`);
-  store.set({ [MINE_LANE]: Array.isArray(payload?.capsules) ? payload.capsules : [] });
-  return store.get(MINE_LANE);
+  store.set({ [mineKey(serverId)]: Array.isArray(payload?.capsules) ? payload.capsules : [] });
+  return store.get(mineKey(serverId));
 }
 
 // POST /api/servers/:serverId/capsules { body, revealAt } — the compose act.
@@ -92,14 +94,14 @@ export function renderCapsulesPanel(route, mount) {
     h("h3", { text: t("gc.capsules.heading") }), composePanel(serverId));
   mount.append(renderShell(route, h("section", { class: "pane-main task-main" },
     h("div", { class: "pane-body" }, body, panel))));
-  const lane = store.get(MINE_LANE);
+  const lane = store.get(mineKey(serverId));
   if (!Array.isArray(lane)) {
     loadMineCapsules(serverId).then(() => router.renderCurrent()).catch((error) => {
       panel.append(h("p", { class: "form-error", text: error.message })); // G-2 verbatim
     });
     return;
   }
-  panel.append(capsuleRows(store.get(MINE_LANE), serverId));
+  panel.append(capsuleRows(store.get(mineKey(serverId)), serverId));
 }
 
 // The compose door: the letter well + the postmark seat. The submit is the
@@ -225,11 +227,19 @@ function capsuleRows(rows, serverId) {
       onClick: async () => {
         try {
           const revealed = await revealCapsule(serverId, row.id);
-          letterSeat.hidden = false;
-          letterSeat.className = "capsule-letter";
-          letterSeat.textContent = revealed.body; // the letter paints verbatim through its own textContent seat
-          whenLine.textContent = t("gc.capsules.stamp", { when: revealStamp(revealed.revealAt ?? revealAt) });
-          openButton.hidden = true;
+          // The unsealed shape alone carries the body — the savedStamp guard
+          // family: a sealed-shape 200 (the author's pre-postmark arm) keeps
+          // the schedule paint, never an undefined body seat.
+          if (revealed?.sealed === false && typeof revealed.body === "string") {
+            letterSeat.hidden = false;
+            letterSeat.className = "capsule-letter";
+            letterSeat.textContent = revealed.body; // the letter paints verbatim through its own textContent seat
+            whenLine.textContent = t("gc.capsules.stamp", { when: revealStamp(revealed.revealAt ?? revealAt) });
+            openButton.hidden = true;
+            return;
+          }
+          letterSeat.hidden = true;
+          letterSeat.textContent = "";
         } catch (error) {
           letterSeat.hidden = false;
           letterSeat.className = "capsule-letter form-error"; // the non-revealed 404, the row's own seat
