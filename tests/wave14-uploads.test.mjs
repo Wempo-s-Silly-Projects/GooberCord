@@ -222,15 +222,18 @@ test("the tier gate never rides the client — the mirrors carry no tier numbers
 
 // --- the freeze (the wave-9 lesson, five instances) --------------------------
 
-// LANE_BASE = 7aea317 (main tip at lane open). LANE_TIP = PLACEHOLDER —
-// LANE_TIP_PLACEHOLDER: the lead retargets this to the wave's own feat
+// LANE_BASE = 7aea317 (main tip at lane open). LANE_TIP = the wave's own
+// committed feat tip (the lead retargeted the placeholder 2026-11-19 — the
+// wave-9 freeze-pin lesson, sixth instance: the pin fingerprints the
+// lane's own range, never HEAD, or a later audit fix breaks this pin).
 // commit at commit time (the wave-9 freeze-pin lesson, fifth instance).
-test("diff scope: the frozen paths stay untouched in this working tree against LANE_BASE", () => {
+test("diff scope: the frozen paths stay untouched across LANE_BASE..LANE_TIP", () => {
   const LANE_BASE = "7aea317";
+  const LANE_TIP = "81efcae";
   let touched;
   try {
     touched = execFileSync("git", [
-      "diff", "--name-only", LANE_BASE, "HEAD", "--", ...FROZEN_WAVE14_PATHS,
+      "diff", "--name-only", LANE_BASE, LANE_TIP, "--", ...FROZEN_WAVE14_PATHS,
     ], { cwd: ROOT, encoding: "utf8" }).trim();
   } catch (error) {
     // The catch is an ARM, not a swallow: a genuinely no-history
