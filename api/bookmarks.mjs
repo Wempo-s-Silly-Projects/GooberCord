@@ -16,7 +16,7 @@
 // GNU Affero General Public License along with this program.  If not,
 // see <https://www.gnu.org/licenses/>
 
-// Bookmarks (lane2-lifecycle recode, migration 0051): the private reading
+// Bookmarks (lane2-lifecycle recode, migration 0054): the private reading
 // queue. A bookmark is a THIN POINTER a member saves onto a message — the
 // address columns (owner, message, saved_at) and NOTHING else: no text
 // copy, no snippet, no read-state flag, no note, no auto rows (defaults
@@ -28,7 +28,7 @@
 // shared 404 body (no 403 existence oracle); an unreachable message save
 // answers the shared message-family 404 the same way — both classifications
 // ride the statement gate (changes-0), never a pre-read. A deleted message
-// leaves an orphan pointer (migration 0051 carries no FK by design) whose
+// leaves an orphan pointer (migration 0054 carries no FK by design) whose
 // dead address answers nothing on the read — the save gate cannot match a
 // row that no longer exists, so the pointer keeps nothing alive.
 import { requireUser } from "./core/auth.mjs";

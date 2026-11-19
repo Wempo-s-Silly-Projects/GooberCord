@@ -16,7 +16,7 @@
 // GNU Affero General Public License along with this program.  If not,
 // see <https://www.gnu.org/licenses/>
 
-// Time capsules (lane2-lifecycle recode, migration 0050): a letter to your
+// Time capsules (lane2-lifecycle recode, migration 0052): a letter to your
 // future self, postmarked by the server. One schedule, one reveal, ZERO
 // timers — the reveal is a property of the ROW, checked by time comparison
 // at read time, so reads gate themselves. The laws the module encodes:

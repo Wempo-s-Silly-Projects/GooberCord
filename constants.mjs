@@ -401,7 +401,7 @@ export const GC_MENTIONS_PAGE_MAX = 100;
 export const GC_SEARCH_PAGE_MAX = 25;
 export const GC_SEARCH_TERM_MAX = 100;
 
-// Time capsules (lane2-lifecycle recode, migration 0050): the scheduled
+// Time capsules (lane2-lifecycle recode, migration 0052): the scheduled
 // letter's four caps. One schedule, one reveal, ZERO timers — every number
 // here is a cap or a schedule bound, nothing else. GC-shaped caps (no
 // Discord parity source; house-sized against the message body family).
@@ -410,7 +410,7 @@ export const GC_CAPSULE_MIN_AHEAD_SECONDS = 300;
 export const GC_CAPSULE_MAX_AHEAD_SECONDS = 2592000;
 export const GC_CAPSULES_MAX_OPEN_PER_MEMBER = 10;
 
-// Bookmarks (lane2-lifecycle recode, migration 0051): the private reading
+// Bookmarks (lane2-lifecycle recode, migration 0054): the private reading
 // list's only cap — the newest N of the caller's own pointers the GET
 // answers (GC-shaped — no Discord parity source; sized against the pin
 // read's own cap idiom, GC_PINS_MAX_PER_CHANNEL above).

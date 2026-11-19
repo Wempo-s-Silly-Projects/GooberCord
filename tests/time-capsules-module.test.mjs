@@ -16,7 +16,7 @@
 // GNU Affero General Public License along with this program.  If not,
 // see <https://www.gnu.org/licenses/>
 
-// Time capsules (lane2-lifecycle recode, migration 0050): the scheduled
+// Time capsules (lane2-lifecycle recode, migration 0052): the scheduled
 // future-reveal letter. One schedule, one reveal, ZERO timers — the reveal
 // is a row property compared against now at read time. The privacy pin runs
 // through every pre-reveal arm: the letter's body rides EXACTLY ONE read

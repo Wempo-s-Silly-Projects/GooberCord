@@ -16,10 +16,17 @@
 -- GNU Affero General Public License along with this program.  If not,
 -- see <https://www.gnu.org/licenses/>
 
--- 0051 — bookmarks (lane2-lifecycle recode, 2026-11-18): the ONE new table,
--- nothing else (CREATE-only: no shared-table edit, no ALTER, no FK, no
--- seed). Not in the prod migration ledger per the port brief; 0050 carried
--- this lane's capsules table, so the second table takes the next ordinal.
+-- 0054 — bookmarks (lane2-lifecycle recode, 2026-11-18): ONE table's DDL,
+-- nothing else (no shared-table edit, no ALTER, no FK, no seed). 0052
+-- carried this lane's capsules table; 0053 stays the lead's free ordinal
+-- (the expression and community pairs took 0050/0051).
+-- Scar note: the rewrite-era 0038 created this exact table and the whole
+-- 0029-0044 chain was ALREADY applied to the live shared wempo-forum-data
+-- D1 (0045's header proves 0044 rode that chain), so on the live D1 this
+-- migration is a NO-OP by design — CREATE ... IF NOT EXISTS never touches
+-- the populated remote table, never drops, never renames. On any fresh
+-- tree or local rebuild (where 0029-0044 never ran) the DDL lands here
+-- whole, so the bookmark routes run against a floor that exists.
 --
 -- gc_bookmarks — a bookmark is a PRIVATE POINTER a member saves onto a
 -- message: address columns ONLY (who saved it, which message, when). No
@@ -31,11 +38,11 @@
 -- to reason about, no edit to any other table's write path, and a
 -- wrong-owner unsave is indistinguishable from a wrong id (no existence
 -- oracle either way).
-CREATE TABLE gc_bookmarks (
+CREATE TABLE IF NOT EXISTS gc_bookmarks (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   owner_user_id INTEGER NOT NULL,
   message_id INTEGER NOT NULL,
   saved_at INTEGER NOT NULL
 );
-CREATE INDEX idx_gc_bookmarks_owner_message
+CREATE INDEX IF NOT EXISTS idx_gc_bookmarks_owner_message
   ON gc_bookmarks (owner_user_id, message_id);
