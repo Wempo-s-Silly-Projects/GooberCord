@@ -652,9 +652,11 @@ test("the conversation roster and the social friends rows carry the badge throug
   assert.match(social, /isPlus: publicIsPlus\(row\)/);
   assert.match(social, /plusActiveExpr\("u\.id"\)/);
 
-  const servers = readFileSync(new URL("../api/servers.mjs", import.meta.url), "utf8");
-  assert.match(servers, /plusActiveExpr\("u\.id"\)/, "the server member list uses the SHARED fragment");
-  assert.match(servers, /isPlus: publicIsPlus\(row\)/);
+  // T-R25-SPLIT-SERVERS-3: the roster rides the roles seam — the member
+  // list's pins read api/server-roles.mjs.
+  const rosterSeam = readFileSync(new URL("../api/server-roles.mjs", import.meta.url), "utf8");
+  assert.match(rosterSeam, /plusActiveExpr\("u\.id"\)/, "the server member list uses the SHARED fragment");
+  assert.match(rosterSeam, /isPlus: publicIsPlus\(row\)/);
 });
 
 test("every surface binds the badge's `now` FIRST in textual order (the fragment's contract)", () => {

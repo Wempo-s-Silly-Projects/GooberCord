@@ -51,7 +51,7 @@ const STYLES = () => read("public/styles.css");
 
 // --- the frozen backend is the single source (read, NEVER edited) -----------
 
-const ROSTER = read("api/servers.mjs");
+const ROSTER = read("api/server-roles.mjs"); // T-R25-SPLIT-SERVERS-3: the roster rides the roles seam
 const ACCOUNTS = read("api/accounts.mjs");
 
 test("the payload carries the avatar as data (the backend truth the paint rides)", () => {
