@@ -52,12 +52,13 @@ import {
   GC_RULES_MAX,
   GC_SEARCH_PAGE_MAX,
   GC_SEARCH_TERM_MAX,
-  GC_SERVER_DELETE_ATTACHMENT_LIMIT,
   GC_SERVERS_JOIN_MAX_FREE,
   GC_SERVERS_JOIN_MAX_PLUS,
   MAX_CHANNELS_PER_SERVER,
-  PINS_READ_BIND_CHUNK,
 } from "../constants.mjs";
+// Server icons ride the media module's intake engine-to-engine in the seam
+// modules (the PATCH icon write in server-body.mjs) — nothing in this
+// module touches media any more.
 import { grantServerCreateCoins } from "./coins.mjs";
 import {
   ALL_SERVER_PERMISSIONS,
@@ -77,11 +78,6 @@ import {
   TIMEOUT_MINUTE_CHOICES,
   VERIFICATION_LEVELS,
 } from "./permissions.mjs";
-// Server icons reuse the media module's intake end to end: the standalone
-// upload (magic bytes, structural sanitizer, 64k chunks, pending moderation)
-// and the same multipart reader — no new storage SQL, no second gate to have
-// drifted away from the attachment one.
-import { createAttachment, readMultipartWithImage, scheduleAttachmentObjectDelete } from "./media.mjs";
 // The search's per-hit VIEW gate rides the shared layer machinery (one
 // boolean, never the throwing route gate — a denied hit is DROPPED, not a
 // page-kill).
@@ -151,12 +147,13 @@ import { handleServerLeaveRoutes } from "./server-leave.mjs";
 // mirrors there.
 import { handleServerModRoutes } from "./server-mod.mjs";
 
-// T-R25-SPLIT-SERVERS-6: the server's own body (create, list, PATCH, the
-// one-act DELETE shaver) rides api/server-body.mjs (the wave-25 fifth
-// seam). Its deps (media's icon intake + the ctx attachment purge, the
-// coins mint, the body's permission machinery) thread to the seam; the
-// owner-guard fragment + the server-name law keep their local mirrors
-// there.
+// T-R25-SPLIT-SERVERS-6: the server's own body (create, list, PATCH) rides
+// api/server-body.mjs (the wave-25 sixth seam). Its deps (media's icon
+// intake, the coins mint, the body's permission machinery) thread to the
+// seam; the owner-guard fragment + the server-name law keep their local
+// mirrors there. The owner's one-act DELETE shaver does NOT ride the body:
+// its single home is api/server-leave.mjs (the double-move was caught at
+// the body lane's rebase — single-home ruling).
 import { handleServerBodyRoutes } from "./server-body.mjs";
 
 // Exported for api/server-channels.mjs (the channel family's
@@ -469,9 +466,10 @@ export function errorName(error) {
 }
 
 export async function handleServerRoutes(request, env, url, path, method, ctx) {
-  // ctx (the worker's execution context) threads into the purge rides: the
-  // channel/server purges' doomed attachments' R2 objects ride the caller's
-  // waitUntil (media.mjs's scheduleAttachmentObjectDelete).
+  // ctx (the worker's execution context) threads to the forwards: the seam
+  // families' purge rides (the leave teardown's + the channel DELETE's
+  // doomed attachments' R2 objects) hangs off the caller's waitUntil
+  // (media.mjs's scheduleAttachmentObjectDelete in the seam modules).
   void url;
 
   // T-R25-SPLIT-SERVERS-6: the server's own create/list/PATCH body rides

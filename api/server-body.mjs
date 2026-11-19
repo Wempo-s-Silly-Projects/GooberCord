@@ -19,31 +19,31 @@
 // T-R25-SPLIT-SERVERS-6: the server-body family's home (the wave-25 area-7
 // seam, off the phase-1 monolith). The server's own body answers here — the
 // compensated create (server row + owner membership + #general, all-or-
-// nothing), the member list, the PATCH settings write (name + icon), and
-// the owner's one-act DELETE shaver. The family's four arms are the
-// router's four HEAD arms, contiguous, with no interior interloper; the
-// ONE forward below hands the whole body to the router with an 'undefined'
+// nothing), the member list, and the PATCH settings write (name + icon).
+// The owner's one-act DELETE does NOT ride this module: its single home is
+// api/server-leave.mjs (the double-move was caught at this lane's rebase —
+// the copy that briefly landed here was cut byte-equal, proven by the
+// parity audit). The head arms are contiguous, with no interior interloper;
+// the ONE forward below hands the body to the router with an 'undefined'
 // fall-through — route order is semantically byte-unchanged, and every
 // write's guards ride INSIDE the SQL exactly as before (an extraction moves
 // bytes, not behavior).
 //
 // The family pulls its own deps straight from the leaf modules (coins' mint,
-// media's icon intake + the ctx attachment purge, permissions' payload
-// machinery); it needs none of servers.mjs's shared read helpers, so the
-// circular import carries only the two mirrors' origin note — the seam is
-// inert in the cycle like its siblings.
+// media's icon intake, permissions' payload machinery); it needs none of
+// servers.mjs's shared read helpers, so the circular import carries only the
+// two mirrors' origin note — the seam is inert in the cycle like its
+// siblings.
 //
 // The module rides the 800-line soft ceiling with a deliberate exception:
-// the four body stages read as ONE family (one wire surface — the server
-// itself), no second caller exists to split into.
+// the three body stages (create, list, PATCH) read as ONE family (one wire
+// surface — the server itself), no second caller exists to split into.
 
 import { requireSignedInRead, requireUser } from "./core/auth.mjs";
 import { nowSeconds } from "./core/crypto.mjs";
 import { HttpError, json, rateLimit, readJson, requiredText } from "./core/http.mjs";
 import {
   GC_RULES_MAX,
-  GC_SERVER_DELETE_ATTACHMENT_LIMIT,
-  PINS_READ_BIND_CHUNK,
 } from "../constants.mjs";
 // The community-builder mint rides the create AFTER the build batch commits —
 // failure-isolated, coins never fail a server.
@@ -56,10 +56,11 @@ import { ensureFilterWords, filterWords } from "./filterstore.mjs";
 // runs for the server name.
 import { applyWordFilter, containsFilteredWord } from "./filter.mjs";
 // The PATCH icon reuses the media module's intake engine-to-engine (magic
-// bytes, structural sanitizer, 64k chunks, pending moderation), and the
-// DELETE's doomed attachments ride the caller's waitUntil through
-// scheduleAttachmentObjectDelete — no new storage SQL, no second gate.
-import { createAttachment, readMultipartWithImage, scheduleAttachmentObjectDelete } from "./media.mjs";
+// bytes, structural sanitizer, 64k chunks, pending moderation) — no new
+// storage SQL, no second gate. The ctx attachment purge does NOT ride here:
+// the owner's one-act DELETE lives in api/server-leave.mjs (the
+// single-home ruling recorded at this lane's rebase).
+import { createAttachment, readMultipartWithImage } from "./media.mjs";
 // The payload machinery's permission names + the PATCH verification law stay
 // ONE implementation in permissions.mjs, imported here like every sibling.
 import {
