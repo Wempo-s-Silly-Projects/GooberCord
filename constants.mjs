@@ -307,6 +307,16 @@ export const GC_VOICE_MAX_PARTICIPANTS = 6;
 // can make the DO relay to every other participant.
 export const GC_VOICE_MAX_FRAME_BYTES = 2048;
 
+// GO-HAYWIRE cycle-13: the voice frame arms' per-caller floor window (the
+// c12 floors' peek/ARM idiom over the voice_join / voice_mute /
+// voice_leave arms). Matches the voice authority TTL (10s —
+// ChatRoom.VOICE_AUTH_TTL_MS), so a floored repeat and a cached authority
+// answer share the same freshness horizon.
+export const GC_VOICE_FLOOR_SECONDS = 10;
+// GO-HAYWIRE cycle-13: the hard cap for every per-caller floor/auth Map in
+// the room DO — the shared bump helper's oldest-entry eviction bound.
+export const GC_FLOOR_MAP_CAP = 512;
+
 // The typing frame floor (GO-HAYWIRE cycle-4): every "typing" WS frame fans
 // out to every other socket in the room, so an unthrottled client (or a
 // hostile one) amplified N-1 relays per frame. The DO drops repeats inside

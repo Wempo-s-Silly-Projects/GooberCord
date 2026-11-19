@@ -60,7 +60,9 @@ import { sendMessageToChannel as sendMessageToChannelPrimitive, RulesGateError, 
 import { CARE_WS_FRAME_TYPE } from "./filterrules.mjs";
 import { HttpError, json } from "./core/http.mjs";
 import {
+  GC_FLOOR_MAP_CAP,
   GC_TYPING_FLOOR_SECONDS,
+  GC_VOICE_FLOOR_SECONDS,
   GC_VOICE_FRAME_VERSION,
   GC_VOICE_MAX_FRAME_BYTES,
   GC_VOICE_MAX_PARTICIPANTS,
@@ -363,6 +365,22 @@ export class ChatRoom extends (workerd?.DurableObject ?? DurableObjectBase) {
     }
 
     if (type === "voice_join") {
+      // Cycle-13 floor: the PEEK runs before any work (the c12 floors' own
+      // idiom) — a repeat inside the window is a pure in-memory check: zero
+      // gate re-walks, zero hub rides. The floored join keeps the arm's
+      // non-hub side effects in the arm's own order (the flags write rides
+      // BEFORE the hub call on the happy path — verify: no other mutation
+      // precedes forwardToPresence) and skips ONLY the hub subrequest +
+      // presence write: no error frame, no close, and the roster broadcast
+      // stays the joiner's in-memory ok. No legit state change breaks — the
+      // flags mutation runs on both paths — and skipping the door's re-walk
+      // is within the same GC_VOICE_FLOOR_SECONDS horizon the authority
+      // cache itself holds (the admitted join just answered it).
+      if (this.voiceJoinFloorRepeat(meta)) {
+        this.storeVoiceFlags(socket, meta, true, false);
+        this.broadcastVoiceRoster();
+        return;
+      }
       // The M3 voice door at the frame too: the join re-walks the same
       // fragments the upgrade checked (membership + CONNECT/SPEAK, via the
       // TTL cache). A refused join is ignored — no flags set, no roster.
@@ -382,6 +400,7 @@ export class ChatRoom extends (workerd?.DurableObject ?? DurableObjectBase) {
         channelId: meta.channelId,
       });
       this.broadcastVoiceRoster();
+      this.voiceJoinFloorArm(meta);
       return;
     }
 
@@ -390,16 +409,29 @@ export class ChatRoom extends (workerd?.DurableObject ?? DurableObjectBase) {
         this.sendFrame(socket, { type: "error", code: "bad_frame" });
         return;
       }
+      // Cycle-13 floor: the arm's order puts the flags write before the
+      // broadcast, and the floor drops the BROADCAST, never the state — a
+      // repeat inside the window silently skips the O(sockets) roster
+      // fan-out (the drop shape: no error frame, no close) while the
+      // sender's own mute state stays untouched by flooring.
       this.storeVoiceFlags(socket, meta, true, frame.muted);
+      if (this.voiceMuteFloorRepeat(meta)) return;
       this.broadcastVoiceRoster();
+      this.voiceMuteFloorArm(meta);
       return;
     }
 
     if (type === "voice_leave") {
       if (meta.voice) {
+        // Cycle-13 floor, the mute arm's drop shape: the flags write runs
+        // on both paths; a repeat inside the window silently skips the hub
+        // relay + roster broadcast, so a join/leave alternation cannot ride
+        // the leave arm's hub subrequest back in past the join floor's skip.
         this.storeVoiceFlags(socket, meta, false, false);
+        if (this.voiceLeaveFloorRepeat(meta)) return;
         await this.forwardToPresence({ type: "voice_leave", userId: meta.userId });
         this.broadcastVoiceRoster();
+        this.voiceLeaveFloorArm(meta);
       }
       return;
     }
@@ -448,14 +480,14 @@ export class ChatRoom extends (workerd?.DurableObject ?? DurableObjectBase) {
       void error; // fail closed
       ok = false;
     }
-    // A long-idle DO never grows the cache without bound; expired answers
-    // die here (any entry is re-walked on its next consult regardless).
-    if (this.voiceAuthCache.size > 512) {
-      for (const [entryKey, entry] of this.voiceAuthCache) {
-        if (now - entry.at >= ChatRoom.VOICE_AUTH_TTL_MS) this.voiceAuthCache.delete(entryKey);
-      }
-    }
-    this.voiceAuthCache.set(key, { ok, at: now });
+    // A long-idle DO never grows the cache without bound; the shared bump's
+    // stale sweep (any entry is re-walked on its next consult regardless).
+    this.#bumpBoundedCache(
+      this.voiceAuthCache,
+      key,
+      (entry) => now - entry.at >= ChatRoom.VOICE_AUTH_TTL_MS,
+      { ok, at: now },
+    );
     return ok;
   }
 
@@ -480,16 +512,12 @@ export class ChatRoom extends (workerd?.DurableObject ?? DurableObjectBase) {
   }
 
   typingFloorArm(meta) {
-    // Same idle bound as the voice cache: expired entries die on an arm once
-    // the map outgrows its cap, so a long-idle DO never grows unbounded.
-    const key = meta.channelId + ":" + meta.userId;
-    const now = Date.now();
-    if (this.typingFloorCache.size > 512) {
-      for (const [entryKey, entryAt] of this.typingFloorCache) {
-        if (now - entryAt >= ChatRoom.TYPING_FLOOR_MS) this.typingFloorCache.delete(entryKey);
-      }
-    }
-    this.typingFloorCache.set(key, now);
+    this.#bumpBoundedCache(
+      this.typingFloorCache,
+      meta.channelId + ":" + meta.userId,
+      (entryAt) => Date.now() - entryAt >= ChatRoom.TYPING_FLOOR_MS,
+      Date.now(),
+    );
   }
 
   // GO-HAYWIRE cycle-12: the "msg" frame arm runs the SAME fan-in gates the
@@ -511,14 +539,12 @@ export class ChatRoom extends (workerd?.DurableObject ?? DurableObjectBase) {
   }
 
   msgFloorArm(meta) {
-    const key = meta.channelId + ":" + meta.userId;
-    const now = Date.now();
-    if (this.msgFloorCache.size > 512) {
-      for (const [entryKey, entryAt] of this.msgFloorCache) {
-        if (now - entryAt >= ChatRoom.MSG_FLOOR_MS) this.msgFloorCache.delete(entryKey);
-      }
-    }
-    this.msgFloorCache.set(key, now);
+    this.#bumpBoundedCache(
+      this.msgFloorCache,
+      meta.channelId + ":" + meta.userId,
+      (entryAt) => Date.now() - entryAt >= ChatRoom.MSG_FLOOR_MS,
+      Date.now(),
+    );
   }
 
   // GO-HAYWIRE cycle-12: the "heartbeat" arm made a per-frame DO-to-DO
@@ -541,14 +567,89 @@ export class ChatRoom extends (workerd?.DurableObject ?? DurableObjectBase) {
   }
 
   heartbeatFloorArm(meta) {
-    const key = meta.channelId + ":" + meta.userId;
-    const now = Date.now();
-    if (this.heartbeatFloorCache.size > 512) {
-      for (const [entryKey, entryAt] of this.heartbeatFloorCache) {
-        if (now - entryAt >= ChatRoom.HEARTBEAT_FLOOR_MS) this.heartbeatFloorCache.delete(entryKey);
+    this.#bumpBoundedCache(
+      this.heartbeatFloorCache,
+      meta.channelId + ":" + meta.userId,
+      (entryAt) => Date.now() - entryAt >= ChatRoom.HEARTBEAT_FLOOR_MS,
+      Date.now(),
+    );
+  }
+
+  // The cycle-13 bump: ONE bounded write for every per-caller Map (the
+  // cycle-4/12 floors and the voice-auth cache, plus the cycle-13 voice
+  // floors). The stale sweep stays the PRIMARY eviction — each caller's own
+  // window decides; a fully-fresh map past the cap now dies from the OLDEST
+  // inserted entry (Map insertion order: the first key) instead of growing
+  // unbounded under a distinct-user flood. Before inserting a new key the
+  // map caps hard at GC_FLOOR_MAP_CAP (512), so one bump never nets the Map
+  // above the cap; a re-arm of an existing key never evicts an innocent
+  // caller's slot.
+  #bumpBoundedCache(cache, key, isStale, value) {
+    if (cache.size > GC_FLOOR_MAP_CAP) {
+      for (const [entryKey, entry] of cache) {
+        if (isStale(entry)) cache.delete(entryKey);
       }
     }
-    this.heartbeatFloorCache.set(key, now);
+    while (cache.size >= GC_FLOOR_MAP_CAP && !cache.has(key)) {
+      cache.delete(cache.keys().next().value);
+    }
+    cache.set(key, value);
+  }
+
+  // GO-HAYWIRE cycle-13: the voice frame arms' per-caller floors (the c12
+  // idiom, one map per arm, the shared bump's eviction). The window is
+  // GC_VOICE_FLOOR_SECONDS (10s — the voice authority TTL's own horizon),
+  // never re-declared here. One map per arm: a mute must never floor a
+  // leave (a muted member still leaves, and the roster has to say so), so
+  // the mute and leave arms do not share a window.
+  static VOICE_FLOOR_MS = GC_VOICE_FLOOR_SECONDS * 1000;
+
+  voiceJoinFloorCache = new Map(); // `${channelId}:${userId}` → last admitted join (ms)
+
+  voiceJoinFloorRepeat(meta) {
+    const last = this.voiceJoinFloorCache.get(meta.channelId + ":" + meta.userId);
+    return last !== undefined && Date.now() - last < ChatRoom.VOICE_FLOOR_MS;
+  }
+
+  voiceJoinFloorArm(meta) {
+    this.#bumpBoundedCache(
+      this.voiceJoinFloorCache,
+      meta.channelId + ":" + meta.userId,
+      (entryAt) => Date.now() - entryAt >= ChatRoom.VOICE_FLOOR_MS,
+      Date.now(),
+    );
+  }
+
+  voiceMuteFloorCache = new Map(); // `${channelId}:${userId}` → last broadcast mute (ms)
+
+  voiceMuteFloorRepeat(meta) {
+    const last = this.voiceMuteFloorCache.get(meta.channelId + ":" + meta.userId);
+    return last !== undefined && Date.now() - last < ChatRoom.VOICE_FLOOR_MS;
+  }
+
+  voiceMuteFloorArm(meta) {
+    this.#bumpBoundedCache(
+      this.voiceMuteFloorCache,
+      meta.channelId + ":" + meta.userId,
+      (entryAt) => Date.now() - entryAt >= ChatRoom.VOICE_FLOOR_MS,
+      Date.now(),
+    );
+  }
+
+  voiceLeaveFloorCache = new Map(); // `${channelId}:${userId}` → last forwarded leave (ms)
+
+  voiceLeaveFloorRepeat(meta) {
+    const last = this.voiceLeaveFloorCache.get(meta.channelId + ":" + meta.userId);
+    return last !== undefined && Date.now() - last < ChatRoom.VOICE_FLOOR_MS;
+  }
+
+  voiceLeaveFloorArm(meta) {
+    this.#bumpBoundedCache(
+      this.voiceLeaveFloorCache,
+      meta.channelId + ":" + meta.userId,
+      (entryAt) => Date.now() - entryAt >= ChatRoom.VOICE_FLOOR_MS,
+      Date.now(),
+    );
   }
 
   // The typing frame's M3 re-check — the SAME fragments the msg frame walks
