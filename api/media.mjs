@@ -294,7 +294,14 @@ export async function createAttachment(env, uploaderId, fileBytes) {
     try {
       await putAttachmentObject(env, id, prepared.bytes);
     } catch {
-      await env.GOOBER_DB.prepare(STANDALONE_ROW_DELETE_SQL).bind(id).run();
+      // Best-effort sweep: a D1 failure in the delete itself must never mask
+      // the 503 (worst case is the pending byte-less row the serving path
+      // already 404s and the reviewer queue can remove).
+      try {
+        await env.GOOBER_DB.prepare(STANDALONE_ROW_DELETE_SQL).bind(id).run();
+      } catch {
+        // the 503 below is the contract; the row removal rides best-effort
+      }
       throw new HttpError(503, STORE_FAILED_ERROR);
     }
     return attachmentResult(id, prepared);

@@ -308,7 +308,7 @@ test("a failed R2 put rolls the byte-less row back — the upload rejects 503", 
   assert.equal(batch.statements.length, 1);
   assert.ok(batch.statements[0].sql.startsWith("INSERT INTO gc_attachments"));
   const rollback = db.calls.find(
-    (call) => call.call === "run" && call.sql.startsWith("DELETE FROM gc_attachments WHERE id = ?"),
+    (call) => call.call === "run" && (call.sql.startsWith("DELETE FROM gc_attachments WHERE id = ?") && call.sql.includes("AND status = 'pending'")),
   );
   assert.ok(rollback);
   assert.deepEqual(rollback.bound, [41]);
