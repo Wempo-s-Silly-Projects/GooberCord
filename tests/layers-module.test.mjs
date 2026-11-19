@@ -211,6 +211,41 @@ test("creating a category appends at the bottom inside the owner-OR-manage INSER
   ]);
 });
 
+// The cap must bind BOTH authority arms (lane-haywire6-servers): unparenthesized,
+// SQL's AND-beats-OR precedence put the cap INSIDE the manage arm only — an
+// owner minted 51+ freely. The INSERT parenthesizes the guard exactly like
+// the channel family's CAP_CHANNEL_INSERT_SQL, then ANDs the cap after it.
+test("the category cap binds the owner arm too (the guard is parenthesized like the channel cap)", async () => {
+  const { row, call } = await layersSessioned("POST", "/api/servers/3/categories", { name: "Cap" });
+  const db = fakeDb([
+    { test: SESSION_READ_TEST, first: async () => row },
+    {
+      test: (sql) => sql.includes("INSERT INTO gc_channel_categories"),
+      run: () => ({ meta: { changes: 1, last_row_id: 60 } }),
+    },
+  ]);
+  const response = await dispatch(call("POST"), envWithLimiters(db));
+
+  assert.equal(response.status, 201);
+  const insert = db.calls.find(
+    (entry) => entry.call === "run" && entry.sql.includes("INSERT INTO gc_channel_categories"),
+  );
+  assert.ok(insert);
+  // The whole guard is one parenthesized arm before the cap's AND:
+  // WHERE (EXISTS(owner) OR EXISTS(manage-bit)) AND (COUNT) <= cap-1.
+  assert.match(insert.sql, /WHERE \(EXISTS \(SELECT 1 FROM gc_server_members om/);
+  assert.match(insert.sql, /\) OR \(EXISTS \(SELECT 1 FROM gc_member_roles gbm1/);
+  const capStart = insert.sql.indexOf("AND (SELECT COUNT(*) FROM gc_channel_categories");
+  assert.ok(capStart > 0, "the cap rides the INSERT's WHERE");
+  const ownerParen = insert.sql.indexOf("WHERE (EXISTS");
+  const guardParens = insert.sql.slice(ownerParen, capStart);
+  assert.equal(
+    (guardParens.split("(").length - 1) === (guardParens.split(")").length - 1),
+    true,
+    "the guard closes before the cap's AND — the cap binds both arms",
+  );
+});
+
 // Stateful category-cap stand-in (the channel family's channelCapRoutes
 // shape): the guarded INSERT's authority + COUNT(*) preconditions are real
 // SQL, so the fake decides changes=0/1 from a simulated category count, and

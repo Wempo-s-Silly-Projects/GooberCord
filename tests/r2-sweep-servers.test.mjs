@@ -30,7 +30,7 @@ import assert from "node:assert/strict";
 import { randomToken, sha256Hex, nowSeconds } from "../api/core/crypto.mjs";
 import { json } from "../api/core/http.mjs";
 import { handleServerRoutes } from "../api/servers.mjs";
-import { GC_ATTACHMENT_OBJECT_PREFIX, RATE_LIMIT_BINDINGS } from "../constants.mjs";
+import { GC_ATTACHMENT_OBJECT_PREFIX, PINS_READ_BIND_CHUNK, RATE_LIMIT_BINDINGS } from "../constants.mjs";
 
 const ORIGIN = "http://localhost";
 const ACTOR = 7;
@@ -54,8 +54,16 @@ const WELCOME_CARDS_TEST = (sql) => sql.startsWith("DELETE FROM gc_welcome_cards
 const WELCOME_VIEWS_TEST = (sql) => sql.startsWith("DELETE FROM gc_welcome_card_views");
 const REACTION_TAGS_TEST = (sql) => sql.startsWith("DELETE FROM gc_server_reaction_tags");
 const REACTION_OPTS_TEST = (sql) => sql.startsWith("DELETE FROM gc_reaction_tag_opts");
-const EXPRESSION_SURVIVOR_TEST = (sql) =>
-  sql.includes("UNION SELECT attachment_id FROM gc_stickers");
+// The survivor reads are per-table and chunked (lane-haywire6-servers): the
+// one-statement UNION bound its id list 3x, and at the boost-ladder cap that
+// rode 1074 binds under D1's 100-bind ceiling. Each chunked statement binds
+// its chunk ONCE per table.
+const SURVIVOR_TABLE_TESTS = [
+  (sql) => sql.startsWith("SELECT attachment_id FROM gc_emoji WHERE attachment_id IN ("),
+  (sql) => sql.startsWith("SELECT attachment_id FROM gc_stickers WHERE attachment_id IN ("),
+  (sql) => sql.startsWith("SELECT attachment_id FROM gc_sounds WHERE attachment_id IN ("),
+];
+const survivorRoutes = (all) => SURVIVOR_TABLE_TESTS.map((testFn) => ({ test: testFn, all }));
 const ICON_SURVIVOR_TEST = (sql) =>
   sql.includes("SELECT icon_media_id FROM gc_servers WHERE icon_media_id = ?");
 
@@ -275,7 +283,7 @@ test("a successful server delete rides the doomed ids' R2 objects minus the surv
   const ctx = fakeCtx();
   const { response } = await deleteServer(
     [
-      { test: EXPRESSION_SURVIVOR_TEST, all: async () => ({ results: [{ attachment_id: 81 }] }) },
+      ...survivorRoutes(async () => ({ results: [{ attachment_id: 81 }] })),
       { test: ICON_SURVIVOR_TEST, all: async () => ({ results: [] }) },
       ...SERVER_PRE_READS,
       ALL_CHANGES_1,
@@ -304,7 +312,7 @@ test("a shared icon keeps its object (the NOT EXISTS survivor law)", async () =>
   const ctx = fakeCtx();
   const { response } = await deleteServer(
     [
-      { test: EXPRESSION_SURVIVOR_TEST, all: async () => ({ results: [] }) },
+      ...survivorRoutes(async () => ({ results: [] })),
       { test: ICON_SURVIVOR_TEST, all: async () => ({ results: [{ icon_media_id: 57 }] }) },
       ...SERVER_PRE_READS,
       ALL_CHANGES_1,
@@ -364,4 +372,96 @@ test("the server delete batch sweeps bookmarks, welcome cards, views and the rea
   // The opts rows die BEFORE their tag rows (an opts→tag FK would RESTRICT).
   assert.ok(batch.statements.findIndex((s) => REACTION_OPTS_TEST(s.sql)) <
     batch.statements.findIndex((s) => REACTION_TAGS_TEST(s.sql)));
+});
+
+// --- the full-cap ceiling pins (lane-haywire6-servers) -----------------------------
+//
+// GC_SERVER_DELETE_ATTACHMENT_LIMIT is the boost ladder's widest inventory sum
+// (emoji 250 + stickers 60 + soundboard 48 = 358), not a flat 127: the old cap
+// left ~231 max-tier rows orphaned with their objects never scheduled. The
+// literal-id statements and the survivor reads chunk at the bind budget.
+const TIER_EMOJI_IDS = Array.from({ length: 250 }, (_, index) => 10000 + index);
+const TIER_STICKER_IDS = Array.from({ length: 60 }, (_, index) => 20000 + index);
+const TIER_SOUND_IDS = Array.from({ length: 48 }, (_, index) => 30000 + index);
+const TIER_DOOMED_IDS = [...TIER_EMOJI_IDS, ...TIER_STICKER_IDS, ...TIER_SOUND_IDS];
+const idRowRoute = (probe, ids) => ({
+  test: probe,
+  all: async () => ({ results: ids.map((id) => ({ attachment_id: id })) }),
+});
+const TIER_PRE_READS = [
+  idRowRoute((sql) => sql.includes("SELECT attachment_id FROM gc_emoji WHERE server_id = ?"), TIER_EMOJI_IDS),
+  idRowRoute((sql) => sql.includes("SELECT attachment_id FROM gc_stickers WHERE server_id = ?"), TIER_STICKER_IDS),
+  idRowRoute((sql) => sql.includes("SELECT attachment_id FROM gc_sounds WHERE server_id = ?"), TIER_SOUND_IDS),
+  { test: (sql) => sql.includes("SELECT icon_media_id FROM gc_servers WHERE id = ?"), first: async () => ({ icon_media_id: null }) },
+  { test: SERVER_DOOMED_IDS_TEST, all: async () => ({ results: [] }) },
+];
+
+test("a max-tier purge schedules every doomed expression attachment's object", async () => {
+  const r2 = fakeR2();
+  const ctx = fakeCtx();
+  const { response } = await deleteServer(
+    [...survivorRoutes(async () => ({ results: [] })), ...TIER_PRE_READS, ALL_CHANGES_1],
+    { r2, ctx },
+  );
+
+  assert.equal(response.status, 200);
+  await settled(ctx);
+  assert.deepEqual(r2.calls.map((call) => call.key),
+    TIER_DOOMED_IDS.map((id) => GC_ATTACHMENT_OBJECT_PREFIX + id),
+    "all 358 doomed ids ride — the pre-read ceiling is the caps' sum");
+});
+
+test("the purge's literal-id statements and survivor reads stay inside the bind budget", async () => {
+  const chunkBinds = [];
+  const { env } = await deleteServer(
+    [
+      ...survivorRoutes(async (bound) => {
+        chunkBinds.push(bound.length);
+        return { results: [] };
+      }),
+      ...TIER_PRE_READS,
+      ALL_CHANGES_1,
+    ],
+    {},
+  );
+
+  const batch = env.GOOBER_DB.calls.find((call) => call.call === "batch");
+  assert.ok(batch);
+  for (const statement of batch.statements) {
+    assert.ok(statement.bound.length <= 100,
+      "no batch statement rides D1's 100-bind ceiling: " + statement.bound.length);
+  }
+  // Each survivor read binds its chunk ONCE per table — never the list x3.
+  assert.deepEqual(chunkBinds.filter((count) => count > PINS_READ_BIND_CHUNK), []);
+  assert.ok(chunkBinds.length >= TIER_DOOMED_IDS.length / PINS_READ_BIND_CHUNK * 3,
+    "the 358 ids ride per-table chunked reads, not one triple-bound statement");
+});
+
+test("a failed survivor read is loud, skips only the ride, and completes the verdict", async () => {
+  const r2 = fakeR2();
+  const ctx = fakeCtx();
+  const logged = [];
+  const originalError = console.error;
+  console.error = (...args) => logged.push(args);
+  try {
+    const { response } = await deleteServer(
+      [
+        ...survivorRoutes(async () => {
+          throw new Error("d1 down");
+        }),
+        ...TIER_PRE_READS,
+        ALL_CHANGES_1,
+      ],
+      { r2, ctx },
+    );
+
+    assert.equal(response.status, 200, "the verdict completes");
+    await settled(ctx);
+    assert.deepEqual(r2.calls, [], "the ride is skipped");
+  } finally {
+    console.error = originalError;
+  }
+  // Not silent: the skipped sweep surfaces for the desk (errorName's label).
+  assert.equal(logged.length, 1);
+  assert.match(String(logged[0][0]), /sweep/);
 });

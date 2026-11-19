@@ -52,9 +52,11 @@ import {
   GC_RULES_MAX,
   GC_SEARCH_PAGE_MAX,
   GC_SEARCH_TERM_MAX,
+  GC_SERVER_DELETE_ATTACHMENT_LIMIT,
   GC_SERVERS_JOIN_MAX_FREE,
   GC_SERVERS_JOIN_MAX_PLUS,
   MAX_CHANNELS_PER_SERVER,
+  PINS_READ_BIND_CHUNK,
 } from "../constants.mjs";
 import { grantServerCreateCoins } from "./coins.mjs";
 import {
@@ -1593,7 +1595,8 @@ async function handleUpdateRoleRoute(request, env, serverId, roleId) {
     .bind(roleId, serverId).first();
   if (!role) throw new HttpError(404, "That role does not exist.");
 
-  // Request-shape: name (1-32), color (#rrggbb or null), and/or position.
+  // Request-shape: name (1-100 — ROLE_NAME_MAX, the 0004 row), color
+  // (#rrggbb or null), and/or position.
   // The reads above are only classification + merge; the write below re-runs
   // the whole authority guard inside its own WHERE.
   let name = null;
@@ -2588,10 +2591,21 @@ async function handlePruneRoute(request, env, serverId) {
   const roleFilterSql = roleFilterId !== null ? pruneRoleFilterSql() : "1 = 1";
   const roleFilterBinds = roleFilterId !== null ? [serverId, roleFilterId] : [];
 
+  // The authority is the candidate WHERE's FIRST clause, in-statement for the
+  // preview AND both deletes (lane-haywire6-servers): the old shape carried
+  // the guard only on the dry-run's `authorized` column, so the RUN batch
+  // bound only the candidate predicate — a plain member (no KICKMembers bit)
+  // who rode a stale actor read wiped every quiet member. The owner arm alone
+  // stays the owner's crown (roleless candidates are the crown's to prune, so
+  // no position rule and no mask arm rides the owner's statements).
   const candidateWhere =
+    authorityGuardSql + " AND " +
     "m.server_id = ? AND m.role <> 'owner' AND m.joined_at <= ? AND " +
       pruneActivitySql() + " AND " + positionGuardSql + " AND " + roleFilterSql;
-  const candidateBinds = [serverId, cutoff, serverId, ...positionGuardBinds, ...roleFilterBinds];
+  const candidateBinds = [
+    ...authorityGuardBinds,
+    serverId, cutoff, serverId, ...positionGuardBinds, ...roleFilterBinds,
+  ];
 
   if (body.dry_run) {
     // Step 1: the preview COUNT — cheap and kind. The same predicate as the
@@ -2918,8 +2932,11 @@ async function handleDeleteChannelRoute(request, env, serverId, channelId, ctx) 
 // server alive to point (an unauthorized caller's dying server never died),
 // and a genuinely shared icon (the PATCH's uploader guard allows one
 // uploaded attachment to icon two servers of the same owner) keeps its
-// bytes.
-const SERVER_DELETE_ATTACHMENT_IDS_LIMIT = 127;
+// bytes. The attachment pre-read's ceiling is the inventories' widest caps'
+// sum (GC_SERVER_DELETE_ATTACHMENT_LIMIT — 358 at the boost ladder's top, the
+// lane-haywire6-servers fix for the old flat 127 that orphaned ~231 max-tier
+// rows), and every literal-id statement + the survivor read chunk at
+// PINS_READ_BIND_CHUNK so no statement rides the 100-bind ceiling.
 
 async function handleDeleteServerRoute(request, env, serverId, ctx) {
   const session = await requireUser(request, env);
@@ -2940,7 +2957,7 @@ async function handleDeleteServerRoute(request, env, serverId, ctx) {
   ).bind(serverId).all()).results || [];
   const expressionAttachmentIds = [...emojiRows, ...stickerRows, ...soundRows]
     .map((row) => Number(row.attachment_id))
-    .slice(0, SERVER_DELETE_ATTACHMENT_IDS_LIMIT);
+    .slice(0, GC_SERVER_DELETE_ATTACHMENT_LIMIT);
   const iconRow = await env.GOOBER_DB.prepare(
     "SELECT icon_media_id FROM gc_servers WHERE id = ? LIMIT 1",
   ).bind(serverId).first();
@@ -2973,27 +2990,34 @@ async function handleDeleteServerRoute(request, env, serverId, ctx) {
       "AND " + guard.sql,
     [serverId, ...guard.params]);
 
-  if (expressionAttachmentIds.length > 0) {
-    const idList = expressionAttachmentIds.map(() => "?").join(", ");
-    push("expressionAttachmentChunks",
-      "DELETE FROM gc_attachment_chunks WHERE attachment_id IN (" + idList + ") AND " + guard.sql,
-      [...expressionAttachmentIds, ...guard.params]);
-  }
+  // The literal-id statements chunk at PINS_READ_BIND_CHUNK (the full-cap
+  // ceiling is 358 ids — one statement would ride 360 binds, past D1's 100):
+  // each chunked statement keeps the FK ordering (the chunk rows strip before
+  // the expression rows, whose deletes sit between the chunk families).
+  const pushIdChunks = (key, head, tail, ids, extraBinds = []) => {
+    for (let start = 0; start < ids.length; start += PINS_READ_BIND_CHUNK) {
+      const chunk = ids.slice(start, start + PINS_READ_BIND_CHUNK);
+      const idList = chunk.map(() => "?").join(", ");
+      push(key, head + idList + tail, [...chunk, ...extraBinds]);
+    }
+  };
+
+  pushIdChunks("expressionAttachmentChunks",
+    "DELETE FROM gc_attachment_chunks WHERE attachment_id IN (", ") AND " + guard.sql,
+    expressionAttachmentIds, guard.params);
   push("emoji",
     "DELETE FROM gc_emoji WHERE server_id = ? AND " + guard.sql,
     [serverId, ...guard.params]);
   push("stickers",
     "DELETE FROM gc_stickers WHERE server_id = ? AND " + guard.sql,
     [serverId, ...guard.params]);
-  if (expressionAttachmentIds.length > 0) {
-    const idList = expressionAttachmentIds.map(() => "?").join(", ");
-    push("expressionAttachments",
-      "DELETE FROM gc_attachments WHERE id IN (" + idList + ") AND message_id IS NULL " +
-        "AND NOT EXISTS (SELECT 1 FROM gc_emoji WHERE attachment_id = gc_attachments.id) " +
-        "AND NOT EXISTS (SELECT 1 FROM gc_stickers WHERE attachment_id = gc_attachments.id) " +
-        "AND " + guard.sql,
-      [...expressionAttachmentIds, ...guard.params]);
-  }
+  pushIdChunks("expressionAttachments",
+    "DELETE FROM gc_attachments WHERE id IN (",
+    ") AND message_id IS NULL " +
+      "AND NOT EXISTS (SELECT 1 FROM gc_emoji WHERE attachment_id = gc_attachments.id) " +
+      "AND NOT EXISTS (SELECT 1 FROM gc_stickers WHERE attachment_id = gc_attachments.id) " +
+      "AND " + guard.sql,
+    expressionAttachmentIds, guard.params);
 
   push("memberRoles",
     "DELETE FROM gc_member_roles WHERE server_id = ? AND " + guard.sql,
@@ -3048,7 +3072,9 @@ async function handleDeleteServerRoute(request, env, serverId, ctx) {
   );
   const deleted = {};
   statements.forEach((statement, index) => {
-    deleted[statement.key] = Number(results[index]?.meta?.changes) || 0;
+    // Chunked statements share their key — the tally sums the chunks.
+    const changes = Number(results[index]?.meta?.changes) || 0;
+    deleted[statement.key] = (deleted[statement.key] ?? 0) + changes;
   });
 
   if (deleted.servers !== 1) {
@@ -3077,14 +3103,26 @@ async function handleDeleteServerRoute(request, env, serverId, ctx) {
   try {
     const survivors = new Set();
     if (expressionAttachmentIds.length > 0) {
-      const idList = expressionAttachmentIds.map(() => "?").join(", ");
-      const survivorRows = ((await env.GOOBER_DB.prepare(
-        "SELECT attachment_id FROM gc_emoji WHERE attachment_id IN (" + idList + ") " +
-          "UNION SELECT attachment_id FROM gc_stickers WHERE attachment_id IN (" + idList + ") " +
-          "UNION SELECT attachment_id FROM gc_sounds WHERE attachment_id IN (" + idList + ")",
-      ).bind(...expressionAttachmentIds, ...expressionAttachmentIds, ...expressionAttachmentIds)
-        .all()).results) || [];
-      for (const row of survivorRows) survivors.add(Number(row.attachment_id));
+      // Per-table chunked reads (the bind budget): the old one-statement
+      // UNION bound its id list 3x — 1074 binds at the full-cap ceiling, past
+      // D1's 100 per query. Each chunked statement binds its chunk once.
+      const survivorTables = [
+        "SELECT attachment_id FROM gc_emoji WHERE attachment_id IN (",
+        "SELECT attachment_id FROM gc_stickers WHERE attachment_id IN (",
+        "SELECT attachment_id FROM gc_sounds WHERE attachment_id IN (",
+      ];
+      for (let start = 0; start < expressionAttachmentIds.length; start += PINS_READ_BIND_CHUNK) {
+        const chunk = expressionAttachmentIds.slice(start, start + PINS_READ_BIND_CHUNK);
+        const idList = chunk.map(() => "?").join(", ");
+        const chunksResults = [];
+        for (const head of survivorTables) {
+          const tableRows = ((await env.GOOBER_DB.prepare(
+            head + idList + ")",
+          ).bind(...chunk).all()).results) || [];
+          chunksResults.push(...tableRows);
+        }
+        for (const row of chunksResults) survivors.add(Number(row.attachment_id));
+      }
     }
     if (iconMediaId !== null) {
       const iconSurvivorRows = ((await env.GOOBER_DB.prepare(
@@ -3098,8 +3136,10 @@ async function handleDeleteServerRoute(request, env, serverId, ctx) {
       }
     }
   } catch (error) {
-    // The ride itself is best-effort; the lost sweep surfaces for the desk.
-    console.error("Attachment object sweep read failed:", errorName(error), {
+    // The ride itself is best-effort — but never silent (the module's error
+    // law): the lost sweep surfaces for the desk, and the response completes
+    // with only the ride skipped, never the verdict.
+    console.error("Attachment object sweep read failed — the R2 ride is skipped:", errorName(error), {
       serverId: Number(serverId),
     });
   }
@@ -3145,7 +3185,7 @@ async function handleCreateCategoryRoute(request, env, serverId) {
     "INSERT INTO gc_channel_categories (server_id, name, position, created_at) " +
       "SELECT ?, ?, " +
       "(SELECT COALESCE(MAX(position), -1) + 1 FROM gc_channel_categories WHERE server_id = ?), ? " +
-      "WHERE " + OWNER_EXISTS_SQL + " OR " + holdsRolesBitsSql(SERVER_PERMISSIONS.MANAGE_CHANNELS) + " " +
+      "WHERE (" + OWNER_EXISTS_SQL + " OR " + holdsRolesBitsSql(SERVER_PERMISSIONS.MANAGE_CHANNELS) + ") " +
       "AND (SELECT COUNT(*) FROM gc_channel_categories WHERE server_id = ?) <= " +
       (GC_CATEGORIES_MAX_PER_SERVER - 1);
 
