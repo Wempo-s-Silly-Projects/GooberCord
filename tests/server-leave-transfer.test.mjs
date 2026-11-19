@@ -20,6 +20,13 @@
 // transfer route. Same fakeDb + recording-limiter conventions as the
 // write-riders lane's tests — the authorization contract lives in the query
 // text, so the pins assert the guarded-SQL shapes and the bind sequences.
+//
+// GO-HAYWIRE cycle-7 pins: the transfer batch promotes FIRST and swaps the
+// server-row owner LAST behind a promote-landed rider (a refused promote
+// never lets the swap land); both write walls key (serverId + ":" + userId);
+// leave strips gc_member_roles in the same batch (kick's shape); a
+// successful leave trips the boost recount; and by DESIGN leave keeps
+// gc_read_state — read state stays history-kept, matching kick.
 import test from "node:test";
 import assert from "node:assert/strict";
 
@@ -191,41 +198,91 @@ test("unknown server subpaths still fall through to the worker's handler loop", 
 
 // --- POST /api/servers/:id/leave -------------------------------------------------
 
-async function dispatchLeave(memberRoleFn, deleteChanges) {
+const MEMBER_DELETE_TEST = (sql) => sql.startsWith("DELETE FROM gc_server_members");
+const ROLES_DELETE_TEST = (sql) => sql.startsWith("DELETE FROM gc_member_roles");
+
+async function dispatchLeave(memberRoleFn, deleteChanges = 1) {
   return dispatchPost(
     [
       { test: MEMBERSHIP_ROW_TEST, first: memberRoleFn },
-      { test: (sql) => sql.startsWith("DELETE FROM gc_server_members"), run: async () => ({ meta: { changes: deleteChanges } }) },
+      { test: MEMBER_DELETE_TEST, run: async () => ({ meta: { changes: deleteChanges } }) },
+      { test: ROLES_DELETE_TEST, run: async () => ({ meta: { changes: deleteChanges } }) },
     ],
     "/api/servers/" + SERVER_ID + "/leave",
     {},
   );
 }
 
-test("a plain member leaves in the guarded DELETE — self, membership arm, owner-refusal arm", async () => {
+test("a plain member leaves in ONE guarded batch — self member row + role assignments, owner-refusal arm", async () => {
   const { response, db } = await dispatchLeave(async () => ({ role: "member" }), 1);
   assert.equal(response.status, 200);
   assert.deepEqual(await bodyOf(response), { left: true, serverId: SERVER_ID });
 
-  // ONE write: the guarded DELETE, never a batch, never a read-then-write gate.
+  // ONE write: the guarded batch, never a read-then-write gate.
   const writes = db.calls.filter((call) => call.call === "run" || call.call === "batch");
-  assert.deepEqual(writes.length, 1);
-  const del = writes[0];
-  // In-statement arms: the caller's own row is the target, the membership
-  // EXISTS arm bound with the same (serverId, userId), and the owner-refusal
-  // NOT-EXISTS arm bound with the same pair again.
-  assert.match(del.sql, /^DELETE FROM gc_server_members WHERE server_id = \? AND user_id = \?/);
+  assert.deepEqual(writes.length, 2); // the batch + the boost recount run
+  const batch = db.calls.find((call) => call.call === "batch");
+  assert.ok(batch);
+  assert.deepEqual(batch.statements.length, 2);
+
+  // Statement 0: the member row's guarded DELETE. In-statement arms: the
+  // caller's own row is the target, the membership EXISTS arm bound with the
+  // same (serverId, userId), and the owner-refusal NOT-EXISTS arm bound with
+  // the same pair again.
+  const memberDelete = batch.statements[0];
+  assert.match(memberDelete.sql, /^DELETE FROM gc_server_members WHERE server_id = \? AND user_id = \?/);
   assert.match(
-    del.sql,
+    memberDelete.sql,
     /AND EXISTS \(SELECT 1 FROM gc_server_members WHERE server_id = \? AND user_id = \?\)/,
   );
   assert.match(
-    del.sql,
+    memberDelete.sql,
     /AND NOT EXISTS \(SELECT 1 FROM gc_server_members \w+ WHERE \w+\.server_id = \? AND \w+\.user_id = \? AND \w+\.role = 'owner'\)/,
   );
   // Bind sequence: (serverId, self) ×3 — the DELETE pair, then the membership
   // arm's pair, then the owner arm's pair. No client-derived values.
-  assert.deepEqual(del.bound, [SERVER_ID, USER_ID, SERVER_ID, USER_ID, SERVER_ID, USER_ID]);
+  assert.deepEqual(memberDelete.bound, [SERVER_ID, USER_ID, SERVER_ID, USER_ID, SERVER_ID, USER_ID]);
+
+  // Statement 1: the role-assignment strip — kick's shape, the SAME guard
+  // arms on gc_member_roles so a refused leave never strips a member who
+  // stayed (rejoin must land a clean RBAC slate).
+  const rolesDelete = batch.statements[1];
+  assert.match(
+    rolesDelete.sql,
+    /^DELETE FROM gc_member_roles WHERE server_id = \? AND user_id = \?/,
+  );
+  assert.match(
+    rolesDelete.sql,
+    /AND EXISTS \(SELECT 1 FROM gc_server_members WHERE server_id = \? AND user_id = \?\)/,
+  );
+  assert.match(
+    rolesDelete.sql,
+    /AND NOT EXISTS \(SELECT 1 FROM gc_server_members \w+ WHERE \w+\.server_id = \? AND \w+\.user_id = \? AND \w+\.role = 'owner'\)/,
+  );
+  assert.deepEqual(rolesDelete.bound, [SERVER_ID, USER_ID, SERVER_ID, USER_ID, SERVER_ID, USER_ID]);
+});
+
+test("a successful leave trips the boost recount so a booster's departure drops the caps", async () => {
+  const { db } = await dispatchLeave(async () => ({ role: "member" }), 1);
+  const recounts = db.calls.filter((call) =>
+    (call.call === "run" || call.call === "batch") && call.sql.includes("UPDATE gc_servers SET boosts"),
+  );
+  assert.deepEqual(recounts.length, 1);
+  assert.deepEqual(recounts[0].bound, [SERVER_ID, SERVER_ID]);
+  // The recount runs AFTER the leave batch landed (route-side await).
+  const batchIndex = db.calls.findIndex((call) => call.call === "batch");
+  assert.ok(batchIndex >= 0);
+  assert.ok(db.calls.indexOf(recounts[0]) > batchIndex);
+});
+
+test("a refused leave never trips the boost recount", async () => {
+  const { db } = await dispatchLeave(async () => ({ role: "member" }), 0);
+  assert.deepEqual(
+    db.calls.filter((call) =>
+      (call.call === "run" || call.call === "batch") && call.sql.includes("UPDATE gc_servers SET boosts"),
+    ),
+    [],
+  );
 });
 
 test("the owner's leave is refused 409 with the transfer pointer and zero writes", async () => {
@@ -256,23 +313,22 @@ test("a non-member's leave 404s without spending a write", async () => {
   );
 });
 
-test("a race-refused leave changes nothing and answers 404 — one DELETE, no double-delete", async () => {
+test("a race-refused leave changes nothing and answers 404 — one batch, no double-delete", async () => {
   // The gate read saw the row; the DELETE found it gone (changes=0): exactly
-  // one delete statement ran, and the classification re-read answered 404.
+  // one batch ran, and the classification re-read answered 404.
   const { response, db } = await dispatchLeave(async () => ({ role: "member" }), 0);
   assert.equal(response.status, 404);
-  const deletes = db.calls.filter(
-    (call) => (call.call === "run" || call.call === "batch") && call.sql.includes("DELETE FROM gc_server_members"),
-  );
-  assert.deepEqual(deletes.length, 1);
+  const batches = db.calls.filter((call) => call.call === "batch");
+  assert.deepEqual(batches.length, 1);
+  assert.deepEqual(batches[0].statements.length, 2);
 });
 
-test("leave rides the write wall keyed to the server, before the table work", async () => {
+test("leave rides the write wall keyed to server + caller, before the table work", async () => {
   const { db, env, response } = await dispatchLeave(async () => ({ role: "member" }), 1);
   assert.equal(response.status, 200);
   assert.deepEqual(env.limiterCalls, [{
     binding: "GC_WRITE_RATE_LIMITER",
-    key: await sha256Hex("write:servers-leave:" + SERVER_ID),
+    key: await sha256Hex("write:servers-leave:" + SERVER_ID + ":" + USER_ID),
   }]);
   // Order: the session read leads; the limiter (a non-D1 call) sits between
   // it and the membership gate read.
@@ -310,16 +366,20 @@ async function dispatchTransfer(memberRoleFn, batchResults, bodyOverride) {
       { test: PROMOTE_TEST, run: async () => batchResults[0] },
       { test: DEMOTE_DELETE_TEST, run: async () => batchResults[1] },
       { test: DEMOTE_INSERT_TEST, run: async () => batchResults[2] },
+      { test: SERVER_SWAP_TEST, run: async () => batchResults[3] },
     ],
     "/api/servers/" + SERVER_ID + "/transfer-ownership",
     { userId: TARGET_ID, ...bodyOverride },
   );
 }
 
-test("the owner transfers ownership in ONE batch — promote, guarded demote, exact re-insert", async () => {
+// Batch order: promote → demote → re-insert → swap. The swap rides LAST so a
+// refused promote (or demote chain) strands it at zero — a departed target
+// never ends up holding the server row's owner_user_id.
+test("the owner transfers ownership in ONE batch — promote, guarded demote, exact re-insert, swap last", async () => {
   const { response, db } = await dispatchTransfer(
     async () => OWNER_ROW(),
-    [{ meta: { changes: 1 } }, { meta: { changes: 1 } }, { meta: { changes: 1 } }],
+    [{ meta: { changes: 1 } }, { meta: { changes: 1 } }, { meta: { changes: 1 } }, { meta: { changes: 1 } }],
   );
   assert.equal(response.status, 200);
   assert.deepEqual(await bodyOf(response), {
@@ -337,20 +397,10 @@ test("the owner transfers ownership in ONE batch — promote, guarded demote, ex
   );
   assert.deepEqual(batch.statements.length, 4);
 
-  // Statement 0: the SERVER-BRAIN swap — gc_servers.owner_user_id moves to
-  // the target in the same transaction, so every owner_user_id-authoritative
-  // gate (server PATCH/DELETE, invite create) answers the NEW owner, never
-  // the demoted one. Guard: the caller is still the server row's owner.
-  const serverSwap = batch.statements[0];
-  assert.match(
-    serverSwap.sql,
-    /^UPDATE gc_servers SET owner_user_id = \? WHERE id = \? AND owner_user_id = \?$/,
-  );
-  assert.deepEqual(serverSwap.bound, [TARGET_ID, SERVER_ID, USER_ID]);
-
-  // Statement 1: the PROMOTE — target → owner, guarded in-statement by the
+  // Statement 0: the PROMOTE — target → owner, guarded in-statement by the
   // caller's owner arm AND the target's active-member arm (role NOT NULL).
-  const promote = batch.statements[1];
+  // FIRST in the batch so the swap below can ride its landing.
+  const promote = batch.statements[0];
   assert.match(promote.sql, /^UPDATE gc_server_members SET role = 'owner' WHERE server_id = \? AND user_id = \?/);
   assert.match(
     promote.sql,
@@ -363,9 +413,9 @@ test("the owner transfers ownership in ONE batch — promote, guarded demote, ex
   // (serverId, target), (serverId, me) — the target pair first, then the authority arm.
   assert.deepEqual(promote.bound, [SERVER_ID, TARGET_ID, SERVER_ID, USER_ID, SERVER_ID, TARGET_ID]);
 
-  // Statement 2: the DEMOTE delete — only the owner row lands, in-statement
+  // Statement 1: the DEMOTE delete — only the owner row lands, in-statement
   // owner arm, plus the promote-landed rider.
-  const demote = batch.statements[2];
+  const demote = batch.statements[1];
   assert.match(demote.sql, /^DELETE FROM gc_server_members WHERE server_id = \? AND user_id = \? AND role = 'owner'/);
   assert.match(
     demote.sql,
@@ -377,10 +427,10 @@ test("the owner transfers ownership in ONE batch — promote, guarded demote, ex
   );
   assert.deepEqual(demote.bound, [SERVER_ID, USER_ID, SERVER_ID, USER_ID, SERVER_ID, TARGET_ID]);
 
-  // Statement 3: the EXACT re-insert — the demoted owner keeps their row as a
+  // Statement 2: the EXACT re-insert — the demoted owner keeps their row as a
   // plain member with their fields preserved (joined_at, nickname, the roster
   // extras), guarded by the row-is-gone rider and the promote-landed rider.
-  const reinsert = batch.statements[3];
+  const reinsert = batch.statements[2];
   assert.match(
     reinsert.sql,
     /^INSERT INTO gc_server_members \(server_id, user_id, role, joined_at, nickname, timed_out_until, created_by_invite, rules_accepted_at\)/,
@@ -402,6 +452,48 @@ test("the owner transfers ownership in ONE batch — promote, guarded demote, ex
       SERVER_ID, TARGET_ID,
     ],
   );
+
+  // Statement 3: the SERVER-BRAIN swap rides LAST, behind the promote-landed
+  // rider — a refused promote forces the swap's changes=0, so the server row
+  // never hands gc_servers.owner_user_id to a departed target.
+  const serverSwap = batch.statements[3];
+  assert.match(
+    serverSwap.sql,
+    /^UPDATE gc_servers SET owner_user_id = \? WHERE id = \? AND owner_user_id = \?/,
+  );
+  assert.match(
+    serverSwap.sql,
+    /AND EXISTS \(SELECT 1 FROM gc_server_members \w+ WHERE \w+\.server_id = \? AND \w+\.user_id = \? AND \w+\.role = 'owner'\)/,
+  );
+  assert.deepEqual(serverSwap.bound, [TARGET_ID, SERVER_ID, USER_ID, SERVER_ID, TARGET_ID]);
+});
+
+test("a departed target's batch never lands the swap — 404 with the swap at zero and the promote-landed rider", async () => {
+  // The target left between the gate and the batch: every promote-side arm
+  // refuses AND the swap — riding the promote-landed EXISTS rider — is
+  // forced to zero, so gc_servers.owner_user_id stays on the caller.
+  const { response, db } = await dispatchTransfer(
+    async () => OWNER_ROW(),
+    [{ meta: { changes: 0 } }, { meta: { changes: 0 } }, { meta: { changes: 0 } }, { meta: { changes: 0 } }],
+  );
+  assert.equal(response.status, 404);
+  assert.deepEqual(await bodyOf(response), { error: "That member is not in this server." });
+
+  const batch = db.calls.find((call) => call.call === "batch");
+  const serverSwap = batch.statements[3];
+  // Structural pin: the swap's WHERE carries the promote-landed rider on the
+  // (serverId, target) 'owner' member row — refusal of the promote can never
+  // let the swap land anything (D1 commits zero-changes statements silently,
+  // so the rider is the guarantee).
+  assert.match(serverSwap.sql, /^UPDATE gc_servers SET owner_user_id = \? WHERE id = \? AND owner_user_id = \?/);
+  assert.ok(
+    /AND EXISTS \(SELECT 1 FROM gc_server_members \w+ WHERE \w+\.server_id = \? AND \w+\.user_id = \? AND \w+\.role = 'owner'\)/.test(serverSwap.sql),
+  );
+  const riderBound = serverSwap.bound.slice(3);
+  assert.deepEqual(riderBound, [SERVER_ID, TARGET_ID]);
+  // Verdict gate: the swap refusing classifies like every other refused arm —
+  // never a 200 with the swap landed.
+  assert.equal(batch.statements.length, 4);
 });
 
 test("a non-owner member's transfer 403s with zero writes", async () => {
@@ -451,17 +543,17 @@ test("the owner's self-transfer is an idempotent 200 with zero writes", async ()
 });
 
 test("the server-row swap refusing gates the 200 the same as the member arms", async () => {
-  // The gc_servers.owner_user_id swap is verdict-gated like every other arm:
-  // a zero there is the authority-left race, so the re-read (a member now)
-  // shapes the 409 — never a 200 with two owners, regardless of which arm
-  // refused.
+  // The gc_servers.owner_user_id swap is verdict-gated like every other arm —
+  // even when the promote chain landed but the swap's own owner_user_id arm
+  // refused (a race took the row): the re-read (a member now) shapes the 409 —
+  // never a 200 with an unswapped server row, regardless of which arm refused.
   let membershipReads = 0;
   const { response, db } = await dispatchTransfer(
     async () =>
       (membershipReads++ === 0
         ? OWNER_ROW()
         : { role: "member", joined_at: 0, nickname: null, timed_out_until: null, created_by_invite: null, rules_accepted_at: null }),
-    [{ meta: { changes: 0 } }, { meta: { changes: 1 } }, { meta: { changes: 0 } }, { meta: { changes: 0 } }],
+    [{ meta: { changes: 1 } }, { meta: { changes: 1 } }, { meta: { changes: 1 } }, { meta: { changes: 0 } }],
   );
   assert.equal(response.status, 409);
   assert.deepEqual(await bodyOf(response), {
@@ -553,7 +645,7 @@ test("transfer validates a junk user_id with 400 before any statement", async ()
   }
 });
 
-test("transfer rides the write wall keyed to the server, before the batch", async () => {
+test("transfer rides the write wall keyed to server + caller, before the batch", async () => {
   const { db, env, response } = await dispatchTransfer(
     async () => OWNER_ROW(),
     [{ meta: { changes: 1 } }, { meta: { changes: 1 } }, { meta: { changes: 1 } }, { meta: { changes: 1 } }],
@@ -561,7 +653,7 @@ test("transfer rides the write wall keyed to the server, before the batch", asyn
   assert.equal(response.status, 200);
   assert.deepEqual(env.limiterCalls, [{
     binding: "GC_WRITE_RATE_LIMITER",
-    key: await sha256Hex("write:servers-transfer:" + SERVER_ID),
+    key: await sha256Hex("write:servers-transfer:" + SERVER_ID + ":" + USER_ID),
   }]);
   // Order: the session read leads; exactly one limiter rider.
   assert.match(db.calls[0].sql, /FROM sessions/);

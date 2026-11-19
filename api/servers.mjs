@@ -2930,7 +2930,7 @@ async function handleLeaveServerRoute(request, env, serverId) {
   const session = await requireUser(request, env);
   const userId = Number(session.user.id);
 
-  await rateLimit(request, env, "write", "servers-leave:" + serverId);
+  await rateLimit(request, env, "write", "servers-leave:" + serverId + ":" + userId);
 
   // The gate read: a non-member 404s, and the owner refusal (parity-mirrored)
   // is decided here before any write — the 409 points at the transfer route.
@@ -2947,13 +2947,27 @@ async function handleLeaveServerRoute(request, env, serverId) {
     );
   }
 
-  const deleted = await env.GOOBER_DB.prepare(
-    "DELETE FROM gc_server_members WHERE server_id = ? AND user_id = ? " +
-      "AND EXISTS (SELECT 1 FROM gc_server_members WHERE server_id = ? AND user_id = ?) " +
-      "AND NOT " + OWNER_EXISTS_SQL,
-  ).bind(serverId, userId, serverId, userId, serverId, userId).run();
+  // ONE batch, kick's shape: the member row AND the row's RBAC assignments
+  // leave together, both statements carrying the same guard arms — the
+  // caller's own row, the membership arm, the owner-refusal NOT-EXISTS arm.
+  // Assignments (gc_member_roles carries no membership FK) survive a bare
+  // member-row delete, so a single-statement leave would re-arm them on
+  // rejoin; the pair-delete keeps rejoin clean.
+  const results = await env.GOOBER_DB.batch([
+    env.GOOBER_DB.prepare(
+      "DELETE FROM gc_server_members WHERE server_id = ? AND user_id = ? " +
+        "AND EXISTS (SELECT 1 FROM gc_server_members WHERE server_id = ? AND user_id = ?) " +
+        "AND NOT " + OWNER_EXISTS_SQL,
+    ).bind(serverId, userId, serverId, userId, serverId, userId),
+    env.GOOBER_DB.prepare(
+      "DELETE FROM gc_member_roles WHERE server_id = ? AND user_id = ? " +
+        "AND EXISTS (SELECT 1 FROM gc_server_members WHERE server_id = ? AND user_id = ?) " +
+        "AND NOT " + OWNER_EXISTS_SQL,
+    ).bind(serverId, userId, serverId, userId, serverId, userId),
+  ]);
+  const deletedChanges = Number(results[0]?.meta?.changes) || 0;
 
-  if (Number(deleted.meta?.changes) !== 1) {
+  if (deletedChanges !== 1) {
     // The row vanished between the gate and the DELETE (race-on leave): the
     // one delete stays a no-op — never a double-delete — and the
     // classification re-read answers 404, or the 409 when a raced transfer
@@ -2970,14 +2984,22 @@ async function handleLeaveServerRoute(request, env, serverId) {
     throw new HttpError(404, "That server does not exist or you are not in it.");
   }
 
+  // The recount the boost routes run: a departing booster's gc_server_boosts
+  // row must stop counting toward the level immediately, or the departed
+  // booster keeps granting emoji-slot/upload caps until some future boost.
+  await env.GOOBER_DB.prepare(BOOST_RECOUNT_SQL).bind(serverId, serverId).run();
+
   return json({ left: true, serverId }, 200);
 }
 
 // POST /api/servers/:id/transfer-ownership — the owner hands the server to an
 // active member. The whole swap is ONE batch (D1 commits or rolls back
-// whole): the server-row owner swap, the promote whose WHERE carries the
-// caller's owner arm AND the target's active-member arm, and the demote
-// riding the promote-landed rider. The demote is DELETE + exact re-INSERT,
+// whole): the promote whose WHERE carries the caller's owner arm AND the
+// target's active-member arm, the demote riding the promote-landed rider, and
+// the server-row owner swap LAST behind its own promote-landed rider — a
+// refused promote strands the swap at changes=0 (D1 commits zero-changes
+// statements silently; the rider is the guarantee). The demote is DELETE +
+// exact re-INSERT,
 // because the owner guard trigger (migration 0001) ABORTs any UPDATE that
 // demotes an owner row — the trigger's intent (no STRAY demote) transfers
 // WITH the ownership flow; the re-insert preserves the row's fields verbatim
@@ -2994,7 +3016,7 @@ async function handleTransferOwnershipRoute(request, env, serverId) {
   }
   const targetUserId = body.userId;
 
-  await rateLimit(request, env, "write", "servers-transfer:" + serverId);
+  await rateLimit(request, env, "write", "servers-transfer:" + serverId + ":" + me);
 
   // The gate read: non-members share the unknown-server 404; non-owners the
   // shared 403 (authority also rides the promote's owner arm in-statement).
@@ -3011,16 +3033,20 @@ async function handleTransferOwnershipRoute(request, env, serverId) {
     return json({ transferred: false, serverId, ownerId: me }, 200);
   }
 
-  // Statement 0: the server-brain swap — gc_servers.owner_user_id moves to
-  // the target in the SAME transaction, so every owner_user_id-authoritative
-  // gate (the server PATCH/DELETE's WHERE, invite creation) answers the NEW
-  // owner, never the demoted one. First in the batch, while the caller is
-  // still the server row's owner; the batch is atomic either way.
+  // Statement 3 (rides LAST): the server-brain swap — gc_servers.owner_user_id
+  // moves to the target only AFTER the promote chain landed, behind the
+  // promote-landed EXISTS rider: a refused promote (a target who left or was
+  // kicked between the gate read and the batch) forces the swap's changes=0,
+  // so D1's silent zero-changes commits can never strand the server's owner
+  // field on a departed non-member. The batch is atomic either way; the
+  // 4-changes verdict gate below classifies any mismatch 409/404 with the
+  // swap never landed.
   const serverSwap = env.GOOBER_DB.prepare(
-    "UPDATE gc_servers SET owner_user_id = ? WHERE id = ? AND owner_user_id = ?",
-  ).bind(targetUserId, serverId, me);
+    "UPDATE gc_servers SET owner_user_id = ? WHERE id = ? AND owner_user_id = ? " +
+      "AND EXISTS (SELECT 1 FROM gc_server_members pt WHERE pt.server_id = ? AND pt.user_id = ? AND pt.role = 'owner')",
+  ).bind(targetUserId, serverId, me, serverId, targetUserId);
 
-  // Statement 1: promote the active member. The demote below fires only
+  // Statement 0: promote the active member. The demote below fires only
   // behind the promote-landed rider, so any refused arm leaves the batch a
   // committed no-op — never an ownerless or half-swapped server. 'blocked'
   // tiers don't exist on the roster schema (owner/moderator/member, every
@@ -3032,7 +3058,7 @@ async function handleTransferOwnershipRoute(request, env, serverId) {
       "AND EXISTS (SELECT 1 FROM gc_server_members mb WHERE mb.server_id = ? AND mb.user_id = ? AND mb.role IS NOT NULL)",
   ).bind(serverId, targetUserId, serverId, me, serverId, targetUserId);
 
-  // Statement 2: demote the old owner — the row leaves, guarded by the owner
+  // Statement 1: demote the old owner — the row leaves, guarded by the owner
   // arm AND the promote having landed.
   const demoteDelete = env.GOOBER_DB.prepare(
     "DELETE FROM gc_server_members WHERE server_id = ? AND user_id = ? AND role = 'owner' " +
@@ -3040,7 +3066,7 @@ async function handleTransferOwnershipRoute(request, env, serverId) {
       " AND EXISTS (SELECT 1 FROM gc_server_members pt WHERE pt.server_id = ? AND pt.user_id = ? AND pt.role = 'owner')",
   ).bind(serverId, me, serverId, me, serverId, targetUserId);
 
-  // Statement 3: the exact re-insert — the demoted owner keeps their row as a
+  // Statement 2: the exact re-insert — the demoted owner keeps their row as a
   // plain member, fields preserved verbatim, guarded by the row-is-gone rider
   // and the promote-landed rider. The preserved fields ride the gate read's
   // values, so a concurrent nickname/timeout write landing between that gate
@@ -3059,11 +3085,11 @@ async function handleTransferOwnershipRoute(request, env, serverId) {
     serverId, me, serverId, targetUserId,
   );
 
-  const results = await env.GOOBER_DB.batch([serverSwap, promote, demoteDelete, demoteInsert]);
-  const swapChanges = Number(results[0]?.meta?.changes) || 0;
-  const promoteChanges = Number(results[1]?.meta?.changes) || 0;
-  const demoteChanges = Number(results[2]?.meta?.changes) || 0;
-  const reinsertChanges = Number(results[3]?.meta?.changes) || 0;
+  const results = await env.GOOBER_DB.batch([promote, demoteDelete, demoteInsert, serverSwap]);
+  const swapChanges = Number(results[3]?.meta?.changes) || 0;
+  const promoteChanges = Number(results[0]?.meta?.changes) || 0;
+  const demoteChanges = Number(results[1]?.meta?.changes) || 0;
+  const reinsertChanges = Number(results[2]?.meta?.changes) || 0;
   if (
     swapChanges === 1 && promoteChanges === 1 &&
     demoteChanges === 1 && reinsertChanges === 1
