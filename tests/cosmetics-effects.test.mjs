@@ -407,16 +407,28 @@ test("the equipped arm rides the consume: an UNEQUIPPED pack neither flags nor s
 
 // --- the flag's payload passthrough ----------------------------------------------
 
-test("the grouped detail read echoes fxBurst on flagged entries and keeps plain entries exact", async () => {
+test("the grouped detail read's SELECT carries the fx_burst flag", async () => {
   const db = reactionDb();
   const response = await dispatchSocial(
     request("GET", "/api/messages/" + MESSAGE_ID + "/reactions", undefined, HEADERS),
     envWithLimiters(db),
   );
-  assert.ok(response, "the route dispatches");
+  assert.equal(response.status, 200);
+  const read = db.calls.find((entry) => REACTION_GROUPED_TEST(entry.sql));
+  assert.ok(read, "the grouped read ran");
+  assert.match(read.sql, /r\.fx_burst AS fx_burst/,
+    "the flag rides the row read — the echo stays additive");
 });
 
 // (the detail/grouped echo pins below run against a stubbed read layer)
+
+// One flagged row for the history page's grouped read, and the page's single
+// message row (the same publicMessage shape the social-module stub rides).
+const MESSAGE_PAGE_ROW = {
+  id: MESSAGE_ID, author_id: USER_ID, author_name: "wempos", body: "hi",
+  client_message_id: null, source: null, created_at: NOW, edited_at: null,
+  author_accent: null,
+};
 
 function readDb(reactionRows) {
   return {
@@ -439,7 +451,7 @@ function readDb(reactionRows) {
       statement.all = async () => {
         if (REACTION_GROUPED_TEST(sql)) return { results: reactionRows };
         if (sql.includes("FROM gc_attachments")) return { results: [] };
-        if (sql.includes("FROM gc_messages m")) return { results: [] };
+        if (sql.includes("FROM gc_messages m")) return { results: [MESSAGE_PAGE_ROW] };
         return { results: [] };
       };
       statement.run = async () => ({ meta: { changes: 0 } });
@@ -472,7 +484,7 @@ test("GET /api/messages/:id/reactions echoes fxBurst on flagged users, plain sha
   assert.deepEqual(warm.users, [{ id: 8, username: "bean" }]);
 });
 
-test("the history page's grouped read echoes fxBurst and pins the flag in its SELECT", async () => {
+test("the history page's grouped read echoes fxBurst on the flagged user entry", async () => {
   const rows = [{
     message_id: MESSAGE_ID, emoji: "🔥", user_id: USER_ID, username: "wempos", fx_burst: 1,
   }];
@@ -481,7 +493,10 @@ test("the history page's grouped read echoes fxBurst and pins the flag in its SE
     request("GET", "/api/channels/" + CHANNEL_ID + "/messages", undefined, HEADERS),
     envWithLimiters(db),
   );
-  assert.ok(response, "the page dispatches");
+  assert.equal(response.status, 200);
+  const body = await bodyOf(response);
+  assert.equal(body.messages[0].reactions[0].users[0].fxBurst, true,
+    "the flagged payload echoes through the list payload");
 });
 
 test("the flag rides BOTH messages.mjs grouped reads (history + pins) in the SELECT", () => {
@@ -568,3 +583,24 @@ test("the client burst render: one CSS class on the flagged ADD with aria-hidden
   assert.match(STYLES, /@keyframes fx-burst-scatter/);
   assert.match(STYLES, /pointer-events: none/, "the overlay never eats clicks");
 });
+
+test("the picker's order law: refresh FIRST, burst SECOND at both call sites", () => {
+  // The regression the HIGH finding caught: laneRefresh does
+  // column.replaceChildren() in the same tick, so a burst pinned BEFORE the
+  // refresh dies before its first frame paints (a paid use that shows
+  // nothing). The pin catches the swap at both arms.
+  const picker = CHAT.slice(
+    CHAT.indexOf("function reactionPicker"),
+    CHAT.indexOf("const dialog = openDialog"),
+  );
+  const refreshes = [...picker.matchAll(/refreshColumn\(columnNodeRef, currentChannelId\)/g)]
+    .map((match) => match.index);
+  const bursts = [...picker.matchAll(/fireBurst\(message\)/g)].map((match) => match.index);
+  assert.equal(refreshes.length, 2, "one refresh per arm (common + super)");
+  assert.equal(bursts.length, 2, "one burst call per arm");
+  for (const arm of [0, 1]) {
+    assert.ok(refreshes[arm] < bursts[arm],
+      "arm " + arm + ": the refresh runs first, the burst pins the rebuilt row");
+  }
+});
+

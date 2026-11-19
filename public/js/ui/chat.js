@@ -775,8 +775,12 @@ function reactionPicker(message) {
       onClick: async () => {
         try {
           const payload = await toggleReaction(message.id, emoji);
-          if (payload?.reaction?.fxBurst) fireBurst(message);
+          // The refresh FIRST, the burst SECOND: laneRefresh rebuilds the
+          // column in the same tick (replaceChildren), and a span appended
+          // before the rebuild dies before its first frame paints — the
+          // rebuild's freshly laid-out row is the node the overlay pins to.
           refreshColumn(columnNodeRef, currentChannelId);
+          if (payload?.reaction?.fxBurst) fireBurst(message);
         } finally {
           dialog.close();
         }
@@ -788,8 +792,9 @@ function reactionPicker(message) {
       onClick: async () => {
         try {
           const payload = await toggleReaction(message.id, emoji);
-          if (payload?.reaction?.fxBurst) fireBurst(message);
+          // The SAME order law as the common arm: refresh first, burst second.
           refreshColumn(columnNodeRef, currentChannelId);
+          if (payload?.reaction?.fxBurst) fireBurst(message);
         } catch (error) {
           grid.append(h("p", { class: "form-error", text: error.message })); // the 403 verbatim
         }
