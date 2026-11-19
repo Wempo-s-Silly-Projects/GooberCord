@@ -67,4 +67,42 @@ else
     printf '{"build":"%s","at":"%s"}\n' "$GC_BUILD" "$NOW" > "$STATE_FILE"
   fi
 fi
+
+# Cost-activity canary (cost-monitor rider, 2026-11-19): token spend is NOT
+# CLI-observable — the owner alone reads the true number against the $1000
+# ceiling from claude.ai. This guard correlates observable fleet motion
+# (.team/cost.log lines in the tick's machine-parsable shape, the FLEET TICK
+# being the single writer) and flags a spike so the owner knows to go look;
+# it never halts, never blocks, never writes cost.log. A spike fires when
+# any of deploys/lanes/suites/seats exceeds max(prev 3) * 2 + 1 — the +1
+# floor stops the idle->first-activity 0->1 crossing from crying wolf.
+COST_LOG="$STATE_DIR/cost.log"
+TODAY="$(date -u +%F)"
+if [ -f "$COST_LOG" ]; then
+  # Only conforming lines (day= + numeric metrics) count; prose lines are inert.
+  LINES_TODAY="$(grep 'day=' "$COST_LOG" | grep "day=$TODAY" | wc -l | tr -d ' ')"
+  if [ "$LINES_TODAY" -ge 4 ]; then
+    spike_alert=""
+    for METRIC in deploys lanes suites seats; do
+      EXPR="s/^.*[[:space:]]${METRIC}=\([0-9]*\).*/\1/p"
+      C="$(printf '%s\n' "$(grep 'day=' "$COST_LOG" | grep "day=$TODAY" | tail -1)" | sed -n "$EXPR")"
+      [ -n "$C" ] || continue
+      P_MAX=0
+      for PREV_LINE in $(grep 'day=' "$COST_LOG" | grep "day=$TODAY" | tail -n 4 | head -n 3 | tr '\n' '|' | tr -d "'"); do
+        P="$(printf '%s' "$PREV_LINE" | sed -n "$EXPR")"
+        [ -n "$P" ] && [ "$P" -gt "$P_MAX" ] && P_MAX="$P"
+      done
+      THRESHOLD=$(( P_MAX * 2 + 1 ))
+      if [ "$C" -ge "$THRESHOLD" ] && [ "$C" -gt 1 ]; then
+        spike_alert="COST-ACTIVITY-SPIKE: $METRIC=$C vs last-3 max=$P_MAX"
+        break
+      fi
+    done
+    if [ -n "$spike_alert" ]; then
+      SPIKE_ALERT_FILE="$STATE_DIR/ALERT-$(date -u +%Y%m%dT%H%M%SZ)-cost.md"
+      printf '# Fleet watchdog cost-activity spike %s\n\n%s\n\n(a canary, not a dollar meter: token spend is not CLI-observable — the owner reads the true number on claude.ai against the $1000 ceiling)\n' "$NOW" "$spike_alert" > "$SPIKE_ALERT_FILE"
+      osascript -e "display notification \"Fleet watchdog: $spike_alert\" with title \"GooberCord fleet\"" >/dev/null 2>&1 &
+    fi
+  fi
+fi
 exit 0
