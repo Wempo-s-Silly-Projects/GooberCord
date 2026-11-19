@@ -400,6 +400,26 @@ export const GC_STICKER_MAX_PER_SERVER = 5;
 // was wrong): every server HAS a board. The blessings (24/36/48) ride
 // GC_BOOST_LEVELS through the shared resolver.
 export const GC_SOUNDBOARD_MAX_PER_SERVER = 8;
+// The expression inventories' WIDEST caps, resolved off the same max-of shape
+// the shared boost resolver applies (the base 50/5/8 is never below any level's
+// blessing — 250/60/48 top the GC_BOOST_LEVELS ladder). The server DELETE's
+// attachment pre-read ceiling rides their sum: a full-cap purge's literal-id
+// statements and its survivor reads chunk off the same number, so the ceiling
+// never seats a statement past the bind budget (PINS_READ_BIND_CHUNK chunks).
+const GC_EMOJI_CAP_CEILING = Math.max(
+  GC_EMOJI_MAX_PER_SERVER,
+  ...GC_BOOST_LEVELS.map((entry) => entry.emoji),
+);
+const GC_STICKER_CAP_CEILING = Math.max(
+  GC_STICKER_MAX_PER_SERVER,
+  ...GC_BOOST_LEVELS.map((entry) => entry.stickers),
+);
+const GC_SOUNDBOARD_CAP_CEILING = Math.max(
+  GC_SOUNDBOARD_MAX_PER_SERVER,
+  ...GC_BOOST_LEVELS.map((entry) => entry.soundboard),
+);
+export const GC_SERVER_DELETE_ATTACHMENT_LIMIT =
+  GC_EMOJI_CAP_CEILING + GC_STICKER_CAP_CEILING + GC_SOUNDBOARD_CAP_CEILING;
 // A sound FILE'S own intake bounds (Discord-real, 0025): MP3/OGG only,
 // 512 KB per sound. The request ceiling adds multipart envelope slack.
 export const GC_SOUNDBOARD_SOUND_MAX_BYTES = 524_288;

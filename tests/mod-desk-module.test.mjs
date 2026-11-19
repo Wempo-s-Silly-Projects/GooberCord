@@ -500,7 +500,8 @@ const PRUNE_COUNT_TEST = (sql) =>
 const PRUNE_ROLES_DELETE_TEST = (sql) =>
   sql.startsWith("DELETE FROM gc_member_roles WHERE server_id = ? AND EXISTS (");
 const PRUNE_MEMBERS_DELETE_TEST = (sql) =>
-  sql.startsWith("DELETE FROM gc_server_members AS m WHERE m.server_id = ?");
+  sql.startsWith("DELETE FROM gc_server_members AS m WHERE (") &&
+  sql.includes("om.role = 'owner'");
 
 const KICK_ACTOR = { permissions: 4, position: 5 };
 
@@ -616,6 +617,68 @@ test("the owner actor prunes below the crown: no position guard, no mask arm", a
   // crown's to prune), and the guard is the owner arm alone.
   assert.doesNotMatch(count.sql, /NOT EXISTS \(SELECT 1 FROM gc_member_roles pm/);
   assert.match(count.sql, /om\.role = 'owner'\)\) AS authorized/);
+});
+
+// The RUN batch re-asserts the authority IN-STATEMENT (lane-haywire6-servers):
+// the dry-run's `authorized` column never fenced the deletes — the batch bound
+// only the candidate predicate, so a plain member (no KICKMembers bit) who
+// reached the run could wipe every quiet member. The guard is the candidate
+// WHERE's first clause now, for the preview and both deletes alike.
+test("the run batch carries the authority guard in-statement (no dry-run-only fence)", async () => {
+  const pruned = await authed("/api/servers/3/prune", KICK_ACTOR);
+  const db = fakeDb([
+    ...pruned.routes,
+    { test: PRUNE_ROLES_DELETE_TEST, run: async () => ({ meta: { changes: 2 } }) },
+    { test: PRUNE_MEMBERS_DELETE_TEST, run: async () => ({ meta: { changes: 2 } }) },
+  ]);
+  const response = await dispatch(
+    pruned.call("POST", { days: 7, dry_run: false }), envWithLimiters(db),
+  );
+
+  assert.equal(response.status, 200);
+  assert.deepEqual(await bodyOf(response), { dry_run: false, kicked: 2 });
+  const batch = db.calls.find((entry) => entry.call === "batch");
+  assert.ok(batch);
+  assert.equal(batch.statements.length, 2);
+  for (const statement of batch.statements) {
+    // Both authority arms in-statement: the owner EXISTS pair and the
+    // KICKMembers per-bit pair.
+    assert.match(statement.sql, /om\.role = 'owner'/);
+    assert.match(statement.sql, /gc_member_roles gbm4 JOIN gc_roles gbr4/);
+    // The guard's binds lead the candidate predicate (the roles statement's
+    // own server id rides first; the members statement binds only candidates):
+    // the owner arm's (server, actor), then the per-bit (server, actor).
+    // statements[0] = roles delete (leading server id), [1] = members delete.
+    assert.deepEqual(batch.statements[0].bound.slice(1, 5), [3, USER_ID, 3, USER_ID]);
+    assert.deepEqual(batch.statements[1].bound.slice(0, 4), [3, USER_ID, 3, USER_ID]);
+  }
+});
+
+test("the owner actor's run batch re-asserts the crown arm and skips the rest", async () => {
+  const pruned = await authed(
+    "/api/servers/3/prune", { role: "owner", permissions: 0, position: -1 },
+  );
+  const db = fakeDb([
+    ...pruned.routes,
+    { test: PRUNE_MEMBERS_DELETE_TEST, run: async () => ({ meta: { changes: 1 } }) },
+  ]);
+  const response = await dispatch(
+    pruned.call("POST", { days: 30, dry_run: false }), envWithLimiters(db),
+  );
+
+  assert.equal(response.status, 200);
+  assert.deepEqual(await bodyOf(response), { dry_run: false, kicked: 1 });
+  const batch = db.calls.find((entry) => entry.call === "batch");
+  assert.ok(batch);
+  for (const statement of batch.statements) {
+    assert.match(statement.sql, /om\.role = 'owner'/);
+    assert.doesNotMatch(statement.sql, /gc_member_roles gbm4/);
+    assert.doesNotMatch(statement.sql, /NOT EXISTS \(SELECT 1 FROM gc_member_roles pm/);
+  }
+  // The crown arm leads the candidates: roles statement carries its own
+  // leading server id, the members statement binds candidates only.
+  assert.deepEqual(batch.statements[0].bound.slice(1, 3), [3, USER_ID]);
+  assert.deepEqual(batch.statements[1].bound.slice(0, 2), [3, USER_ID]);
 });
 
 test("the role filter narrows the candidates to that role's holders", async () => {
