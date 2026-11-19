@@ -231,28 +231,19 @@ test("a plain member leaves in ONE guarded batch — member row + role assignmen
   assert.ok(batch);
   assert.deepEqual(batch.statements.length, 4);
 
-  // Statement 0: the member row's guarded DELETE. In-statement arms: the
-  // caller's own row is the target, the membership EXISTS arm bound with the
-  // same (serverId, userId), and the owner-refusal NOT-EXISTS arm bound with
-  // the same pair again.
-  const memberDelete = batch.statements[0];
-  assert.match(memberDelete.sql, /^DELETE FROM gc_server_members WHERE server_id = \? AND user_id = \?/);
-  assert.match(
-    memberDelete.sql,
-    /AND EXISTS \(SELECT 1 FROM gc_server_members WHERE server_id = \? AND user_id = \?\)/,
-  );
-  assert.match(
-    memberDelete.sql,
-    /AND NOT EXISTS \(SELECT 1 FROM gc_server_members \w+ WHERE \w+\.server_id = \? AND \w+\.user_id = \? AND \w+\.role = 'owner'\)/,
-  );
-  // Bind sequence: (serverId, self) ×3 — the DELETE pair, then the membership
-  // arm's pair, then the owner arm's pair. No client-derived values.
-  assert.deepEqual(memberDelete.bound, [SERVER_ID, USER_ID, SERVER_ID, USER_ID, SERVER_ID, USER_ID]);
+  // Batch ORDER: [roles strip, boost strip, member DELETE, recount]. D1's
+  // batch is one sequential transaction — the strips' membership-EXISTS arms
+  // are only true BEFORE the member-row delete fires, so any other order
+  // makes both strips refuted no-ops on the success path.
+  assert.match(batch.statements[0].sql, /^DELETE FROM gc_member_roles/);
+  assert.match(batch.statements[1].sql, /^DELETE FROM gc_server_boosts/);
+  assert.match(batch.statements[2].sql, /^DELETE FROM gc_server_members/);
+  assert.match(batch.statements[3].sql, /^UPDATE gc_servers SET boosts =/);
 
-  // Statement 1: the role-assignment strip — kick's shape, the SAME guard
+  // Statement 0: the role-assignment strip — kick's shape, the SAME guard
   // arms on gc_member_roles so a refused leave never strips a member who
   // stayed (rejoin must land a clean RBAC slate).
-  const rolesDelete = batch.statements[1];
+  const rolesDelete = batch.statements[0];
   assert.match(
     rolesDelete.sql,
     /^DELETE FROM gc_member_roles WHERE server_id = \? AND user_id = \?/,
@@ -267,10 +258,10 @@ test("a plain member leaves in ONE guarded batch — member row + role assignmen
   );
   assert.deepEqual(rolesDelete.bound, [SERVER_ID, USER_ID, SERVER_ID, USER_ID, SERVER_ID, USER_ID]);
 
-  // Statement 2: the boost strip — the departing booster's gc_server_boosts
+  // Statement 1: the boost strip — the departing booster's gc_server_boosts
   // row leaves in the same batch (no FK/trigger strips it on the member-row
   // delete), with the SAME guard arms so a refused leave strips nothing.
-  const boostDelete = batch.statements[2];
+  const boostDelete = batch.statements[1];
   assert.match(
     boostDelete.sql,
     /^DELETE FROM gc_server_boosts WHERE server_id = \? AND user_id = \?/,
@@ -285,28 +276,64 @@ test("a plain member leaves in ONE guarded batch — member row + role assignmen
   );
   assert.deepEqual(boostDelete.bound, [SERVER_ID, USER_ID, SERVER_ID, USER_ID, SERVER_ID, USER_ID]);
 
-  // Statement 3: the recount rides IN-batch after the strip (the boost
+  // Statement 2: the member row's guarded DELETE — the success path's
+  // verdict statement (results[2]). In-statement arms: the caller's own row
+  // is the target, the membership EXISTS arm bound with the same
+  // (serverId, userId), and the owner-refusal NOT-EXISTS arm bound with the
+  // same pair again.
+  const memberDelete = batch.statements[2];
+  assert.match(memberDelete.sql, /^DELETE FROM gc_server_members WHERE server_id = \? AND user_id = \?/);
+  assert.match(
+    memberDelete.sql,
+    /AND EXISTS \(SELECT 1 FROM gc_server_members WHERE server_id = \? AND user_id = \?\)/,
+  );
+  assert.match(
+    memberDelete.sql,
+    /AND NOT EXISTS \(SELECT 1 FROM gc_server_members \w+ WHERE \w+\.server_id = \? AND \w+\.user_id = \? AND \w+\.role = 'owner'\)/,
+  );
+  // Bind sequence: (serverId, self) ×3 — the DELETE pair, then the membership
+  // arm's pair, then the owner arm's pair. No client-derived values.
+  assert.deepEqual(memberDelete.bound, [SERVER_ID, USER_ID, SERVER_ID, USER_ID, SERVER_ID, USER_ID]);
+
+  // Statement 3: the recount rides IN-batch after the strips (the boost
   // routes' idiom) — a post-batch failure can never leave a stale count.
   const recount = batch.statements[3];
   assert.match(recount.sql, /^UPDATE gc_servers SET boosts =/);
   assert.deepEqual(recount.bound, [SERVER_ID, SERVER_ID]);
 });
 
-test("a departing booster's count drops — the strip leads the in-batch recount, the row is gone", async () => {
-  // Simulated gc_server_boosts: the leaver holds the server's only boost row;
-  // the fakeDb runs the batch's statements in order, so the recount only
-  // answers 0 if the strip fired first.
+test("a departing booster's count drops — the strips precede the member delete, the row is gone", async () => {
+  // Simulated sequential visibility (D1's batch = one sequential
+  // transaction): the strips' membership-EXISTS arms are only true while the
+  // member row is alive, so a strip running AFTER the member-row delete
+  // refutes to changes=0 — exactly the production no-op the ordering pin
+  // guards against. The recount derives from the stripped set.
+  let memberRowAlive = true;
   let boostRows = [USER_ID];
+  let rolesChanges = null;
   let recountDerived = null;
   const { token, csrf, row } = await sessionFixtures();
   const db = fakeDb([
     { test: SESSION_READ_TEST, first: async () => row },
     { test: MEMBERSHIP_ROW_TEST, first: async () => ({ role: "member" }) },
-    { test: MEMBER_DELETE_TEST, run: async () => ({ meta: { changes: 1 } }) },
-    { test: ROLES_DELETE_TEST, run: async () => ({ meta: { changes: 1 } }) },
+    {
+      test: MEMBER_DELETE_TEST,
+      run: async () => {
+        memberRowAlive = false;
+        return { meta: { changes: 1 } };
+      },
+    },
+    {
+      test: ROLES_DELETE_TEST,
+      run: async () => {
+        rolesChanges = memberRowAlive ? 1 : 0;
+        return { meta: { changes: rolesChanges } };
+      },
+    },
     {
       test: LEAVE_BOOST_DELETE_TEST,
       run: async () => {
+        if (!memberRowAlive) return { meta: { changes: 0 } };
         boostRows = boostRows.filter((id) => id !== USER_ID);
         return { meta: { changes: 1 } };
       },
@@ -329,6 +356,8 @@ test("a departing booster's count drops — the strip leads the in-batch recount
     env,
   );
   assert.equal(response.status, 200);
+  // The strips ran while the member row was alive — both landed.
+  assert.equal(rolesChanges, 1);
   // The departed booster's row is gone and is NOT counted: the recount
   // derived its value after the strip.
   assert.deepEqual(boostRows, []);

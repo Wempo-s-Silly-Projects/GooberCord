@@ -2947,23 +2947,26 @@ async function handleLeaveServerRoute(request, env, serverId) {
     );
   }
 
-  // ONE batch, kick's shape: the member row, the row's RBAC assignments, and
-  // the departing booster's gc_server_boosts row leave together, each
+  // ONE batch, kick's shape: the row's RBAC assignments, the departing
+  // booster's gc_server_boosts row, and the member row leave together, each
   // statement carrying the same guard arms — the caller's own row, the
-  // membership arm, the owner-refusal NOT-EXISTS arm. Assignments
-  // (gc_member_roles carries no membership FK) survive a bare member-row
-  // delete, so a single-statement leave would re-arm them on rejoin; and the
-  // boost row (no FK/trigger ties it to membership either) would keep
-  // counting toward the boost level — the caps a departed booster grants —
-  // unless it strips in the same breath. The recount rides LAST, in-batch
-  // (the boost routes' idiom): the count derives from the stripped rows, so
-  // no post-batch failure can leave a stale gc_servers.boosts.
+  // membership arm, the owner-refusal NOT-EXISTS arm. ORDER IS LOAD-BEARING
+  // (D1's batch is one sequential transaction, the same class the transfer
+  // demote's promote-landed rider relies on): the strips ride BEFORE the
+  // member-row delete, because their membership-EXISTS arms go false the
+  // moment that delete fires — a member-first batch commits them as refuted
+  // zero-changes no-ops. Assignments (gc_member_roles carries no membership
+  // FK) survive a bare member-row delete, so a stripless leave would re-arm
+  // them on rejoin; and the boost row (no FK/trigger ties it to membership
+  // either) would keep counting toward the boost level — the caps a departed
+  // booster grants — unless it strips in the same breath. The recount rides
+  // LAST, in-batch (the boost routes' idiom): the count derives from the
+  // stripped rows, so no post-batch failure can leave a stale
+  // gc_servers.boosts. The verdict reads the member-row delete's changes
+  // (results[2]); the race path is intact — a vanished row refutes the
+  // strips at batch start AND deletes 0, so the classification re-read
+  // answers 404 exactly as before.
   const results = await env.GOOBER_DB.batch([
-    env.GOOBER_DB.prepare(
-      "DELETE FROM gc_server_members WHERE server_id = ? AND user_id = ? " +
-        "AND EXISTS (SELECT 1 FROM gc_server_members WHERE server_id = ? AND user_id = ?) " +
-        "AND NOT " + OWNER_EXISTS_SQL,
-    ).bind(serverId, userId, serverId, userId, serverId, userId),
     env.GOOBER_DB.prepare(
       "DELETE FROM gc_member_roles WHERE server_id = ? AND user_id = ? " +
         "AND EXISTS (SELECT 1 FROM gc_server_members WHERE server_id = ? AND user_id = ?) " +
@@ -2974,9 +2977,14 @@ async function handleLeaveServerRoute(request, env, serverId) {
         "AND EXISTS (SELECT 1 FROM gc_server_members WHERE server_id = ? AND user_id = ?) " +
         "AND NOT " + OWNER_EXISTS_SQL,
     ).bind(serverId, userId, serverId, userId, serverId, userId),
+    env.GOOBER_DB.prepare(
+      "DELETE FROM gc_server_members WHERE server_id = ? AND user_id = ? " +
+        "AND EXISTS (SELECT 1 FROM gc_server_members WHERE server_id = ? AND user_id = ?) " +
+        "AND NOT " + OWNER_EXISTS_SQL,
+    ).bind(serverId, userId, serverId, userId, serverId, userId),
     env.GOOBER_DB.prepare(BOOST_RECOUNT_SQL).bind(serverId, serverId),
   ]);
-  const deletedChanges = Number(results[0]?.meta?.changes) || 0;
+  const deletedChanges = Number(results[2]?.meta?.changes) || 0;
 
   if (deletedChanges !== 1) {
     // The row vanished between the gate and the DELETE (race-on leave): the
