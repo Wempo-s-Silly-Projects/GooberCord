@@ -587,6 +587,11 @@ test("the client burst render: one CSS class on the flagged ADD with aria-hidden
   assert.match(STYLES, /@keyframes fx-burst-fade/);
   assert.match(STYLES, /@keyframes fx-burst-scatter/);
   assert.match(STYLES, /pointer-events: none/, "the overlay never eats clicks");
+  // Wave-25 a11y LOW (the audit's motion row): the scatter is decorative
+  // animation — under prefers-reduced-motion the dots die (the parent's fade
+  // still runs, so the overlay still removes itself at animationend).
+  assert.match(STYLES, /@media \(prefers-reduced-motion: reduce\)\s*\{[^}]*\.fx-burst/,
+    "the reduced-motion seats the burst — decorative motion is opt-in");
 });
 
 test("the picker's order law: refresh FIRST, burst SECOND at both call sites", () => {

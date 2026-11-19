@@ -1684,6 +1684,14 @@ textarea {
   from { transform: scale(0.2); }
   to { transform: scale(2.4); }
 }
+/* Reduced motion seats the burst: the decorative scatter dies, the parent's
+   fade still runs so the overlay still removes itself at animationend. */
+@media (prefers-reduced-motion: reduce) {
+  .fx-burst::before {
+    animation: none;
+    opacity: 0;
+  }
+}
 
 /* --- the boost-tier panel (wave-12): the tier badge and the perks heading --- */
 .boost-tier-badge {
