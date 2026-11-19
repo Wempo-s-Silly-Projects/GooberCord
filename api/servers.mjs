@@ -50,8 +50,6 @@ import {
   GC_INVITES_MAX_PER_SERVER,
   GC_ROLES_MAX_PER_SERVER,
   GC_RULES_MAX,
-  GC_SEARCH_PAGE_MAX,
-  GC_SEARCH_TERM_MAX,
   GC_SERVERS_JOIN_MAX_FREE,
   GC_SERVERS_JOIN_MAX_PLUS,
   MAX_CHANNELS_PER_SERVER,
@@ -78,10 +76,10 @@ import {
   TIMEOUT_MINUTE_CHOICES,
   VERIFICATION_LEVELS,
 } from "./permissions.mjs";
-// The search's per-hit VIEW gate rides the shared layer machinery (one
-// boolean, never the throwing route gate — a denied hit is DROPPED, not a
-// page-kill).
-import { viewerCanViewChannel } from "./messages.mjs";
+// The VIEW gate stays ONE implementation in messages.mjs — the seam imports
+// it there, never copies it (nothing in this module consumes
+// viewerCanViewChannel any more; the search family's single home is
+// api/server-search.mjs).
 
 // T-R25-SPLIT-SERVERS-7: the server's message search rides
 // api/server-search.mjs (the wave-25 sixth seam). The search family's SQL
