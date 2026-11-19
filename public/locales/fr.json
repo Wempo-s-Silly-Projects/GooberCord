@@ -317,6 +317,7 @@
   "gc.shell.nav.dm": "Messages directs",
   "gc.shell.nav.join": "Rejoindre un serveur",
   "gc.shell.nav.manage": "Gérer ce serveur",
+  "gc.shell.nav.menu": "Menu",
   "gc.shell.nav.mentions": "Boîte à mentions",
   "gc.shell.placeholder.channel": "Les messages arrivent ici — la vague de chat est la suivante.",
   "gc.shell.placeholder.server": "Pas encore de salons — la vague de gestion ajoute leur création.",

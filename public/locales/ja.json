@@ -311,6 +311,7 @@
   "gc.shell.nav.dm": "ダイレクトメッセージ",
   "gc.shell.nav.join": "サーバーに参加",
   "gc.shell.nav.manage": "このサーバーを管理",
+  "gc.shell.nav.menu": "メニュー",
   "gc.shell.nav.mentions": "メンション受信箱",
   "gc.shell.placeholder.channel": "メッセージはここに着きます — チャットの波が次です。",
   "gc.shell.placeholder.server": "チャンネルはまだありません — 管理の波が作るのを加えます。",

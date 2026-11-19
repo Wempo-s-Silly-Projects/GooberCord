@@ -311,6 +311,7 @@
   "gc.shell.nav.dm": "Direktnachrichten",
   "gc.shell.nav.join": "Server beitreten",
   "gc.shell.nav.manage": "Diesen Server verwalten",
+  "gc.shell.nav.menu": "Menü",
   "gc.shell.nav.mentions": "Erwähnungs-Posteingang",
   "gc.shell.placeholder.channel": "Die Nachrichten erscheinen hier — die Chat-Welle kommt als Nächstes.",
   "gc.shell.placeholder.server": "Noch keine Kanäle — die Verwaltungs-Welle ergänzt das Anlegen.",

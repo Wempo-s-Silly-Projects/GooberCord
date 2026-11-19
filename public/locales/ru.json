@@ -308,6 +308,7 @@
   "gc.shell.nav.dm": "Личные сообщения",
   "gc.shell.nav.join": "Войти в сервер",
   "gc.shell.nav.manage": "Управлять сервером",
+  "gc.shell.nav.menu": "Меню",
   "gc.shell.nav.mentions": "Приёмная упоминаний",
   "gc.shell.placeholder.channel": "Сообщения лягут здесь — волна чата следующая.",
   "gc.shell.placeholder.server": "Каналов ещё нет — волна управления добавит их создание.",

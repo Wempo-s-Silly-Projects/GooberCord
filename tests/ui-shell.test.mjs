@@ -360,3 +360,33 @@ test("the pane and rail titles ride the bundles (wave-25 no-copy rows R1+R2)", (
     }
   }
 });
+
+// The wave-25 phone shell (T-R25-SHELL-PHONE, the viewport-saboteur
+// finding): under 640px the two fixed rails left a ~54px desk on a 320px
+// viewport — the frame collapses to ONE pane, and the rails ride a
+// shell-level drawer (the frame's own data-drawer state; the toggle and
+// scrim are shell chrome, every contract otherwise untouched).
+test("the phone shell collapses to one pane under 640px (shell grid + rails)", () => {
+  const start = CSS.indexOf("@media (max-width: 640px)");
+  const block = CSS.slice(start, CSS.indexOf("\n}", start));
+  assert.ok(block, "the 640px media block is present");
+  assert.match(block, /grid-template-columns: minmax\(0, 1fr\);/,
+    "one column: the desk fills the phone viewport");
+  assert.match(block, /\.rail-servers,\s*\n\s*\.rail-channels \{\s*\n\s*display: none;/,
+    "the rails leave the phone grid");
+  assert.match(block, /\[data-drawer="open"\] \.rail-servers/,
+    "the drawer state re-seats the rails as an overlay");
+  assert.match(block, /\.shell-scrim/, "the scrim seats under the drawer");
+  assert.match(block, /\.phone-drawer-toggle/, "the shell-level drawer toggle");
+});
+
+test("the phone drawer is a shell-level pane toggle (shell.js contract)", () => {
+  assert.match(SHELL, /dataset\.drawer = open \? "open" : "closed"/, "the frame carries the drawer state");
+  assert.match(SHELL, /phone-drawer-toggle/);
+  assert.match(SHELL, /shell-scrim/, "the scrim closes the drawer");
+  assert.match(SHELL, /t\("gc\.shell\.nav\.menu"\)/, "the toggle rides the bundles");
+  for (const lang of ["en", "es", "de", "fr", "pt", "ru", "ar", "ja", "zh"]) {
+    const bundle = JSON.parse(readFileSync(join(HERE, `../public/locales/${lang}.json`), "utf8"));
+    assert.ok("gc.shell.nav.menu" in bundle, `gc.shell.nav.menu rides ${lang}.json`);
+  }
+});

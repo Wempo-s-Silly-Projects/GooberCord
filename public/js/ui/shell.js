@@ -219,6 +219,40 @@ export function renderShell(route, paneOverride = null) {
   frame.append(serverRail(), channelRail());
   frame.append(paneOverride ?? mainPane(route));
   frame.append(membersRail());
+  // The phone drawer (T-R25-SHELL-PHONE): under 640px the CSS collapses the
+  // frame to ONE pane and the two fixed rails ship off the grid — they ride
+  // THIS shell-level state (the frame's own data-drawer attribute): the
+  // toggle opens and closes, the scrim closes, and any nav act closes the
+  // drawer by rebuilding the shell (every route render makes a fresh frame;
+  // the server-rail rows' and channel rows' own acts navigate first). The
+  // desktop and tablet shapes keep their every rule verbatim.
+  let scrimNode = null;
+  const setPhoneDrawer = (open) => {
+    frame.dataset.drawer = open ? "open" : "closed";
+    toggle.setAttribute("aria-expanded", String(open));
+  };
+  const toggle = h("button", {
+    class: "phone-drawer-toggle",
+    type: "button",
+    "aria-label": t("gc.shell.nav.menu"),
+    "aria-haspopup": "true",
+    "aria-expanded": "false",
+    title: t("gc.shell.nav.menu"),
+    text: "≡",
+    onClick: () => {
+      if (frame.dataset.drawer !== "open") {
+        setPhoneDrawer(true);
+        if (!scrimNode) {
+          scrimNode = h("div", { class: "shell-scrim" });
+          scrimNode.addEventListener("click", () => setPhoneDrawer(false));
+          frame.append(scrimNode);
+        }
+      } else {
+        setPhoneDrawer(false);
+      }
+    },
+  });
+  frame.append(toggle);
   // The socket lane's drop strip (G-9): one line of store truth, now
   // SUBSCRIBED (the store's whole purpose) — a connection flip repaints
   // THIS strip node-locally, never a route re-render. One live seat per

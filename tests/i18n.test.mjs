@@ -377,6 +377,7 @@ const CARVE_GATES = {
     "gc.settings.roles.position",
     "gc.shell.mentions.loading",
     "gc.shell.nav.mentionsShort",
+    "gc.shell.nav.menu",
     "gc.social.dm.fallback",
     "gc.social.row.message",
   ],
@@ -391,6 +392,7 @@ const CARVE_GATES = {
     "gc.mod.timeout.choice",
     "gc.settings.channels.spoiler",
     "gc.shell.mentions.loading",
+    "gc.shell.nav.menu",
   ],
   ru: [
     "gc.app.title",

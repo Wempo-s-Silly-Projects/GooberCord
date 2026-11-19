@@ -311,6 +311,7 @@
   "gc.shell.nav.dm": "Direct messages",
   "gc.shell.nav.join": "Join a server",
   "gc.shell.nav.manage": "Manage this server",
+  "gc.shell.nav.menu": "Menu",
   "gc.shell.nav.mentions": "Mentions inbox",
   "gc.shell.placeholder.channel": "Messages land here — the chat wave is next.",
   "gc.shell.placeholder.server": "No channels yet — the manage wave adds creating them.",

@@ -59,6 +59,8 @@ test("mobile app shell: the members rail drops first, the rails compact second",
   const narrowBreak = css.indexOf("@media (max-width: 640px)");
   assert.ok(narrowBreak > membersBreak, "the narrow-phone breakpoint exists");
   const narrow = css.slice(narrowBreak);
-  assert.match(narrow, /grid-template-columns:\s*56px\s+210px\s+minmax\(0,\s*1fr\);/,
-    "the rails compact, the chat pane keeps the floor");
+  assert.match(narrow, /grid-template-columns:\s*minmax\(0,\s*1fr\);/,
+    "the phone pane is ONE column — the rails ride the drawer (T-R25-SHELL-PHONE)");
+  assert.match(narrow, /\.rail-servers,\s*\n\s*\.rail-channels \{\s*\n\s*display: none;/,
+    "the rails leave the phone grid");
 });

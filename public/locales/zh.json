@@ -311,6 +311,7 @@
   "gc.shell.nav.dm": "私信",
   "gc.shell.nav.join": "加入服务器",
   "gc.shell.nav.manage": "管理这个服务器",
+  "gc.shell.nav.menu": "菜单",
   "gc.shell.nav.mentions": "提及收件箱",
   "gc.shell.placeholder.channel": "消息落在这里 — 下一波单聊。",
   "gc.shell.placeholder.server": "还没有频道 — 管理之波加上创建。",

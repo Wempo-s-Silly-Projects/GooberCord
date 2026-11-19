@@ -654,9 +654,54 @@ textarea {
   }
 }
 
+/* T-R25-SHELL-PHONE: one pane under 640px. The fixed rails left a ~54px
+   desk on a 320px viewport; here the desk fills the phone and the two
+   rails ride a drawer instead — the frame's own data-drawer state drives
+   the overlay (shell.js's toggle opens, its scrim and any nav act close).
+   Members stays hidden (the 900px block's rule holds). */
 @media (max-width: 640px) {
   .shell {
-    grid-template-columns: 56px 210px minmax(0, 1fr);
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .rail-servers,
+  .rail-channels {
+    display: none;
+  }
+  .shell[data-drawer="open"] .rail-servers,
+  .shell[data-drawer="open"] .rail-channels {
+    display: flex;
+    position: fixed;
+    top: 0;
+    bottom: 0;
+    z-index: 40;
+  }
+  .shell[data-drawer="open"] .rail-servers {
+    left: 0;
+    width: 56px;
+  }
+  .shell[data-drawer="open"] .rail-channels {
+    left: 56px;
+    width: 210px;
+  }
+  .shell-scrim {
+    position: fixed;
+    inset: 0;
+    background: rgba(12, 18, 25, 0.8);
+    z-index: 30;
+  }
+  .phone-drawer-toggle {
+    display: block;
+    position: fixed;
+    top: 0.5rem;
+    left: 0.5rem;
+    width: 2.75rem;
+    height: 2.75rem;
+    z-index: 50;
+  }
+  /* Drawer open: the toggle hops just past the drawer's edge — it is the
+     close act, never covering the drawer's own header copy. */
+  .shell[data-drawer="open"] .phone-drawer-toggle {
+    left: 16.75rem;
   }
 }
 
@@ -1656,4 +1701,16 @@ textarea {
    header needs its own breathing room the rail row's flex gap covers. */
 .task-page .member-avatar {
   margin: 0 0 0.4rem;
+}
+
+/* T-R25-SHELL-PHONE (coda): the phone toggle is a fixed 2.75rem act at the
+   top-left gutter — the header rows sit on equal-specificity rules BELOW
+   the 640 block, so the clearance rides here (source order: the phone
+   clears the gutter, desktop and tablet keep their paddings verbatim). */
+@media (max-width: 640px) {
+  .chat-header,
+  .pane-header,
+  .task-header {
+    padding-left: 3.9rem;
+  }
 }

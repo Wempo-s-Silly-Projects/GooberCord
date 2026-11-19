@@ -317,6 +317,7 @@
   "gc.shell.nav.dm": "Mensagens diretas",
   "gc.shell.nav.join": "Entrar em um servidor",
   "gc.shell.nav.manage": "Gerenciar este servidor",
+  "gc.shell.nav.menu": "Menu",
   "gc.shell.nav.mentions": "Caixa de menções",
   "gc.shell.placeholder.channel": "As mensagens aparecem aqui — a onda de chat vem depois.",
   "gc.shell.placeholder.server": "Ainda não há canais — a onda de gestão adiciona criá-los.",

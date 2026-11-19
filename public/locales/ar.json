@@ -319,6 +319,7 @@
   "gc.shell.nav.dm": "الرسائل الخاصة",
   "gc.shell.nav.join": "الانضمام إلى خادم",
   "gc.shell.nav.manage": "إدارة هذا الخادم",
+  "gc.shell.nav.menu": "القائمة",
   "gc.shell.nav.mentions": "صندوق الإشارات",
   "gc.shell.placeholder.channel": "تصل الرسائل هنا — موجة الدردشة هي التالية.",
   "gc.shell.placeholder.server": "لا قنوات بعد — موجة الإدارة تضيف إنشاءها.",

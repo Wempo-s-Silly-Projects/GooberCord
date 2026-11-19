@@ -312,6 +312,7 @@
   "gc.shell.nav.dm": "Mensajes directos",
   "gc.shell.nav.join": "Unirse a un servidor",
   "gc.shell.nav.manage": "Gestionar este servidor",
+  "gc.shell.nav.menu": "Menú",
   "gc.shell.nav.mentions": "Bandeja de menciones",
   "gc.shell.placeholder.channel": "Los mensajes aparecen aquí — la oleada de chat viene después.",
   "gc.shell.placeholder.server": "Aún no hay canales — la oleada de gestión añade crearlos.",
