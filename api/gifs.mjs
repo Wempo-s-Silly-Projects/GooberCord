@@ -76,14 +76,18 @@ function publicGif(result) {
 export async function handleGifRoutes(request, env, url, path, method, ctx) {
   void ctx;
 
-  if (path === "/api/gifs/search" && method === "GET") {    // The key question runs FIRST: an unconfigured environment answers the
+  if (path === "/api/gifs/search" && method === "GET") {
+    // The key question runs FIRST: an unconfigured environment answers the
     // 503 before any caller-specific work (and never touches the network).
     const apiKey = env.TENOR_API_KEY;
     if (typeof apiKey !== "string" || apiKey.length === 0) {
       throw new HttpError(503, GIF_SEARCH_CONFIGURED_ERROR);
     }
 
-    await requireSignedInRead(request, env);
+    const session = await requireSignedInRead(request, env);
+    // The route's own per-user read limiter — the image proxy's same shape:
+    // one caller's picker paging never burns the whole per-IP budget.
+    await rateLimit(request, env, "read", "gifs-search:" + String(session.user.id));
     const query = (url.searchParams.get("q") || "").trim();
     if (query.length < 1 || query.length > 64) {
       throw new HttpError(400, "Search for something between 1 and 64 characters.");

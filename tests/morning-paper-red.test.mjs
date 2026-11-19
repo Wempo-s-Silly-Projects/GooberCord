@@ -156,10 +156,19 @@ function paperDb(memberRows, options = {}) {
     },
     {
       // The membership gate — pinned SQL shape, unknown-server 404 encoded
-      // by answering null (the route classifies).
+      // by answering null (the route classifies). The demod-race option
+      // answers the read AS a moderator and then strips the seat (the
+      // demod lands between the gate read and the statement) — the delete
+      // statement's own gate is what must refuse.
       test: (sql) =>
         sql.startsWith("SELECT role FROM gc_server_members WHERE server_id = ? AND user_id = ?"),
-      first: async (bound) => memberOf(bound[0], bound[1]) || null,
+      first: async (bound) => {
+        const row = memberOf(bound[0], bound[1]);
+        if (!row) return null;
+        const answer = { ...row };
+        if (options.demodAfterMembershipRead) row.role = "member";
+        return answer;
+      },
     },
     {
       test: (sql) => sql.startsWith("SELECT enabled FROM gc_paper_configs WHERE server_id = ?"),
@@ -178,11 +187,18 @@ function paperDb(memberRows, options = {}) {
       },
     },
     {
-      // The OFF-transition: the whole off-state is the row's absence.
+      // The OFF-transition: the whole off-state is the row's absence —
+      // GATED like the ON upsert: the statement's own EXISTS carries the
+      // mod verdict (a demod between the route's read and this run makes
+      // zero changes, never a delete).
       test: (sql) => sql.startsWith("DELETE FROM gc_paper_configs WHERE server_id = ?"),
       run: (bound) => {
-        const had = configs.has(bound[0]);
-        configs.delete(bound[0]);
+        const [serverId, gateServer, gateUser] = bound;
+        if (bound.length > 2 && !modMember(gateServer, gateUser)) {
+          return { meta: { changes: 0 } };
+        }
+        const had = configs.has(serverId);
+        configs.delete(serverId);
         return { meta: { changes: had ? 1 : 0 } };
       },
     },
@@ -429,6 +445,38 @@ test("the OFF transition is the hard row delete — the next read answers the un
   );
   assert.equal(again.status, 200);
   assert.deepEqual(await bodyOf(again), { enabled: false });
+});
+
+test("the OFF delete's mod gate rides INSIDE the statement — a demod between the read and the delete makes zero changes and takes the shared refusal", async () => {
+  const db = paperDb(modMembers(), {
+    configs: [[SERVER_ID, { enabled: 1, updated_by: 99, updated_at: 0 }]],
+    demodAfterMembershipRead: true,
+  });
+  const env = envWithLimiters(db);
+
+  const response = await dispatch(
+    request("POST", "/api/servers/" + SERVER_ID + "/paper", { enabled: false }), env,
+  );
+  assert.equal(response.status, 404, "the statement gate's zero-changes verdict is the shared refusal");
+  assert.match(await response.text(), /does not exist or you cannot view it/);
+  assert.equal(
+    db.configs.get(SERVER_ID)?.enabled, 1,
+    "the demodded caller's delete makes zero changes — the seat survives",
+  );
+
+  const disableSql = db.calls.find((call) => call.sql.startsWith("DELETE FROM gc_paper_configs"));
+  assert.match(disableSql.sql, /AND EXISTS \(SELECT 1 FROM gc_server_members/);
+  assert.match(disableSql.sql, /pm\.role IN \('owner','moderator'\)/);
+});
+
+test("a still-modded caller's OFF delete changes exactly one row (idempotent absent-row OFF stays 200)", async () => {
+  const db = paperDb(modMembers(), { configs: [[SERVER_ID, { enabled: 1, updated_by: 99, updated_at: 0 }]] });
+  const env = envWithLimiters(db);
+  const response = await dispatch(
+    request("POST", "/api/servers/" + SERVER_ID + "/paper", { enabled: false }), env,
+  );
+  assert.equal(response.status, 200);
+  assert.equal(db.configs.size, 0);
 });
 
 // --- the read -------------------------------------------------------------------

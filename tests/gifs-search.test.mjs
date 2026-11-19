@@ -164,3 +164,40 @@ test("the configured search clamps the shape and maps Tenor's payload down to th
     delete globalThis.fetch;
   }
 });
+
+test("the search ride's OWN per-user read limiter — the image proxy's same shape, key gifs-search:<userId>", async () => {
+  const keys = [];
+  const db = {
+    prepare: (sql) => ({
+      bind: () => ({
+        first: async () => (SESSION_READ_TEST(sql) ? (await SESSION_FIX).row : null),
+        all: async () => ({ results: [] }),
+        run: async () => ({ meta: { changes: 1 } }),
+      }),
+    }),
+  };
+  const env = envWithLimiters({ TENOR_API_KEY: "OWNER-SECRET", GOOBER_DB: db });
+  for (const binding of Object.values(RATE_LIMIT_BINDINGS)) {
+    env[binding] = { limit: async ({ key }) => { keys.push(key); return { success: true, key }; } };
+  }
+  globalThis.fetch = async () => ({
+    ok: true,
+    json: async () => ({ results: [], next: null }),
+  });
+  try {
+    const response = await dispatch(
+      new Request(ORIGIN + "/api/gifs/search?q=cats", {
+        method: "GET",
+        headers: (await SESSION_FIX).headers,
+      }),
+      env,
+    );
+    assert.equal(response.status, 200);
+    // The vendor limiter hashes `read:<actor>`; the actor here is the route's
+    // own `gifs-search:<userId>` — per-user, not the global per-IP shape.
+    assert.deepEqual(keys, [await sha256Hex("read:gifs-search:" + USER_ID)],
+      "the search ride carries its own per-user limiter, not only the global per-IP one");
+  } finally {
+    delete globalThis.fetch;
+  }
+});
