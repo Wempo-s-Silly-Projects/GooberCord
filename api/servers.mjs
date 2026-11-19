@@ -2876,6 +2876,15 @@ async function handleDeleteChannelRoute(request, env, serverId, channelId, ctx) 
     throw new HttpError(403, "You do not have permission to do that.");
   }
 
+  // The bucket rides the D1 verdict BEFORE anything else that can await and
+  // throw past the batch: a category-cleanup failure below must never strand
+  // already-purged objects (the row deletion committed; the ride stays
+  // best-effort — scheduleAttachmentObjectDelete catches its own errors —
+  // through the caller's waitUntil).
+  for (const attachmentId of doomedAttachmentIds) {
+    scheduleAttachmentObjectDelete(env, ctx, attachmentId);
+  }
+
   // The emptied-folder cleanup (only where the deleted channel LEFT a folder):
   // the identical guarded NOT EXISTS delete the category move runs.
   if (sourceCategoryId !== null) {
@@ -2883,14 +2892,6 @@ async function handleDeleteChannelRoute(request, env, serverId, channelId, ctx) 
       "DELETE FROM gc_channel_categories WHERE id = ? AND server_id = ? " +
         "AND NOT EXISTS (SELECT 1 FROM gc_channels WHERE category_id = gc_channel_categories.id)",
     ).bind(sourceCategoryId, serverId).run();
-  }
-
-  // The bucket follows the D1 verdict: the pre-read doomed ids' objects die
-  // with the batch, best-effort, one R2 delete per doomed id (the ride never
-  // blocks or fails the row deletion — scheduleAttachmentObjectDelete catches
-  // its own errors), through the caller's waitUntil.
-  for (const attachmentId of doomedAttachmentIds) {
-    scheduleAttachmentObjectDelete(env, ctx, attachmentId);
   }
 
   return json({ ok: true });
@@ -3005,8 +3006,8 @@ async function handleDeleteServerRoute(request, env, serverId, ctx) {
   // reaction-tag pair rides the prod-applied migration 0041 outside this
   // tree), so the purge sweeps them behind the SAME guard — the opts rows
   // before their tag rows, whichever FK law the prod ledger carries. The
-  // doomed messages' gc_bookmarks pointers (also FK-less, migration 0053)
-  // die with the messageAttachments statement above's scope. FK-covered
+  // doomed messages' gc_bookmarks pointers are their own statement
+  // (messageBookmarks below — also FK-less, migration 0053). FK-covered
   // siblings (gc_read_state, gc_message_reactions, gc_mentions, gc_sounds,
   // the members/invites/bans family) ride the schema's CASCADEs instead —
   // see tests/r2-sweep-fk-pins.test.mjs.
