@@ -171,6 +171,42 @@ test("the unequipped own rows and the unowned rows keep today's shape (regressio
     "an unowned row still rides the buy button");
   assert.match(row, /t\("gc\.economy\.items\.uses", \{ count: item\.qty \}\)/,
     "the uses span still answers off the payload's qty");
+  // B1 (deslop-w17 round 1): the owned CONSUMABLE row keeps its BUY door —
+  // a re-buy stacks (the backend's ON-CONFLICT arm, coins.mjs:841-843), so
+  // the use button never strands the row's re-stack beside it.
+  const ownedPack = row.slice(row.indexOf('if (item.kind === "consumable" && item.owned) {'),
+    row.indexOf("if (item.owned) {"));
+  assert.ok(ownedPack.includes('if (item.kind === "consumable" && item.owned) {'),
+    "the owned-pack branch is the row's own seat");
+  assert.match(ownedPack, /nodes\.push\(shopBuyButton\(item, errorLine\)\);/,
+    "the re-stack BUY door rides WITHIN the owned-consumable branch (not the unowned else arm)");
+  const elseArm = row.slice(row.indexOf("} else {"), row.indexOf("return h(\"div\", { class: \"shop-item\" }"));
+  assert.match(elseArm, /shopBuyButton\(item, errorLine\)/,
+    "the unowned rows' own buy door is untouched");
+});
+
+test("the store's shop write bridges the GET's inventory arm onto the item entries (B2 pin)", () => {
+  const economy = ECONOMY();
+  // The bridge runs where the GET payload lands in the store (loadShop's
+  // write) — NOT in weldShopEcho, whose equipped write is transient (every
+  // action's success re-GETs; the fresh GET must carry the face itself).
+  assert.match(economy, /store\.set\(\{ shop: shopPayloadWithEquipBridge\(payload\) \}\);/,
+    "the loadShop write rides the bridge");
+  const bridge = economy.slice(economy.indexOf("function shopPayloadWithEquipBridge(payload) {"),
+    economy.indexOf("\n}\n", economy.indexOf("function shopPayloadWithEquipBridge(payload) {")));
+  assert.ok(bridge.includes("function shopPayloadWithEquipBridge(payload) {"),
+    "the bridge is its own named function");
+  assert.match(bridge, /new Map\(\s*\n?\s*payload\.inventory\.map\(\(row\) => \[row\.itemKey, row\.equipped\]\),\s*\n?\s*\)/,
+    "the join's left arm is the SAME GET payload's inventory arm, verbatim");
+  assert.match(bridge, /equippedOf\.has\(item\.item\)\s*\n?\s*\? \{ \.\.\.item, equipped: equippedOf\.get\(item\.item\) \}\s*\n?\s*: item/,
+    "the itemKey↔item join carries equipped verbatim, no derivation, entry untouched otherwise");
+  assert.match(bridge, /!Array\.isArray\(payload\.items\)|!Array\.isArray\(payload\.inventory\)/,
+    "an absent arm is a pass-through, never a crash (the payload is the single source)");
+  // The weld stays the echo-side write; the bridge is the GET-side write.
+  assert.doesNotMatch(economy.slice(economy.indexOf("function weldShopEcho(result) {"),
+    economy.indexOf("\n}\n", economy.indexOf("function weldShopEcho(result) {"))),
+    /shopPayloadWithEquipBridge/,
+    "the weld and the bridge stay separate writes (echo transient, GET persistent)");
 });
 
 test("the weld carries the echo's consumable state: qty AND equipped (the spend's fresh row)", () => {

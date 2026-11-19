@@ -56,9 +56,32 @@ export async function claimDaily() {
 
 export async function loadShop() {
   const payload = await api("/api/coins/shop");
-  store.set({ shop: payload });
+  store.set({ shop: shopPayloadWithEquipBridge(payload) });
   if (payload && payload.balance !== undefined) store.set({ coins: payload });
   return payload;
+}
+
+// The shop write's equipped bridge: the GET payload's inventory arm carries
+// the equipped flag for EVERY row (publicInventoryRow), but the items
+// entries carry it only for the own SKUs — the consumable branch spreads
+// qty alone. The bridge joins each echoed row's equipped flag onto its
+// matching item entry (itemKey↔item, verbatim from the payload's own row —
+// no derivation), so the burst pack's equipped face paints from the GET
+// itself on every fresh payload (renderCurrent's re-GET keeps the face
+// persistent; weldShopEcho's write covers only the between-GET echo).
+function shopPayloadWithEquipBridge(payload) {
+  if (!payload || !Array.isArray(payload.items) || !Array.isArray(payload.inventory)) {
+    return payload;
+  }
+  const equippedOf = new Map(
+    payload.inventory.map((row) => [row.itemKey, row.equipped]),
+  );
+  return {
+    ...payload,
+    items: payload.items.map((item) => equippedOf.has(item.item)
+      ? { ...item, equipped: equippedOf.get(item.item) }
+      : item),
+  };
 }
 
 // GET /api/quests — the day's three progress counts + the shared claim
@@ -496,7 +519,9 @@ function skuNameKey(itemKey) {
 // consume runtime, the wave-17 slate); the owned row's toggle is
 // kind-generic — the same equip/unequip buttons ride every owned row, the
 // backend's own kind guard answers the rest (the burst pack equips the
-// effects slot, a non-burst pack paints its 400 verbatim); the plus line
+// effects slot, a non-burst pack paints its 400 verbatim); an owned pack
+// keeps its BUY door on the row (a re-buy stacks — the backend's
+// ON-CONFLICT arm, "a re-buy IS the business"); the plus line
 // shows both prices only where the payload provides a plus price that
 // differs (never a fabricated number).
 function inventoryRow(item, errorLine) {
@@ -508,6 +533,10 @@ function inventoryRow(item, errorLine) {
     nodes.push(h("span", { class: "muted item-uses",
       text: t("gc.economy.items.uses", { count: item.qty }) }));
     nodes.push(useButton(item, errorLine));
+    // The BUY door stays on the owned pack row beside the use act: a re-buy
+    // is the pack's re-stack (the backend's ON-CONFLICT stack arm) — an
+    // empty pack paints its fix right on the row, never a dead 409.
+    nodes.push(shopBuyButton(item, errorLine));
   }
   if (item.owned) {
     if (item.equipped) {
