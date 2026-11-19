@@ -238,11 +238,12 @@ test("the backend stays byte-frozen against the wave (api/capsules.mjs route arm
 // pin's lesson, second instance (f7db5e1): the pin MUST diff the wave's own
 // two commits, never a HEAD-open leg, or the first post-wave audit fix
 // breaks it.
-// LANE-BASE = 5264b03 (main tip at lane open); LANE-TIP = the lane's final
-// commit — PLACEHOLDER until the lead commits (see handback trailer line).
+// LANE-BASE = 5264b03 (main tip at lane open); LANE-TIP = e872ec3, the
+// wave's own feat commit (the lead's retarget commit rides beside, not
+// inside, the range — the wave-9 lesson's committed-range fingerprint).
 test("diff scope: the lane touches NO backend file and no core wire", () => {
   const LANE_BASE = "5264b03";
-  const LANE_TIP = "LANE-W11-TIP"; // PLACEHOLDER — the lead retargets after commit
+  const LANE_TIP = "e872ec3";
   let touched;
   try {
     touched = execFileSync("git", [
