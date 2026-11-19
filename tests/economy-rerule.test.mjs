@@ -346,9 +346,10 @@ test("POST /api/coins/cosmetics buys banner in an atomic batch: the negative row
   assert.equal(spend.bound[1], -100);
   assert.equal(spend.bound[2], "cosmetic");
   assert.match(spend.sql, /WHERE \(SELECT COALESCE\(SUM\(le4\.delta\), 0\) FROM gc_coin_ledger le4 WHERE le4\.user_id = \?\) >= \? LIMIT 1$/);
-  // The ownership row guards on THIS batch's spend fingerprint (the term
-  // upsert's proven pattern) AND its own NOT EXISTS.
-  assert.match(ownership.sql, /WHERE EXISTS \(SELECT 1 FROM gc_coin_ledger cl WHERE cl\.user_id = \? AND cl\.source = \? AND cl\.delta = \? AND cl\.created_at = \?\) AND NOT EXISTS \(SELECT 1 FROM gc_cosmetic_ownership ow WHERE ow\.user_id = \? AND ow\.item = \?\)$/);
+  // The ownership row guards on THIS batch's spend fingerprint (the spend's
+  // own nonce — 0058, so a same-second refusal echoes nothing) AND its own
+  // NOT EXISTS.
+  assert.match(ownership.sql, /WHERE EXISTS \(SELECT 1 FROM gc_coin_ledger cl WHERE cl\.user_id = \? AND cl\.source = \? AND cl\.delta = \? AND cl\.created_at = \? AND cl\.spend_nonce = \?\) AND NOT EXISTS \(SELECT 1 FROM gc_cosmetic_ownership ow WHERE ow\.user_id = \? AND ow\.item = \?\)$/);
 });
 
 test("the pack is PLUS-ONLY at its flat 250 (no discount), riding TWO ownership rows", async () => {

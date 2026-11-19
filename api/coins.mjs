@@ -60,7 +60,7 @@
 // predicates (perks = strict active term; the coins payload's display
 // active = shipped grace-inclusive shape) are documented in api/plus.mjs.
 import { requireSignedInRead, requireUser } from "./core/auth.mjs";
-import { nowSeconds } from "./core/crypto.mjs";
+import { nowSeconds, randomToken } from "./core/crypto.mjs";
 import { HttpError, json, rateLimit, readJson } from "./core/http.mjs";
 import { dayFloor } from "./core/time.mjs";
 import {
@@ -104,6 +104,15 @@ import { plusPerkActive } from "./plus.mjs";
 import { isValidUsername } from "./usernames.mjs";
 
 // --- the guard SQL (the economy's teeth) ------------------------------------
+
+// The spend fingerprint's per-request nonce (GO-HAYWIRE cycle 2, fix 1, via
+// gc_coin_ledger.spend_nonce — migration 0058): every purchased spend mints
+// a fresh one and every fingerprint consumer matches THIS batch's spend row,
+// so a same-second refusal can never echo an earlier spend's row. 12 raw
+// bytes = 16 base64url chars — no meaningful collision chance, one indexed
+// TEXT column, and the gift trail's related_user_id users(id) FK is never
+// asked to carry it.
+const SPEND_NONCE_BYTES = 12;
 
 // Daily activity grant: the NOT EXISTS arm is the once-per-UTC-day claim, the
 // SUM arm is the ceiling. Deltas bound explicitly so a rebalance is a
@@ -162,8 +171,8 @@ const VOICE_GRANT_SQL =
 // row under the sufficient-coins arm — the check IS the statement, so two
 // racing purchases can never both clear a one-purchase balance.
 const PLUS_SPEND_SQL =
-  "INSERT INTO gc_coin_ledger (user_id, delta, source, related_user_id, created_at) " +
-  "SELECT ?, ?, ?, ?, ? " +
+  "INSERT INTO gc_coin_ledger (user_id, delta, source, related_user_id, created_at, spend_nonce) " +
+  "SELECT ?, ?, ?, ?, ?, ? " +
   "WHERE EXISTS (SELECT 1 FROM users rp WHERE rp.id = ?) " +
   "AND (SELECT COALESCE(SUM(le.delta), 0) FROM gc_coin_ledger le " +
     "WHERE le.user_id = ?) >= ? LIMIT 1";
@@ -216,18 +225,21 @@ const SERVER_MINT_SQL =
 
 // The term upsert, conditioned on the spend row THIS batch minted (the
 // fingerprint arm rides the INSERT's SELECT, so a skipped spend can never
-// extend a term and a granted spend always does). A same-second repeat
-// purchase could satisfy the fingerprint with the earlier spend's row; a
-// member cannot issue two purchases inside one second through the rate
-// limiter, and both buys would be the member's own — the corner stays closed
-// in practice and is pinned in the tests.
+// extend a term). The fingerprint matches on the spend's OWN nonce (0058) —
+// a same-second repeat purchase can never satisfy it with the earlier
+// spend's row, so a refused batch never extends a term for free.
 const PLUS_TERM_UPSERT_SQL =
   "INSERT INTO gc_plus_state (user_id, renews_until, grace_until, tenure_started_at, gifted_by, updated_at, tier) " +
-  "SELECT ?, MAX(?, ?) + ?, NULL, ?, ?, ? " +
+  // The MAX(...) + ? arm is ONE expression; the SELECT list carries exactly
+  // seven values for the seven columns — the tier's ? was MISSING until
+  // GO-HAYWIRE cycle-2 fix 1 (the fakeDb tests never prepared this
+  // statement against a real SQLite engine; node:sqlite refused the
+  // 6-for-7 count at prepare and the real-sqlite pins surfaced it).
+  "SELECT ?, MAX(?, ?) + ?, NULL, ?, ?, ?, ? " +
   "WHERE (" +
     "SELECT 1 FROM gc_coin_ledger le " +
     "WHERE le.user_id = ? AND le.source = ? AND le.delta = ? " +
-    "AND le.created_at = ? AND le.related_user_id IS ?" +
+    "AND le.created_at = ? AND le.related_user_id IS ? AND le.spend_nonce = ?" +
   ") " +
   "ON CONFLICT(user_id) DO UPDATE SET " +
     "renews_until = MAX(gc_plus_state.renews_until, ?) + ?, " +
@@ -254,8 +266,8 @@ const PLUS_GRACE_TOUCH_SQL =
 // re-spend is the 409, never a second row). The caller's tier's price rides
 // as a bind; the pack is two ownership INSERTs and one ledger row.
 const COSMETIC_LEDGER_SPEND_SQL =
-  "INSERT INTO gc_coin_ledger (user_id, delta, source, created_at) " +
-  "SELECT ?, ?, ?, ? " +
+  "INSERT INTO gc_coin_ledger (user_id, delta, source, created_at, spend_nonce) " +
+  "SELECT ?, ?, ?, ?, ? " +
   "WHERE (SELECT COALESCE(SUM(le4.delta), 0) FROM gc_coin_ledger le4 " +
     "WHERE le4.user_id = ?) >= ? LIMIT 1";
 
@@ -263,7 +275,8 @@ const COSMETIC_OWNERSHIP_INSERT_SQL =
   "INSERT INTO gc_cosmetic_ownership (user_id, item, purchased_at) " +
   "SELECT ?, ?, ? " +
   "WHERE EXISTS (SELECT 1 FROM gc_coin_ledger cl WHERE cl.user_id = ? " +
-    "AND cl.source = ? AND cl.delta = ? AND cl.created_at = ?) " +
+    "AND cl.source = ? AND cl.delta = ? AND cl.created_at = ? " +
+    "AND cl.spend_nonce = ?) " +
   "AND NOT EXISTS (" +
     "SELECT 1 FROM gc_cosmetic_ownership ow WHERE ow.user_id = ? AND ow.item = ?" +
   ")";
@@ -278,12 +291,13 @@ const OWNERSHIP_READ_SQL =
 // 409 can never drain the coin or persist a spend), and (for the per-server
 // channel-banner SKU) the membership arm riding INSIDE the INSERT like the
 // voice tick's. The second statement is the fingerprint consumer: the
-// inventory row only ever lands on the spend row THIS batch minted. The
+// inventory row only ever lands on the spend row THIS batch minted (the
+// THIS-request nonce, 0058 — a same-second refusal echoes nothing). The
 // consumable's bump stacks one pack onto the SAME (user_id, item_key) row —
 // the recurring sink is a bump, never a second row.
 const INVENTORY_SPEND_SQL =
-  "INSERT INTO gc_coin_ledger (user_id, delta, source, created_at) " +
-  "SELECT ?, ?, ?, ? " +
+  "INSERT INTO gc_coin_ledger (user_id, delta, source, created_at, spend_nonce) " +
+  "SELECT ?, ?, ?, ?, ? " +
   "WHERE (SELECT COALESCE(SUM(le4.delta), 0) FROM gc_coin_ledger le4 " +
     "WHERE le4.user_id = ?) >= ? " +
   "AND NOT EXISTS (" +
@@ -297,7 +311,8 @@ const INVENTORY_OWN_SQL =
   "INSERT INTO gc_cosmetic_inventory (user_id, item_key, kind, qty, equipped, server_id, created_at, updated_at) " +
   "SELECT ?, ?, 'own', 1, 0, ?, ?, ? " +
   "WHERE EXISTS (SELECT 1 FROM gc_coin_ledger cl WHERE cl.user_id = ? " +
-    "AND cl.source = ? AND cl.delta = ? AND cl.created_at = ?) " +
+    "AND cl.source = ? AND cl.delta = ? AND cl.created_at = ? " +
+    "AND cl.spend_nonce = ?) " +
   "AND NOT EXISTS (" +
     "SELECT 1 FROM gc_cosmetic_inventory iv WHERE iv.user_id = ? AND iv.item_key = ?" +
   ")";
@@ -306,7 +321,8 @@ const INVENTORY_BUMP_SQL =
   "INSERT INTO gc_cosmetic_inventory (user_id, item_key, kind, qty, equipped, server_id, created_at, updated_at) " +
   "SELECT ?, ?, 'consumable', ?, 0, NULL, ?, ? " +
   "WHERE EXISTS (SELECT 1 FROM gc_coin_ledger cl WHERE cl.user_id = ? " +
-    "AND cl.source = ? AND cl.delta = ? AND cl.created_at = ?) " +
+    "AND cl.source = ? AND cl.delta = ? AND cl.created_at = ? " +
+    "AND cl.spend_nonce = ?) " +
   "ON CONFLICT(user_id, item_key) DO UPDATE SET qty = qty + ?, updated_at = ?";
 
 // The inventory read (the shop payload's inventory arm) and the ownership
@@ -742,17 +758,21 @@ async function handleCosmeticBuyRoute(request, env) {
     : discountedPrice(item === "banner" ? GC_COSMETIC_BANNER_PRICE : GC_COSMETIC_FLAIR_PRICE, perks);
   const source = item === "pack" ? "cosmetic_pack" : "cosmetic";
   const items = item === "pack" ? ["banner", "flair"] : [item];
+  // THIS batch's own fingerprint nonce (0058): the ownership INSERTs match
+  // only the spend row THIS request minted — a same-second refusal echoes
+  // nothing.
+  const nonce = randomToken(SPEND_NONCE_BYTES);
 
   const results = await env.GOOBER_DB.batch([
     env.GOOBER_DB.prepare(COSMETIC_LEDGER_SPEND_SQL).bind(
-      userId, -price, source, now,
+      userId, -price, source, now, nonce,
       userId,
       price,
     ),
     ...items.map((owned) =>
       env.GOOBER_DB.prepare(COSMETIC_OWNERSHIP_INSERT_SQL).bind(
         userId, owned, now,
-        userId, source, -price, now,
+        userId, source, -price, now, nonce,
         userId, owned,
       )),
   ]);
@@ -792,20 +812,23 @@ async function purchaseInventoryCosmetic(env, userId, sku, perks, body) {
   const cost = discountedPrice(sku.price, perks);
   const source = "cosmetic";
   const consumable = sku.kind === "consumable";
+  // THIS batch's own fingerprint nonce (0058): the inventory INSERT matches
+  // only the spend row THIS request minted.
+  const nonce = randomToken(SPEND_NONCE_BYTES);
   const results = await env.GOOBER_DB.batch([
     env.GOOBER_DB.prepare(consumable ? COSMETIC_LEDGER_SPEND_SQL : INVENTORY_SPEND_SQL).bind(
-      userId, -cost, source, now,
+      userId, -cost, source, now, nonce,
       userId,
       cost,
       ...(!consumable ? [userId, sku.itemKey, serverId, serverId, userId] : [])),
     consumable
       ? env.GOOBER_DB.prepare(INVENTORY_BUMP_SQL).bind(
           userId, sku.itemKey, GC_COSMETIC_FX_BURST_USES, now, now,
-          userId, source, -cost, now,
+          userId, source, -cost, now, nonce,
           GC_COSMETIC_FX_BURST_USES, now)
       : env.GOOBER_DB.prepare(INVENTORY_OWN_SQL).bind(
           userId, sku.itemKey, serverId, now, now,
-          userId, source, -cost, now,
+          userId, source, -cost, now, nonce,
           userId, sku.itemKey),
   ]);
   if (Number(results[0]?.meta?.changes) !== 1) {
@@ -1059,9 +1082,12 @@ async function purchasePlusTerm(env, gifterId, recipientId, purchasedTier = "plu
     ? (purchasedTier === "mini" ? GC_MINI_RENEWAL_PRICE : GC_PLUS_RENEWAL_PRICE)
     : (purchasedTier === "mini" ? GC_MINI_PRICE : GC_PLUS_PRICE);
 
+  // THIS batch's own fingerprint nonce (0058): the term upsert matches only
+  // the spend row THIS request minted.
+  const nonce = randomToken(SPEND_NONCE_BYTES);
   const results = await env.GOOBER_DB.batch([
     env.GOOBER_DB.prepare(PLUS_SPEND_SQL).bind(
-      Number(gifterId), -price, source, relatedUserId, now,
+      Number(gifterId), -price, source, relatedUserId, now, nonce,
       targetId,
       Number(gifterId),
       price,
@@ -1070,7 +1096,7 @@ async function purchasePlusTerm(env, gifterId, recipientId, purchasedTier = "plu
       // INSERT branch: user, MAX(now, now), +term, tenure start, gifted by, updated, tier.
       targetId, now, now, term, now, gifterForTrail, now, purchasedTier,
       // Fingerprint arm: the spend row THIS batch minted.
-      Number(gifterId), source, -price, now, relatedUserId,
+      Number(gifterId), source, -price, now, relatedUserId, nonce,
       // UPDATE arm: MAX(standing, now) + term, gifter, tier, updated.
       now, term, gifterForTrail, purchasedTier, now,
     ),

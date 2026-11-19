@@ -1,0 +1,40 @@
+-- Copyright 2026 YourLocalGoober
+--
+-- This file is part of GooberCord.
+--
+-- GooberCord is free software: you can redistribute it and/or modify it
+-- under the terms of the GNU Affero General Public License as published by
+-- the Free Software Foundation, either version 3 of the License, or
+-- (at your option) any later version.
+--
+-- This program is distributed in the hope that it will be useful, but
+-- WITHOUT ANY WARRANTY; without even the implied warranty of
+-- MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+-- GNU Affero General Public License for more details.
+--
+-- You should have received a copy of the
+-- GNU Affero General Public License along with this program.  If not,
+-- see <https://www.gnu.org/licenses/>
+
+-- 0058 — the coin ledger's per-request spend nonce (GO-HAYWIRE cycle 2,
+-- fix 1). The spend fingerprint matchers (api/coins.mjs's ownership,
+-- inventory own/bump, and plus-term consumers) keyed on (user, source,
+-- delta, created_at) — two requests in the SAME wall-clock second collide,
+-- so a REFUSED batch's fingerprint consumer echoed the earlier spend row
+-- and minted for free (the ownership arm, the consumable bump, the term
+-- extension) while the batch's own spend arm was refused.
+--
+-- The fix: every purchased spend (cosmetic, cosmetic_pack, inventory,
+-- plus_renewal, plus_gift) carries a fresh per-request nonce and every
+-- fingerprint consumer matches THIS batch's nonce, so an earlier row can
+-- never satisfy a later request's fingerprint.
+--
+-- Shape: ONE additive statement in the 0003/0005/0017/0022/0057 form — a
+-- plain ADD COLUMN on a gc_ table. No rename, no rebuild, no FK change:
+-- the gift trail's related_user_id stays the users(id) FK exactly as
+-- migration 0011 pinned it (the D1 FK-runner law keeps rename-rebuild dead
+-- on populated parents; a nonce can NEVER ride an FK column). Nullable —
+-- every non-fingerprinted earn row (and every pre-0058 row) keeps NULL,
+-- and the fingerprint match's equality arm can never read a NULL-spend
+-- row as a match.
+ALTER TABLE gc_coin_ledger ADD COLUMN spend_nonce TEXT NULL;

@@ -214,7 +214,7 @@ const CHANNEL_SHAPE_TEST = (sql) =>
   sql.includes("SELECT kind, server_id FROM gc_channels");
 const MEMBER_GATE_TEST = (sql) =>
   sql.includes("FROM gc_server_members m JOIN users u") && sql.includes("timed_out_until");
-const REACTION_INSERT_TEST = (sql) => sql.startsWith("INSERT INTO gc_message_reactions");
+const REACTION_INSERT_TEST = (sql) => sql.startsWith("INSERT OR IGNORE INTO gc_message_reactions");
 const REACTION_DELETE_OWN_TEST = (sql) =>
   sql.startsWith("DELETE FROM gc_message_reactions") && !sql.includes("role = 'owner'");
 const REACTION_DELETE_MOD_TEST = (sql) =>
@@ -775,12 +775,16 @@ test("PUT /api/messages/:id/reactions inserts the toggle-on row after the gates"
   // The cap arms live in the INSERT, verbatim shapes: the caller's already-
   // held emoji replays, and the distinct-emoji ceiling < 20 with the parity
   // law's exact number (unique emoji per message 20, error 30010).
-  assert.match(insert.sql, /WHERE EXISTS \(SELECT 1 FROM gc_message_reactions/);
-  assert.match(insert.sql, /OR \(SELECT COUNT\(DISTINCT emoji\) FROM gc_message_reactions WHERE message_id = \?\) < /);
-  assert.ok(
-    insert.sql.includes("OR (SELECT COUNT(DISTINCT emoji) FROM gc_message_reactions WHERE message_id = ?) < 20"),
+  // GO-HAYWIRE cycle-2 fix 2: the write IS an INSERT OR IGNORE (changes = 1
+  // then truly means a fresh add — the held replay and the cap refusal
+  // classify by the post-run re-read; the write never throws UNIQUE on an
+  // already-held row again).
+  assert.ok(insert.sql.startsWith("INSERT OR IGNORE INTO gc_message_reactions"));
+  assert.match(
+    insert.sql,
+    /WHERE \(SELECT COUNT\(DISTINCT emoji\) FROM gc_message_reactions WHERE message_id = \?\) < 20/,
   );
-  assert.deepEqual(insert.bound.slice(4, 8), [MESSAGE_ID, USER_ID, "🔥", MESSAGE_ID]);
+  assert.deepEqual(insert.bound, [MESSAGE_ID, USER_ID, "🔥", insert.bound[3], MESSAGE_ID]);
 });
 
 // parity-limits.md: unique emoji per message (reactions) 20, error 30010

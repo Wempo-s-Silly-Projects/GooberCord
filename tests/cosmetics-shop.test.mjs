@@ -169,55 +169,56 @@ function shopDb(options = {}) {
     },
     {
       // The INVENTORY spend is the GUARDED CLAIM: [user, -cost, source, now,
-      // user, cost, user, itemKey, serverId, serverId, user] — its arms are
-      // the balance, the NOT-EXISTS-ownership, and the server-membership arm
-      // (NULLable serverId), all INSIDE the INSERT. The fake encodes them so
-      // a pinned spend that loses an arm fails the tests.
+      // nonce, user, cost, user, itemKey, serverId, serverId, user] — its
+      // arms are the balance, the NOT-EXISTS-ownership, and the server-
+      // membership arm (NULLable serverId), all INSIDE the INSERT. The fake
+      // encodes them so a pinned spend that loses an arm fails the tests.
       test: (sql) =>
-        sql.startsWith("INSERT INTO gc_coin_ledger (user_id, delta, source, created_at)") &&
+        sql.startsWith("INSERT INTO gc_coin_ledger (user_id, delta, source, created_at, spend_nonce)") &&
         sql.includes("gc_cosmetic_inventory"),
       run: (bound) => {
-        if (balanceOf(bound[4]) < bound[5]) return { meta: { changes: 0 } };
-        const itemKey = bound[7];
-        const serverId = bound[8] ?? null;
-        if (invRow(bound[6], itemKey) !== null) return { meta: { changes: 0 } };
-        if (serverId !== null && !seats.has(serverId + ":" + bound[10])) {
+        if (balanceOf(bound[5]) < bound[6]) return { meta: { changes: 0 } };
+        const itemKey = bound[8];
+        const serverId = bound[9] ?? null;
+        if (invRow(bound[7], itemKey) !== null) return { meta: { changes: 0 } };
+        if (serverId !== null && !seats.has(serverId + ":" + bound[11])) {
           return { meta: { changes: 0 } };
         }
         ledger.push({
           user_id: bound[0], delta: bound[1], source: bound[2],
-          related_user_id: null, created_at: bound[3],
+          related_user_id: null, spend_nonce: bound[4], created_at: bound[3],
         });
         return { meta: { changes: 1, last_row_id: 9000 + ledger.length } };
       },
     },
     {
-      // the v1 cosmetic spend: [user, -price, source, now, user, price] — the
-      // sufficient-coins arm rides INSIDE the INSERT and the fake encodes it.
+      // the v1 cosmetic spend: [user, -price, source, now, nonce, user, price]
+      // — the sufficient-coins arm rides INSIDE the INSERT, the fake encodes
+      // it, and the nonce (0058) rides into the row.
       test: (sql) =>
-        sql.startsWith("INSERT INTO gc_coin_ledger (user_id, delta, source, created_at)") &&
+        sql.startsWith("INSERT INTO gc_coin_ledger (user_id, delta, source, created_at, spend_nonce)") &&
         sql.includes(">= ? LIMIT 1"),
       run: (bound) => {
-        if (balanceOf(bound[4]) < bound[5]) return { meta: { changes: 0 } };
+        if (balanceOf(bound[5]) < bound[6]) return { meta: { changes: 0 } };
         ledger.push({
           user_id: bound[0], delta: bound[1], source: bound[2],
-          related_user_id: null, created_at: bound[3],
+          related_user_id: null, spend_nonce: bound[4], created_at: bound[3],
         });
         return { meta: { changes: 1, last_row_id: 9000 + ledger.length } };
       },
     },
     {
       // the 'own' purchase insert: [user, item, serverId, created, updated,
-      //  fpUser, fpSource, fpDelta, fpCreated, neUser, neItem,
-      //  serverId, serverId, memberUser]
+      //  fpUser, fpSource, fpDelta, fpCreated, fpNonce, neUser, neItem]
       test: (sql) => sql.startsWith("INSERT INTO gc_cosmetic_inventory") && sql.includes("NOT EXISTS"),
       run: (bound) => {
         const [userId, itemKey, serverId, createdAt, updatedAt,
-          fpUser, fpSource, fpDelta, fpCreated, neUser, itemKeyAgain] = bound;
+          fpUser, fpSource, fpDelta, fpCreated, fpNonce, neUser, itemKeyAgain] = bound;
         void updatedAt;
         const fingerprint = ledger.some((row) =>
           row.user_id === fpUser && row.source === fpSource &&
-          row.delta === fpDelta && row.created_at === fpCreated);
+          row.delta === fpDelta && row.created_at === fpCreated &&
+          row.spend_nonce === fpNonce);
         if (!fingerprint || invRow(neUser, itemKeyAgain) !== null) {
           return { meta: { changes: 0 } };
         }
@@ -231,15 +232,16 @@ function shopDb(options = {}) {
     },
     {
       // the consumable bump: [user, item, uses, created, updated,
-      //  fpUser, fpSource, fpDelta, fpCreated, bumpUses, updatedAgain]
+      //  fpUser, fpSource, fpDelta, fpCreated, fpNonce, bumpUses, updatedAgain]
       test: (sql) => sql.startsWith("INSERT INTO gc_cosmetic_inventory") && sql.includes("ON CONFLICT"),
       run: (bound) => {
         const [userId, itemKey, uses, createdAt, updatedAt,
-          fpUser, fpSource, fpDelta, fpCreated, bumpUses, updatedAtAgain] = bound;
+          fpUser, fpSource, fpDelta, fpCreated, fpNonce, bumpUses, updatedAtAgain] = bound;
         void updatedAt;
         const fingerprint = ledger.some((row) =>
           row.user_id === fpUser && row.source === fpSource &&
-          row.delta === fpDelta && row.created_at === fpCreated);
+          row.delta === fpDelta && row.created_at === fpCreated &&
+          row.spend_nonce === fpNonce);
         if (!fingerprint) return { meta: { changes: 0 } };
         const stored = invRow(fpUser, itemKey);
         if (stored === null) {
