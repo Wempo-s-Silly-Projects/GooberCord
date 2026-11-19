@@ -67,6 +67,20 @@ export async function buyCosmetic(item) {
   return result;
 }
 
+// POST /api/coins/cosmetics/equip — one equipped row per slot (the route
+// clears the slot, sets the picked row, and echoes the standing inventory).
+// The echo lands back in the store's shop shape; the rows re-read equipped
+// from the payload's inventory on the re-render (the toggle rides the
+// payload's inventory read, never a client-side guess).
+export async function equipCosmetic(itemKey) {
+  const result = await api("/api/coins/cosmetics/equip", {
+    method: "POST", body: { itemKey },
+  });
+  const shop = store.get("shop");
+  if (result?.inventory && shop) store.set({ shop: { ...shop, inventory: result.inventory } });
+  return result;
+}
+
 // POST /api/me/cosmetics — GC's own apply surface (Accounts owns profile).
 // `patch` carries { banner?, flair? }; absent keeps, null clears. The echo
 // lands in the store's user shape (banner/flair are additive keys there).
@@ -289,30 +303,110 @@ function buyDialog(offer, tier) {
 }
 
 // The cosmetic sink: the item rows carry ownership pre-computed route-side
-// (`owned`); a buy is a commit; the apply panel rides ownership.
+// (`owned`); a buy is a commit; the apply panel rides ownership. The 0056
+// inventory SKUs ride the same POST /api/coins/cosmetics path but their rows
+// speak KIND (kind/qty/equipped arrive route-side, Phase 1's own shape): a
+// consumable answers its remaining uses off the payload's qty (the packs
+// re-stack on re-buy; the consume runtime is Phase 3, parked), an own item
+// toggles its equipped state, and the plus discount shows both prices where
+// the payload provides them.
 function itemsPanel(payload) {
   const items = payload.items || [];
   if (items.length === 0) return h("div");
-  const rows = items.map((item) => h("div", { class: "shop-item" },
+  const errorLine = inlineError();
+  const rows = items.map((item) => item.kind ? inventoryRow(item, errorLine)
+    : legacyItemRow(item, errorLine));
+  return h("div", { class: "panel" }, h("h3", { text: t("gc.economy.items.heading") }),
+    h("div", { class: "shop-items" }, ...rows), errorLine);
+}
+
+// The legacy row (banner/flair/pack): the shape verbatim.
+function legacyItemRow(item, errorLine) {
+  return h("div", { class: "shop-item" },
     h("span", { class: "item-name", text: item.item }),
     h("span", { class: "muted", text: item.owned ? t("gc.economy.items.owned")
       : t("gc.economy.items.cost", { count: item.cost }) }),
-    !item.owned ? h("button", {
-      class: "button button-primary shop-buy row-quiet-inline", type: "button",
-      text: t("gc.economy.buy.button"),
-      onClick: async () => {
-        try {
-          await buyCosmetic(item.item);
-          errorLine.textContent = "";
-          router.renderCurrent();
-        } catch (error) {
-          errorLine.textContent = error.message; // 409/403/400 verbatim
-        }
-      },
-    }) : h("span", { class: "muted", text: t("gc.economy.items.owned") })));
-  const errorLine = inlineError();
-  return h("div", { class: "panel" }, h("h3", { text: t("gc.economy.items.heading") }),
-    h("div", { class: "shop-items" }, ...rows), errorLine);
+    !item.owned ? shopBuyButton(item, errorLine)
+      : h("span", { class: "muted", text: t("gc.economy.items.owned") }));
+}
+
+// The shared buy: EVERY cosmetics buy rides the ONE route (POST
+// /api/coins/cosmetics) — the v1 rows add no second wire.
+function shopBuyButton(item, errorLine) {
+  return h("button", {
+    class: "button button-primary shop-buy row-quiet-inline", type: "button",
+    text: t("gc.economy.buy.button"),
+    onClick: async () => {
+      try {
+        await buyCosmetic(item.item);
+        errorLine.textContent = "";
+        router.renderCurrent();
+      } catch (error) {
+        errorLine.textContent = error.message; // 409/403/400 verbatim
+      }
+    },
+  });
+}
+
+// The SKU name key: gc.economy.items.<camelCase itemKey> — the transform is
+// generic (the SKU list stays constants.mjs's single source; the client
+// re-declares no map).
+function skuNameKey(itemKey) {
+  return "gc.economy.items." + itemKey.replace(/_([a-z0-9])/g, (_, c) => c.toUpperCase());
+}
+
+// The v1 inventory row: the kind speaks. For an own item the equip state
+// REPLACES the price display once bought (the purchase question is answered
+// at buy time); a consumable keeps its price ride-along (re-buys stack) and
+// answers its remaining uses; the plus line shows both prices only where the
+// payload provides a plus price that differs (never a fabricated number).
+function inventoryRow(item, errorLine) {
+  const nodes = [
+    h("span", { class: "item-name", text: t(skuNameKey(item.item)) }),
+    ...rowPrice(item),
+  ];
+  if (item.kind === "consumable" && item.owned) {
+    nodes.push(h("span", { class: "muted item-uses",
+      text: t("gc.economy.items.uses", { count: item.qty }) }));
+  }
+  if (item.kind === "own" && item.owned) {
+    nodes.push(item.equipped
+      ? h("span", { class: "muted item-equipped", text: t("gc.economy.items.equipped") })
+      : equipButton(item, errorLine));
+  } else {
+    nodes.push(shopBuyButton(item, errorLine));
+  }
+  return h("div", { class: "shop-item" }, ...nodes);
+}
+
+// The row's price display: the plus line is the payload's own plusPrice —
+// "where the payload provides them", never a client-derived number.
+function rowPrice(item) {
+  if (item.kind === "own" && item.owned) return [];
+  const nodes = [h("span", { class: "muted", text: t("gc.economy.items.cost", { count: item.cost }) })];
+  if (typeof item.plusPrice === "number" && item.plusPrice !== item.price) {
+    nodes.push(h("span", { class: "muted item-plus-price",
+      text: t("gc.economy.items.costPlus", { count: item.plusPrice }) }));
+  }
+  return nodes;
+}
+
+// The equip toggle: one equipped row per slot; the refusal (a lost row's
+// 403, the kind guard's 400) renders verbatim inline.
+function equipButton(item, errorLine) {
+  return h("button", {
+    class: "button button-quiet shop-equip row-quiet-inline", type: "button",
+    text: t("gc.economy.items.equip"),
+    onClick: async () => {
+      try {
+        await equipCosmetic(item.item);
+        errorLine.textContent = "";
+        router.renderCurrent();
+      } catch (error) {
+        errorLine.textContent = error.message; // 403 lost row / 400 kind verbatim
+      }
+    },
+  });
 }
 
 // GC OWNS the apply surface (banner/flair) — the shop's post-purchase panel.
