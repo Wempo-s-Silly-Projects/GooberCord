@@ -48,6 +48,7 @@ import {
   GC_STICKER_NAME_MAX,
   GC_STICKER_NAME_MIN,
   GC_STICKER_NAME_PATTERN,
+  GC_EXPRESSION_ID_CEILING,
 } from "../constants.mjs";
 import { SERVER_PERMISSIONS, holdsRolesBitsSql, holdsRolesBitsParams, parseMergedMask, roleMaskColumnSql } from "./permissions.mjs";
 import { plusMemberActive } from "./plus.mjs";
@@ -243,7 +244,7 @@ function validExpressionName(value, kind) {
 
 function validExpressionId(value) {
   const id = Number(value);
-  if (!Number.isInteger(id) || id < 1 || id >= 1_000_000_000_000) {
+  if (!Number.isInteger(id) || id < 1 || id >= GC_EXPRESSION_ID_CEILING) {
     throw new HttpError(400, "That id is invalid.");
   }
   return id;

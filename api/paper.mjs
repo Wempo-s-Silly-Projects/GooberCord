@@ -195,54 +195,80 @@ async function handlePaperReadRoute(request, env, serverId, previous) {
   }
 
   const now = nowSeconds();
+  const window = resolvePaperWindow(previous, now);
+  const channelRows = await readChannelActivity(env, serverId, window.startSeconds, window.endSeconds);
+  const reactionRows = await readReactionActivity(env, serverId, window.startSeconds, window.endSeconds);
+  const anniversaries = await readTodayAnniversaries(env, serverId, now);
+  return paperReadPayload(window, channelRows, reactionRows, anniversaries);
+}
+
+// The GET's payload: Painted strings ride keys only — the title is the
+// paper.* key, never stored prose. The window label is the machine-painted
+// UTC pair (the label states UTC by construction, no per-server tz — the
+// anchor is parked).
+function paperReadPayload(window, channelRows, reactionRows, anniversaries) {
+  const iso = (seconds) => new Date(seconds * 1000).toISOString();
+  return json({
+    titleKey: "paper.title",
+    windowLabelUtc: iso(window.startSeconds) + "/" + iso(window.endSeconds),
+    window: { startSeconds: window.startSeconds, endSeconds: window.endSeconds },
+    activityRows: sumActivityRows(channelRows, reactionRows, anniversaries.length),
+    sections: {
+      channels: channelRows.map((row) => ({
+        channelId: Number(row.channel_id),
+        count: Number(row.row_count),
+      })),
+      reactions: reactionRows.map((row) => ({
+        emoji: String(row.emoji || ""),
+        count: Number(row.row_count),
+      })),
+      anniversaries,
+    },
+  });
+}
+
+// The read's day window: today's key (the wall clock's own floor), rolled
+// back one day per GC_PAPER_YESTERDAY_KEYS when the caller wants /previous.
+function resolvePaperWindow(previous, now) {
   const todayKey = Math.floor(now / GC_PAPER_DAY_SECONDS) * GC_PAPER_DAY_SECONDS;
   const startSeconds = previous
     ? todayKey - GC_PAPER_DAY_SECONDS * GC_PAPER_YESTERDAY_KEYS
     : todayKey;
-  const endSeconds = startSeconds + GC_PAPER_DAY_SECONDS;
+  return { startSeconds, endSeconds: startSeconds + GC_PAPER_DAY_SECONDS };
+}
 
-  const channelRows = (await env.GOOBER_DB.prepare(CHANNEL_ACTIVITY_SQL)
+// The channels section: the window's per-channel message counts, in the SQL's
+// own order (the row's channel_id) — the payload's Number() wraps are the
+// only shaping.
+async function readChannelActivity(env, serverId, startSeconds, endSeconds) {
+  return (await env.GOOBER_DB.prepare(CHANNEL_ACTIVITY_SQL)
     .bind(serverId, startSeconds, endSeconds).all()).results || [];
-  const channels = channelRows.map((row) => ({
-    channelId: Number(row.channel_id),
-    count: Number(row.row_count),
-  }));
+}
 
-  const reactionRows = (await env.GOOBER_DB.prepare(REACTIONS_ACTIVITY_SQL)
+// The reactions section: the window's per-emoji counts, same seat and order.
+async function readReactionActivity(env, serverId, startSeconds, endSeconds) {
+  return (await env.GOOBER_DB.prepare(REACTIONS_ACTIVITY_SQL)
     .bind(serverId, startSeconds, endSeconds).all()).results || [];
-  const reactions = reactionRows.map((row) => ({
-    emoji: String(row.emoji || ""),
-    count: Number(row.row_count),
-  }));
+}
 
-  // The anniversaries section: today's UTC celebrants — the join only fires
-  // here, after the config row has answered enabled (the same dispatch order
-  // every other section rides).
+// The anniversaries section: today's UTC celebrants — the join only fires
+// here, after the config row has answered enabled (the same dispatch order
+// every other section rides).
+async function readTodayAnniversaries(env, serverId, now) {
   const today = new Date(now * 1000);
   const anniversaryRows = (await env.GOOBER_DB.prepare(ANNIVERSARY_TODAY_SQL)
     .bind(today.getUTCMonth(), today.getUTCDate(), serverId).all()).results || [];
-  const anniversaries = anniversaryRows.map((row) => ({
-      userId: Number(row.id),
-      handle: String(row.username || ""),
-    }));
+  return anniversaryRows.map((row) => ({
+    userId: Number(row.id),
+    handle: String(row.username || ""),
+  }));
+}
 
-  // activityRows: the window's total across the sections' own rows.
-  const activityRows =
-    channelRows.reduce((total, row) => total + (Number(row.row_count) || 0), 0) +
+// activityRows: the window's total across the sections' own rows.
+function sumActivityRows(channelRows, reactionRows, anniversaryCount) {
+  return channelRows.reduce((total, row) => total + (Number(row.row_count) || 0), 0) +
     reactionRows.reduce((total, row) => total + (Number(row.row_count) || 0), 0) +
-    anniversaries.length;
-
-  // Painted strings ride keys only: the title is the paper.* key, never
-  // stored prose. The window label is the machine-painted UTC pair (the label
-  // states UTC by construction, no per-server tz — the anchor is parked).
-  const iso = (seconds) => new Date(seconds * 1000).toISOString();
-  return json({
-    titleKey: "paper.title",
-    windowLabelUtc: iso(startSeconds) + "/" + iso(endSeconds),
-    window: { startSeconds, endSeconds },
-    activityRows,
-    sections: { channels, reactions, anniversaries },
-  });
+    anniversaryCount;
 }
 
 // --- the anniversary routes -------------------------------------------------------

@@ -57,6 +57,7 @@
 import { requireSignedInRead, requireUser } from "./core/auth.mjs";
 import { nowSeconds } from "./core/crypto.mjs";
 import { HttpError, json, rateLimit, readJson } from "./core/http.mjs";
+import { dayFloor } from "./core/time.mjs";
 import {
   GC_COIN_DAILY_CEILING,
   GC_COIN_DAILY_GRANT,
@@ -90,12 +91,6 @@ import {
 } from "../constants.mjs";
 import { plusPerkActive } from "./plus.mjs";
 import { isValidUsername } from "./usernames.mjs";
-
-// UTC day floor. Every cap — the daily grant, the per-source caps, and the
-// ceiling — rides this one boundary, so "today" is one thing everywhere.
-function dayFloor(now) {
-  return now - (now % 86400);
-}
 
 // --- the guard SQL (the economy's teeth) ------------------------------------
 

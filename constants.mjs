@@ -482,3 +482,8 @@ export const GC_WELCOME_CARD_BLURB_MAX = 300;
 // functions); the callers splice the ids onto them.
 export const GC_ATTACHMENT_OBJECT_PREFIX = "gc-attachments/";
 export const GC_AVATAR_OBJECT_PREFIX = "avatars/";
+
+// The expression-row id ceiling shared by every "valid id" intake guard
+// (emoji, soundboard, soundpacks): snowflake-shaped row ids stop below this
+// house bound, so one number seats all three.
+export const GC_EXPRESSION_ID_CEILING = 1_000_000_000_000;
