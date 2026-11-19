@@ -40,7 +40,7 @@ import { DatabaseSync } from "node:sqlite";
 import { handleReactionTagRoutes } from "../api/reaction-tags.mjs";
 import { sha256Hex, nowSeconds } from "../api/core/crypto.mjs";
 import { HttpError, json } from "../api/core/http.mjs";
-import { RATE_LIMIT_BINDINGS } from "../constants.mjs";
+import { GC_REACTION_TAG_EMOJI_MAX, RATE_LIMIT_BINDINGS } from "../constants.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const SERVER_ID = 1;
@@ -312,6 +312,35 @@ test("the tag text law: an overlong free-text tag answers 400 before any stateme
   );
   assert.equal(keyed.status, 200);
   assert.equal(db.prepare("SELECT tag_text FROM gc_server_reaction_tags").get().tag_text, "gc.tags.campfire");
+});
+
+// THE cycle-5 emoji hygiene: an emoji of unbounded length rides straight into
+// the UNIQUE (server_id, emoji) row today. GC_REACTION_TAG_EMOJI_MAX bounds
+// it — the module's shared 400 shape, before any statement, on both the pin
+// and the unmap doors.
+test("the emoji law: an over-long emoji answers 400 before any statement on the PUT and the unmap", async () => {
+  const db = await seededDb();
+  const overlong = "🔥".repeat(GC_REACTION_TAG_EMOJI_MAX + 1);
+  const refused = await dispatch(
+    authed("PUT", "/api/servers/" + SERVER_ID + "/reaction-tags", MOD_ID, { emoji: overlong, tag: "campfire" }),
+    envFor(db),
+  );
+  assert.equal(refused.status, 400);
+  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM gc_server_reaction_tags").get().n, 0,
+    "the over-long emoji never reaches the statement");
+
+  const atTheCap = "🔥".repeat(GC_REACTION_TAG_EMOJI_MAX);
+  const admitted = await dispatch(
+    authed("PUT", "/api/servers/" + SERVER_ID + "/reaction-tags", MOD_ID, { emoji: atTheCap, tag: "campfire" }),
+    envFor(db),
+  );
+  assert.equal(admitted.status, 200, "the cap itself is admitted (code points, not bytes)");
+
+  const unmapRefused = await dispatch(
+    authed("DELETE", "/api/servers/" + SERVER_ID + "/reaction-tags", MOD_ID, { emoji: overlong }),
+    envFor(db),
+  );
+  assert.equal(unmapRefused.status, 400, "the unmap door carries the same bounded shape");
 });
 
 // --- the members' reads and opts -------------------------------------------------

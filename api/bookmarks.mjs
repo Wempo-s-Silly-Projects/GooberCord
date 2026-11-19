@@ -35,6 +35,15 @@ import { requireUser } from "./core/auth.mjs";
 import { nowSeconds } from "./core/crypto.mjs";
 import { HttpError, json, rateLimit } from "./core/http.mjs";
 import { GC_BOOKMARKS_LIST_MAX } from "../constants.mjs";
+// The cycle-5 VIEW deny arm: the same layer walk the search route's per-hit
+// gate rides — imported, never re-declared.
+import { viewerCanViewChannel } from "./messages.mjs";
+
+// The save's VIEW-gate read: the message's channel (server channels alone
+// carry the layer walk; a missing row stays the statement's own 404).
+const BOOKMARK_TARGET_SQL =
+  "SELECT c.id AS id, c.server_id AS server_id FROM gc_messages m " +
+    "JOIN gc_channels c ON c.id = m.channel_id WHERE m.id = ? LIMIT 1";
 
 // The statement-gated save: ONE statement answers reachability +
 // idempotence. changes-0 = an unreachable message OR an already-saved own
@@ -73,10 +82,21 @@ const BOOKMARK_DELETE_SQL = "DELETE FROM gc_bookmarks WHERE id = ? AND owner_use
 // or conversation) rides INSIDE the statement gate; a changes-0 is either
 // an unreachable message (the shared 404) or an already-saved own row
 // (idempotent 200) — the owner-scoped duplicate read tells them apart.
+// The cycle-5 deny arm rides BEFORE the statement: a channel the viewer's
+// history read 404s (a deny-touched VIEW miss) answers the same shared 404
+// instead of planting a pointer no inbox read can ever open — the
+// classification adds no oracle the 404 shape didn't already answer.
 async function handleBookmarkSaveRoute(request, env, messageId) {
   const session = await requireUser(request, env);
   const userId = Number(session.user.id);
   await rateLimit(request, env, "write", "bookmarks:save:" + userId);
+
+  const target = await env.GOOBER_DB.prepare(BOOKMARK_TARGET_SQL)
+    .bind(messageId).first();
+  if (target && target.server_id !== null && target.server_id !== undefined &&
+      !(await viewerCanViewChannel(env, target, userId))) {
+    throw new HttpError(404, "Message not found.");
+  }
 
   const savedAt = nowSeconds();
   const result = await env.GOOBER_DB.prepare(BOOKMARK_SAVE_SQL).bind(

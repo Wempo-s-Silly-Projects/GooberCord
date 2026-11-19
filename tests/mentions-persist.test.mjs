@@ -405,6 +405,55 @@ test("the inbox limit: the page cap answers 400 past GC_MENTIONS_PAGE_MAX, honor
     "a malformed limit never spends the read");
 });
 
+// THE cycle-5 mention fix: the inbox read rides the membership guard only —
+// a VIEW-deny in the origin channel's layer chain must drop the row the same
+// way the same user's history read 404s there (the search route's per-hit
+// VIEW gate is the shape). Never a 500: the payload keeps its shape, the
+// denied row's body never rides it, and the other rows keep their payload.
+const LAYER_MEMBERSHIP_TEST = (sql) =>
+  sql.includes("SELECT role FROM gc_server_members WHERE server_id = ?");
+const LAYER_ROLE_ROWS_TEST = (sql) => sql.includes("FROM gc_member_roles gmr JOIN gc_roles r");
+const LAYER_CHAIN_TEST = (sql) => sql.includes("FROM gc_channel_overwrites o");
+
+test("GET /api/mentions: a VIEW-denied mention row drops post-read, the payload keeps every other row", async () => {
+  const denied = {
+    message_id: 40, mentioned_at: now, channel_id: 3, server_id: 1, channel_name: "secret",
+    channel_kind: "text", author_id: PEER_ID, author_username: "wem", body: "DENIED BODY", created_at: now,
+  };
+  const allowed = {
+    message_id: 41, mentioned_at: now, channel_id: 4, server_id: 1, channel_name: "general",
+    channel_kind: "text", author_id: PEER_ID, author_username: "wem", body: "hello", created_at: now,
+  };
+  const convo = {
+    message_id: 42, mentioned_at: now, channel_id: 9, server_id: null, channel_name: "dm",
+    channel_kind: "dm", author_id: PEER_ID, author_username: "wem", body: "psst", created_at: now,
+  };
+  const { response } = await dispatchMention("GET", "/api/mentions", [
+    { test: MENTION_LIST_TEST, all: async () => ({ results: [denied, allowed, convo] }) },
+    // The layer walk the imported viewerCanViewChannel rides: membership,
+    // the viewer's role rows, then the channel's chain (the deny binds and
+    // branches on the channel arm — channel 3 denies VIEW, channel 4's chain
+    // is empty and rides the graceful default).
+    { test: LAYER_MEMBERSHIP_TEST, first: async () => ({ role: "member" }) },
+    { test: LAYER_ROLE_ROWS_TEST, all: async () => ({ results: [{ id: 5, permissions: 0 }] }) },
+    { test: LAYER_CHAIN_TEST, all: async ([cid]) =>
+      Number(cid) === 4
+        ? { results: [] }
+        : { results: [{ channel_id: 3, role_id: 5, category_id: null, allow_mask: 0, deny_mask: 32 }] } },
+  ]);
+  assert.equal(response.status, 200, "the deny drops the row, never the page");
+  const text = await response.text();
+  assert.ok(!text.includes("DENIED BODY"), "the denied row's body never rides the payload");
+  const payload = JSON.parse(text);
+  assert.deepEqual(payload.mentions.map((row) => row.channelId), [4, 9],
+    "the denied channel's row is excluded, the rest keep their payload");
+  // The server_id join column feeds the gate; it never leaks into the shape.
+  assert.deepEqual(Object.keys(payload.mentions[0]), [
+    "messageId", "channelId", "channelName", "channelKind",
+    "authorId", "authorUsername", "body", "createdAt", "mentionedAt",
+  ]);
+});
+
 test("DELETE /api/mentions/:id: the caller's own row, never someone else's, idempotent", async () => {
   const { db, response } = await dispatchMention("DELETE", "/api/mentions/40", []);
   assert.equal(response.status, 200);
