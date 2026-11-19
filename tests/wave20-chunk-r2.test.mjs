@@ -520,7 +520,8 @@ test("the commit re-verifies the tier: a Mini-term (or lapsed) uploader answers 
       }),
       envWithLimiters({ GOOBER_DB: db, GC_MEDIA: r2 }),
     );
-    assert.equal(response.status, 403, "tier " + String(tier));    assert.ok((await response.text()).includes(UPLOAD_TIER_ERROR), "verbatim tier copy");
+    assert.equal(response.status, 403, "tier " + String(tier));
+    assert.ok((await response.text()).includes(UPLOAD_TIER_ERROR), "verbatim tier copy");
     assert.equal(r2.calls.length, 0, "no bucket traffic behind the refusal");
     assert.equal(db.calls.some((call) => call.call === "batch"), false, "nothing born");
     assert.deepEqual(db.calls.filter((call) => STAGING_VERIFY_TEST(call.sql)), [],

@@ -38,7 +38,7 @@ export const UI_ATTACHMENT_MINI_MAX = 52428800; // GC_MINI_ATTACHMENT_BYTES
 export const UI_ATTACHMENT_PLUS_MAX = 1073741824; // GC_PLUS_ATTACHMENT_BYTES
 export const UI_UPLOAD_LANE_MAX_BYTES = UI_ATTACHMENT_PLUS_MAX; // the lane's ceiling rides the tier (wave-20)
 
-// The uploadId shape the commit + abandon routes resolve (api/uploads.mjs:211
+// The uploadId shape the commit + abandon routes resolve (api/uploads.mjs:271
 // UPLOAD_ID_RE) — a malformed token never wires either route.
 const UPLOAD_ID_OK_RE = /^[A-Za-z0-9_-]{12}$/;
 
