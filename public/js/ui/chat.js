@@ -1451,12 +1451,18 @@ export function renderServerSearch(route, mount) {
   const errorLine = h("p", { class: "form-error" });
   const form = h("form", { class: "search-form" }, well,
     h("button", { class: "button button-primary", type: "submit", text: t("gc.controls.search") }));
+  let searchSeq = 0; // the latest-wins guard: a superseded search never repaints
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
     const term = well.value.trim();
+    const seq = ++searchSeq;
     errorLine.textContent = "";
+    // The pending state (the wave-25 desweep row R8): the results seat
+    // paints the shared fetching line while searchServer resolves.
+    results.replaceChildren(h("p", { class: "empty-state", text: t("gc.controls.fetching") }));
     try {
       const payload = await searchServer(serverId, term);
+      if (seq !== searchSeq) return;
       results.replaceChildren();
       for (const hit of payload.results || []) {
         results.append(h("a", { class: "search-hit", href: `/s/${serverId}/${hit.channelId}` },
@@ -1467,6 +1473,8 @@ export function renderServerSearch(route, mount) {
         results.append(h("p", { class: "empty-state", text: t("gc.chat.search.none") }));
       }
     } catch (error) {
+      if (seq !== searchSeq) return;
+      results.replaceChildren(); // the pending line dies with the refusal too
       errorLine.textContent = error.message; // "That search term is invalid." / 503 verbatim
     }
   });

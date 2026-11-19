@@ -397,3 +397,37 @@ test("the phone drawer is a shell-level pane toggle (shell.js contract)", () => 
     assert.ok("gc.shell.nav.menu" in bundle, `gc.shell.nav.menu rides ${lang}.json`);
   }
 });
+
+// The wave-25 desweep rows (T-R25-DESWEEP): a cross-tab theme write re-seats
+// this tab in place (the guide's persistence law), and the verified-dead
+// locale keys stay pruned. NOT in the set: the labelKey/nameHintKey-driven
+// gc.expressions.* seats (expressions.js:79-85 t(kind.nameHintKey)), the
+// dynamic item-key construction (economy.js:518 — the fx/frame/banner keys),
+// the quest kinds' fallback seats (the deslop-HIGH pin's QUEST_KIND_KEYS
+// resolution), and the deliberately seated gc.settings.boostTier.perks.upload
+// (settings.js:224-228, the c19 MED-2 ruling).
+test("a cross-tab goober-theme write re-seats theme + hint + chrome (row R9)", () => {
+  assert.match(MAIN, /"storage"/, "the boot carries the storage listener");
+  assert.match(MAIN, /"goober-theme"/, "the listener keys on the GC theme key");
+  assert.match(MAIN, /syncColorSchemeContract\(doc, theme\)/,
+    "the hint + chrome pair re-seat through the shared contract helper");
+});
+
+test("the pruned dead locale keys stay dead (wave-25 deslop set)", () => {
+  const DEAD = [
+    "gc.chat.dm.heading",
+    "gc.social.dm.heading",
+    "gc.social.dm.placeholder",
+    "gc.chat.errors.notFound",
+    "gc.chat.gif.unconfigured",
+    "gc.chat.search.invalid",
+    "gc.expressions.errors.exists",
+    "gc.gate.refused",
+  ];
+  for (const lang of ["en", "es", "de", "fr", "pt", "ru", "ar", "ja", "zh"]) {
+    const bundle = readFileSync(join(HERE, `../public/locales/${lang}.json`), "utf8");
+    for (const key of DEAD) {
+      assert.doesNotMatch(bundle, new RegExp(`"${key}"`), `${key} stays pruned from ${lang}`);
+    }
+  }
+});

@@ -321,3 +321,15 @@ test("the pins page paints the fetching state while loadPins resolves (row R5)",
   assert.ok(block, "the pins-page block is present");
   assert.match(block, /gc\.controls\.fetching/, "the pending state rides the shared key");
 });
+
+// The wave-25 desweep rows (T-R25-DESWEEP): the search page painted nothing
+// while searchServer resolved and a second submit could race the first.
+test("the search page paints pending + serializes its searches (row R8)", () => {
+  const start = CHAT.indexOf("export function renderServerSearch");
+  const end = CHAT.indexOf("export async function renderConversation");
+  const block = CHAT.slice(start, end);
+  assert.ok(block, "the search-page block is present");
+  assert.match(block, /searchSeq/, "the search seat carries a latest-wins guard");
+  assert.match(block, /seq !== searchSeq/, "a superseded search never repaints");
+  assert.match(block, /gc\.controls\.fetching/, "the pending state rides the shared key");
+});

@@ -31,7 +31,7 @@ import { api, setCsrfToken, AUTH_EVENT } from "./core/api.js";
 import store from "./core/store.js";
 import * as router from "./core/router.js";
 import {
-  appearance, renderShell, serverPlaceholder,
+  appearance, renderShell, serverPlaceholder, syncColorSchemeContract,
 } from "./ui/shell.js";
 import { ensureSignedIn, wempoAccountsSignInUrl } from "./ui/landing.js";
 import { renderMemberCard } from "./ui/members.js";
@@ -139,6 +139,17 @@ async function boot({ doc: bootDoc = document, win: bootWin = window } = {}) {
   // 3. The gate: redeem the SSO ticket or leave for Accounts. A refusal
   //    card ends the boot; "signed-in" or "redirected" decides what follows.
   appearance.applyAppearance(doc, win.localStorage);
+  // The cross-tab theme seat (T-R25-DESWEEP row R9, the guide's persistence
+  // law): a "storage" write to goober-theme from ANOTHER tab re-seats this
+  // tab in place — the attribute, the hint, and the chrome pair ride the
+  // same contract the preload and the toggle seat already paint. Unrecognized
+  // values (the legacy keys, a removal) never re-seat.
+  win.addEventListener("storage", (event) => {
+    const theme = event.newValue;
+    if (event.key !== "goober-theme" || (theme !== "dark" && theme !== "light")) return;
+    doc.documentElement.dataset.theme = theme;
+    syncColorSchemeContract(doc, theme);
+  });
   // The locale lane (en-first): the bundle loads ALONGSIDE first paint and
   // never blocks the boot; a non-en swap repaints the bound copy on resolve.
   initI18n().catch(() => { /* a failed bundle leaves en, keys visible */ });
