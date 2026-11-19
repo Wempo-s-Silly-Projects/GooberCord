@@ -1,0 +1,30 @@
+-- Copyright 2026 ItsWempo
+--
+-- This file is part of GooberCord.
+--
+-- GooberCord is free software: you can redistribute it and/or modify it
+-- under the terms of the GNU Affero General Public License as published by
+-- the Free Software Foundation, either version 3 of the License, or
+-- (at your option) any later version.
+--
+-- This program is distributed in the hope that it will be useful, but
+-- WITHOUT ANY WARRANTY; without even the implied warranty of
+-- MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+-- GNU Affero General Public License for more details.
+--
+-- You should have received a copy of the
+-- GNU Affero General Public License along with this program.  If not,
+-- see <https://www.gnu.org/licenses/>
+
+-- 0044 (T-R2-WIPE, the owner's 2026-11-18 "just migrate everything to r2"):
+-- the legacy D1 byte table retires. Every attachment/emoji/sticker/sound
+-- object lives in bucket wempos-forum-r2 at gc-attachments/<id> (the T100
+-- intake put, scripts/backfill-blobs-to-r2.mjs backfills the pre-R2 rows,
+-- and every delete path rides the bucket beside the D1 verdict). With the
+-- backfill verified, the chunk rows' only remaining consumer is the serving
+-- FALLBACK — a pure re-read of the very bytes this migration retires — so
+-- the table drops whole. GC-owned table (the gc_ prefix, the shared-DB
+-- scoping law); the users avatar columns stay (auth table, never touched
+-- here; their serving rides the R2 avatars/* keys with the D1 columns kept
+-- as the fallback).
+DROP TABLE gc_attachment_chunks;

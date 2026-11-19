@@ -54,7 +54,7 @@ import { plusMemberActive } from "./plus.mjs";
 // The create intake IS the attachment intake (magic bytes, structural
 // sanitizer, 64k chunks, pending moderation) reused end to end — no second
 // storage gate can ever drift away from the message one.
-import { createAttachment, readMultipartWithImage } from "./media.mjs";
+import { createAttachment, deleteAttachmentObject, readMultipartWithImage } from "./media.mjs";
 import { serverBoostTier } from "./boost-level.mjs";
 // The manage-guard fragments mirror the channel-delete lane's shapes
 // (servers.mjs) — kept local rather than imported so the bundle's commit can
@@ -494,7 +494,7 @@ async function handleRenameExpressionRoute(request, env, serverId, expressionId,
 // sibling survived (serve-then-404, live data loss). Post-row-delete, the
 // sibling NOT EXISTS reads decide honestly: shared → the bytes survive with
 // the sibling; sole referencer → the bytes leave with the row.
-async function handleDeleteExpressionRoute(request, env, serverId, expressionId, kind) {
+async function handleDeleteExpressionRoute(request, env, serverId, expressionId, kind, ctx) {
   const session = await requireUser(request, env);
   await rateLimit(request, env, "write", "emoji:" + session.user.id);
   const actorId = Number(session.user.id);
@@ -551,6 +551,17 @@ async function handleDeleteExpressionRoute(request, env, serverId, expressionId,
   if (Number(results[0]?.meta?.changes) !== 1) {
     throw new HttpError(403, "You do not have permission to do that.");
   }
+  // The object's bytes die with the D1 rows (the T-R2-WIPE ride): gated on
+  // the attachment statement's own changes verdict — statement 3's shared-
+  // asset NOT EXISTS arms decide whether this expression's image was a sole
+  // referencer, so ONLY a changes==1 there means the chunk rows left and
+  // the object purges; a shared image keeps its object with its siblings
+  // (the batch's own parity, not a new error policy). Best-effort — a
+  // missed delete leaves a garbage-collectable orphan, never a dangling
+  // reference (D1 stays the authority).
+  if (Number(results[2]?.meta?.changes) === 1) {
+    await deleteAttachmentObject(env, ctx, Number(target.attachment_id));
+  }
   return json({ ok: true });
 }
 
@@ -558,7 +569,8 @@ async function handleDeleteExpressionRoute(request, env, serverId, expressionId,
 
 export async function handleExpressionRoutes(request, env, url, path, method, ctx) {
   void url;
-  void ctx;
+  // ctx (the worker's execution context) carries the background-work lane —
+  // the delete route's R2 object delete schedules through it.
 
   for (const [kindName, kind] of Object.entries(KIND)) {
     const listMatch = (method === "GET" || method === "POST")
@@ -576,7 +588,7 @@ export async function handleExpressionRoutes(request, env, url, path, method, ct
     if (itemMatch) {
       return method === "PATCH"
         ? handleRenameExpressionRoute(request, env, Number(itemMatch[1]), itemMatch[2], kindName)
-        : handleDeleteExpressionRoute(request, env, Number(itemMatch[1]), itemMatch[2], kindName);
+        : handleDeleteExpressionRoute(request, env, Number(itemMatch[1]), itemMatch[2], kindName, ctx);
     }
   }
   return undefined;

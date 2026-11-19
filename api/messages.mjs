@@ -65,7 +65,12 @@ import {
   timeoutAsOwnerSql,
 } from "./filterrules.mjs";
 import { ensureFilterWords, filterWords } from "./filterstore.mjs";
-import { messageAttachmentStatements, prepareAttachmentBytes, readMultipartWithImage } from "./media.mjs";
+import {
+  deleteAttachmentObject,
+  messageAttachmentStatements,
+  prepareAttachmentBytes,
+  readMultipartWithImage,
+} from "./media.mjs";
 import { attachmentCapBytes, plusActiveExpr, plusPerkActive, publicIsPlus } from "./plus.mjs";
 import {
   effectivePermissions,
@@ -1417,12 +1422,20 @@ const MESSAGE_ATTACHMENTS_DELETE_SQL =
     ATTACHMENT_MODERATOR_TIER_SQL +
     "OR ? = 1)";
 
-async function handleDeleteMessageRoute(request, env, messageId) {
+async function handleDeleteMessageRoute(request, env, messageId, ctx) {
   const session = await requireUser(request, env);
   const userId = Number(session.user.id);
   // Platform staff ('owner'/'admin' at the public tier) carry the flag into
   // the guard; server moderation stays a pure SQL membership EXISTS.
   const staff = session.user.role === "owner" || session.user.role === "admin" ? 1 : 0;
+  // The doomed attachments' ids ride the pre-read discipline (no id is ever
+  // derived INSIDE a batch): statement 2 carries the SAME tier guard as the
+  // message DELETE itself, so a changes==1 verdict below means this whole
+  // list died with the message — and the list is exactly the batch's purge
+  // set.
+  const doomedAttachmentIds = ((await env.GOOBER_DB.prepare(
+    "SELECT id FROM gc_attachments WHERE message_id = ?",
+  ).bind(messageId).all()).results || []).map((row) => Number(row.id));
   // ONE batch: attachment cleanup + the guarded message DELETE, all-or-
   // nothing. Each of the first two statements carries the SAME tier guard as
   // the message DELETE itself, so the 404 path (changes 0) also deleted
@@ -1436,6 +1449,15 @@ async function handleDeleteMessageRoute(request, env, messageId) {
       .bind(messageId, userId, userId, staff),
   ]);
   if (Number(results[2]?.meta?.changes) !== 1) throw new HttpError(404, "Message not found.");
+
+  // The R2 objects' bytes die with the D1 rows (the T-R2-WIPE rides): one
+  // delete per dooming id, gated on the ONE changes verdict above — a
+  // missed delete leaves a garbage-collectable orphan, never a dangling
+  // reference (D1 stays the authority; media.mjs's deleteAttachmentObject
+  // carries the best-effort posture).
+  for (const attachmentId of doomedAttachmentIds) {
+    await deleteAttachmentObject(env, ctx, attachmentId);
+  }
 
   return json({ ok: true });
 }
@@ -1581,9 +1603,9 @@ async function handleChannelPinsRoute(request, env, channelId) {
         reactionGroupsByMessage.get(Number(row.id)) || null)),
   });
 }export async function handleMessageRoutes(request, env, url, path, method, ctx) {
-  // ctx (the worker's execution context) completes the dispatch loop's
-  // handler signature; these routes schedule no background work today.
-  void ctx;
+  // ctx (the worker's execution context) carries the background-work lane —
+  // the delete route's R2 object deletes schedule through it.
+  void url;
 
   const channelsMatch = (method === "GET" || method === "POST")
     ? path.match(/^\/api\/channels\/([1-9][0-9]{0,14})\/messages$/)
@@ -1601,7 +1623,7 @@ async function handleChannelPinsRoute(request, env, channelId) {
   if (messageMatch) {
     return method === "PATCH"
       ? handleEditMessageRoute(request, env, Number(messageMatch[1]))
-      : handleDeleteMessageRoute(request, env, Number(messageMatch[1]));
+      : handleDeleteMessageRoute(request, env, Number(messageMatch[1]), ctx);
   }
 
   // The pins lane (0026): PUT/DELETE /api/messages/:id/pin and the channel's

@@ -81,7 +81,7 @@ import {
 // upload (magic bytes, structural sanitizer, 64k chunks, pending moderation)
 // and the same multipart reader — no new storage SQL, no second gate to have
 // drifted away from the attachment one.
-import { createAttachment, readMultipartWithImage } from "./media.mjs";
+import { createAttachment, deleteAttachmentObject, readMultipartWithImage } from "./media.mjs";
 // The search's per-hit VIEW gate rides the shared layer machinery (one
 // boolean, never the throwing route gate — a denied hit is DROPPED, not a
 // page-kill).
@@ -2854,9 +2854,18 @@ function channelManageGuard(serverId, actorId) {
   };
 }
 
-async function handleDeleteChannelRoute(request, env, serverId, channelId) {
+async function handleDeleteChannelRoute(request, env, serverId, channelId, ctx) {
   const session = await requireUser(request, env);
   const userId = Number(session.user.id);
+
+  // The doom list rides the pre-read discipline (no id is ever derived
+  // INSIDE a batch): the batch's guarded chunk/attachment statements purge
+  // exactly this channel's attachments, so the changes==1 verdict below
+  // dooms this whole list to the R2 delete rides.
+  const doomedAttachmentIds = ((await env.GOOBER_DB.prepare(
+    "SELECT a.id FROM gc_attachments a WHERE a.message_id IN " +
+      "(SELECT id FROM gc_messages WHERE channel_id = ?)",
+  ).bind(channelId).all()).results || []).map((row) => Number(row.id));
 
   // The channel's category BEFORE the delete rides the same diagnostics read
   // the PATCH's move uses, so an emptied folder can follow its channel out
@@ -2916,6 +2925,14 @@ async function handleDeleteChannelRoute(request, env, serverId, channelId) {
     throw new HttpError(403, "You do not have permission to do that.");
   }
 
+  // The R2 objects' bytes die with the D1 rows (the T-R2-WIPE rides): one
+  // delete per dooming id, gated on the ONE changes verdict above — best-
+  // effort, so a missed delete leaves a garbage-collectable orphan, never a
+  // dangling reference (D1 stays the authority).
+  for (const attachmentId of doomedAttachmentIds) {
+    await deleteAttachmentObject(env, ctx, attachmentId);
+  }
+
   // The emptied-folder cleanup (only where the deleted channel LEFT a folder):
   // the identical guarded NOT EXISTS delete the category move runs.
   if (sourceCategoryId !== null) {
@@ -2952,7 +2969,7 @@ async function handleDeleteChannelRoute(request, env, serverId, channelId) {
 // bytes.
 const SERVER_DELETE_ATTACHMENT_IDS_LIMIT = 127;
 
-async function handleDeleteServerRoute(request, env, serverId) {
+async function handleDeleteServerRoute(request, env, serverId, ctx) {
   const session = await requireUser(request, env);
   const userId = Number(session.user.id);
 
@@ -3069,6 +3086,22 @@ async function handleDeleteServerRoute(request, env, serverId) {
     }
 
     throw new HttpError(403, "You do not have permission to do that.");
+  }
+
+  // The R2 objects' bytes die with the D1 rows (the T-R2-WIPE rides),
+  // gated per-id on the verdict that id's D1 bytes actually died:
+  //   - the expression + message-attachment ids are doom-exact — every one
+  //     of their chunk statements carries the server-row guard, so
+  //     servers==1 means their bytes left;
+  //   - the icon alone is NOT guard-carried: a genuinely shared icon keeps
+  //     its bytes (the NOT-EXISTS discipline above, the parity the batch
+  //     itself draws), so its ride fires only when the icon attachment row
+  //     died (deleted.iconAttachments === 1, the same predicate the chunk
+  //     statement carries). A missed delete leaves a garbage-collectable
+  //     orphan, never a dangling reference (D1 stays the authority).
+  for (const attachmentId of doomedAttachmentIds) {
+    if (attachmentId === iconMediaId && deleted.iconAttachments !== 1) continue;
+    await deleteAttachmentObject(env, ctx, attachmentId);
   }
 
   return json({ ok: true, deleted });
@@ -3441,10 +3474,9 @@ async function handleListOverwritesRoute(request, env, serverId, channelId) {
 }
 
 export async function handleServerRoutes(request, env, url, path, method, ctx) {
-  // ctx (the worker's execution context) completes the dispatch loop's handler
-  // signature; these routes schedule no background work today.
+  // ctx (the worker's execution context) carries the background-work lane —
+  // the server/channel delete routes' R2 object deletes schedule through it.
   void url;
-  void ctx;
 
   if (path === "/api/servers" && method === "POST") {
     return handleCreateServerRoute(request, env);
@@ -3465,7 +3497,7 @@ export async function handleServerRoutes(request, env, url, path, method, ctx) {
     ? path.match(/^\/api\/servers\/(0|[1-9][0-9]*)$/)
     : null;
   if (serverDeleteMatch) {
-    return handleDeleteServerRoute(request, env, Number(serverDeleteMatch[1]));
+    return handleDeleteServerRoute(request, env, Number(serverDeleteMatch[1]), ctx);
   }
 
   const channelsMatch = method === "POST"
@@ -3642,7 +3674,7 @@ export async function handleServerRoutes(request, env, url, path, method, ctx) {
           request, env, Number(channelPatchMatch[1]), Number(channelPatchMatch[2]),
         )
       : handleDeleteChannelRoute(
-          request, env, Number(channelPatchMatch[1]), Number(channelPatchMatch[2]),
+          request, env, Number(channelPatchMatch[1]), Number(channelPatchMatch[2]), ctx,
         );
   }
 
