@@ -134,12 +134,21 @@ export class PresenceHub extends (workerd?.DurableObject ?? DurableObjectBase) {
 
     if (type === "leave") {
       if (Number.isInteger(frame.userId)) {
-        const remaining = (this.connectCounts.get(frame.userId) ?? 0) - 1;
-        if (remaining > 0) {
-          this.connectCounts.set(frame.userId, remaining);
-        } else {
-          // The last socket (or a leave for a user the hub never counted —
-          // the announce route's heartbeat-only path): drop them for real.
+        // GO-HAYWIRE cycle-12: the count CLAMPS the delete — the row goes
+        // only when a POSITIVE count decrements to exactly 0. A leave for
+        // a user the hub never counted (an announce-only REST user's
+        // count is 0/absent) deletes NOTHING: the old `remaining <= 0`
+        // branch let any socket's leave frame for their userId drop an
+        // announce-only member from the roster until the next announce
+        // beat re-added them. Both branches are plain map reads/writes
+        // inside the DO's serialized per-instance execution, so the
+        // read-modify-write cannot interleave with a connect.
+        const current = this.connectCounts.get(frame.userId) ?? 0;
+        if (current > 1) {
+          // Live sockets remain: one closed, the count drops.
+          this.connectCounts.set(frame.userId, current - 1);
+        } else if (current === 1) {
+          // The last counted socket closed: drop them for real.
           this.connectCounts.delete(frame.userId);
           this.presence.delete(frame.userId);
         }

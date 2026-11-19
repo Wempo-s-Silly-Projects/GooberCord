@@ -1366,7 +1366,7 @@ function wireConversationSocket(conversationId, column) {
         refreshColumn(column, conversationId);
         scrollBottom(column);
         markRead(conversationId, frame.message.id);
-      } else if (frame.type === "roster") {
+      } else if (frame.type === "roster" && Array.isArray(frame.members)) {
         store.set({ [`presence:${conversationId}`]: frame.members });
       } else if (frame.type === "care_notice") {
         showCareNotice(column, frame.body);

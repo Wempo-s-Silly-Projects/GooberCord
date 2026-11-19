@@ -266,10 +266,13 @@ test("heartbeat upserts the sender and answers presence including everyone else"
   assert.equal(again.online.length, 2);
 });
 
-test("leave removes the user and echoes presence; unknown leaves are harmless", async () => {
+// MOVED (GO-HAYWIRE cycle-12, leave clamp): the removal arm now takes a
+// COUNTED user — the old pin removed a heartbeat-only (uncounted) user,
+// which the clamped leave arm no longer drops.
+test("leave removes a counted user and echoes presence; uncounted leaves are harmless", async () => {
   const hub = new PresenceHub({ setWebSocketAutoResponse() {} }, {});
   await hubFrame(hub, { type: "connect", userId: 1, username: "alice" });
-  await hubFrame(hub, { type: "heartbeat", userId: 2, username: "bob" });
+  await hubFrame(hub, { type: "connect", userId: 2, username: "bob" });
 
   const response = await hub.fetch(
     new Request("https://presence.internal/hub", {
@@ -728,13 +731,17 @@ test("the hub's leave lands only on the user's LAST socket (per-user connect cou
   assert.deepEqual(gone.online, []);
 });
 
-test("a leave for a user the hub never counted still clears them", async () => {
+// MOVED (GO-HAYWIRE cycle-12, leave clamp): inverted. The old pin asserted
+// any socket's leave frame for an uncounted userId clears them — the exact
+// announce-only flicker the clamp exists to stop. The clamped leave deletes
+// NOTHING for a 0/absent count.
+test("a leave for a user the hub never counted deletes nothing from the roster", async () => {
   const hub = new PresenceHub({ setWebSocketAutoResponse() {} }, {});
   // The announce route's heartbeat path upserts without a connect count.
   await hubFrame(hub, { type: "heartbeat", userId: 5, username: "eve" });
   await hubFrame(hub, { type: "leave", userId: 5 });
-  const gone = await hubFrame(hub, { type: "list" });
-  assert.deepEqual(gone.online, []);
+  const kept = await hubFrame(hub, { type: "list" });
+  assert.deepEqual(kept.online.map((entry) => entry.userId), [5]);
 });
 
 test("PATCH /api/me/status reads through the bounded body cap (over-MAX is 413)", async () => {

@@ -239,8 +239,12 @@ export class ChatRoom extends (workerd?.DurableObject ?? DurableObjectBase) {
     }
   }
 
-  // The fan-out: every OTHER socket, never the sender (a user's own second
-  // tab does receive, since the exclusion is per-socket).
+  // The fan-out: every OTHER socket, never the sender. The exclusion is
+  // per-(user, channel) ATTACHED IDENTITY, not per-socket: EVERY socket of
+  // the same user in the same channel is skipped, so a user's own second tab
+  // receives nothing — the client writes its own messages through REST and
+  // adopts the echo there. A DIFFERENT channel's sockets are untouched (they
+  // live in a different ChatRoom DO), so the identity check is per room.
   broadcastJson(origin, payload) {
     const frame = JSON.stringify(payload);
     // Exclude by ATTACHED IDENTITY, not object identity: under hibernation the
@@ -488,6 +492,65 @@ export class ChatRoom extends (workerd?.DurableObject ?? DurableObjectBase) {
     this.typingFloorCache.set(key, now);
   }
 
+  // GO-HAYWIRE cycle-12: the "msg" frame arm runs the SAME fan-in gates the
+  // REST send does, but rode no rate wall at all — the REST wall
+  // (GC_MESSAGE_RATE_LIMITER, 30 per 60s) never reached the primitive. The
+  // floor is the typing floor's exact idiom: per-(channel, user) window,
+  // 30/60s ⇒ one send per GC_TYPING_FLOOR_SECONDS (constants.mjs — the REST
+  // bucket's own spacing, never re-declared here). A floored frame answers
+  // the send_failed refusal (the vendor 429 body's shared copy) instead of
+  // dropping silently: the sender knows the send did not go through, unlike
+  // a typed-repeat drop.
+  static MSG_FLOOR_MS = GC_TYPING_FLOOR_SECONDS * 1000;
+
+  msgFloorCache = new Map(); // `${channelId}:${userId}` → last accepted (ms)
+
+  msgFloorRepeat(meta) {
+    const last = this.msgFloorCache.get(meta.channelId + ":" + meta.userId);
+    return last !== undefined && Date.now() - last < ChatRoom.MSG_FLOOR_MS;
+  }
+
+  msgFloorArm(meta) {
+    const key = meta.channelId + ":" + meta.userId;
+    const now = Date.now();
+    if (this.msgFloorCache.size > 512) {
+      for (const [entryKey, entryAt] of this.msgFloorCache) {
+        if (now - entryAt >= ChatRoom.MSG_FLOOR_MS) this.msgFloorCache.delete(entryKey);
+      }
+    }
+    this.msgFloorCache.set(key, now);
+  }
+
+  // GO-HAYWIRE cycle-12: the "heartbeat" arm made a per-frame DO-to-DO
+  // subrequest + D1 read + O(snapshot) serialization, so a wire-rate
+  // repeater amplified one presence answer into a hub relay each — the
+  // client's honest cadence is one beat per 30s (ws.js HEARTBEAT_MS, not an
+  // importable constant — the client bundle stays standalone). The floor
+  // carries the same 30s window per caller: the normal beat is admitted, a
+  // wire-rate burst is absorbed. A floored beat SILENTLY SKIPS the hub
+  // relay (the typing floor's drop shape — no error frame, no close): the
+  // sender just rides its last presence answer until the next admitted
+  // beat, and the beat carries no sender-visible side effect to refuse.
+  static HEARTBEAT_FLOOR_MS = 30_000;
+
+  heartbeatFloorCache = new Map(); // `${channelId}:${userId}` → last accepted (ms)
+
+  heartbeatFloorRepeat(meta) {
+    const last = this.heartbeatFloorCache.get(meta.channelId + ":" + meta.userId);
+    return last !== undefined && Date.now() - last < ChatRoom.HEARTBEAT_FLOOR_MS;
+  }
+
+  heartbeatFloorArm(meta) {
+    const key = meta.channelId + ":" + meta.userId;
+    const now = Date.now();
+    if (this.heartbeatFloorCache.size > 512) {
+      for (const [entryKey, entryAt] of this.heartbeatFloorCache) {
+        if (now - entryAt >= ChatRoom.HEARTBEAT_FLOOR_MS) this.heartbeatFloorCache.delete(entryKey);
+      }
+    }
+    this.heartbeatFloorCache.set(key, now);
+  }
+
   // The typing frame's M3 re-check — the SAME fragments the msg frame walks
   // (channel row, membership, the VIEW/SEND pair on server channels), minus
   // the sender-facing error frame: a kick or a deny revoke here is SILENT,
@@ -608,6 +671,22 @@ export class ChatRoom extends (workerd?.DurableObject ?? DurableObjectBase) {
     }
 
     if (type === "msg") {
+      // GO-HAYWIRE cycle-12: the floor PEEK runs before the gate — a
+      // wire-rate repeater must not buy wire-rate D1 reads, the typing
+      // floor's own law. A repeat inside the window is refused with the
+      // send_failed shape carrying the REST wall's shared 429 copy (the
+      // vendor limiter's body, duplicated verbatim because vendor/http.mjs
+      // is read-only), and the ARM never runs for a refused frame. The arm
+      // lands only after the send primitive accepted the message: a
+      // send_failed (validation, filter, rules) never consumes a slot.
+      if (this.msgFloorRepeat(meta)) {
+        this.sendFrame(socket, {
+          type: "error",
+          code: "send_failed",
+          message: "Too many requests. Please wait a little and try again.",
+        });
+        return;
+      }
       try {
         // The M3 text-door re-check, per frame: a kick/ban deletes the
         // membership row (or the conversation seat) and answers through this
@@ -638,6 +717,7 @@ export class ChatRoom extends (workerd?.DurableObject ?? DurableObjectBase) {
           frame.body,
           frame.clientMessageId === undefined ? null : frame.clientMessageId,
         );
+        this.msgFloorArm(meta);
         this.broadcastJson(socket, { type: "msg", message: row });
         // The Care class (0010): the notice reaches the AUTHOR on the WS
         // path as its own frame — the fan-out excludes the sender, so a
@@ -687,10 +767,19 @@ export class ChatRoom extends (workerd?.DurableObject ?? DurableObjectBase) {
     }
 
     if (type === "heartbeat") {
-      // Client-driven presence (one frame every 60s): relay the identity to
-      // the hub, and its pinned presence envelope rides back to the sender
-      // only. A dead or missing hub answers nothing — the socket stays
-      // connected either way, and nothing fans out to the room.
+      // Client-driven presence (one frame per 30s — the ws.js beat, whose
+      // HEARTBEAT_MS this window mirrors): the floor PEEK first, so a
+      // wire-rate burst of heartbeats costs zero hub relays past the
+      // first admitted beat. The floored skip is silent and carries no
+      // error frame (comment on HEARTBEAT_FLOOR_MS names the choice); the
+      // arm lands on the ADMITTED beat, before the relay, so even a dead
+      // hub cannot turn a burst into wire-rate subrequests.
+      if (this.heartbeatFloorRepeat(meta)) return;
+      this.heartbeatFloorArm(meta);
+      // Relay the identity to the hub, and its pinned presence envelope
+      // rides back to the sender only. A dead or missing hub answers
+      // nothing — the socket stays connected either way, and nothing fans
+      // out to the room.
       const hub = await this.forwardToPresence({
         type: "heartbeat",
         userId: meta.userId,
