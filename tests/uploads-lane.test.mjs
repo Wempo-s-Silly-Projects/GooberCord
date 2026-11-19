@@ -26,7 +26,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { handleUploadRoutes, UPLOAD_TIER_ERROR, UPLOAD_UNKNOWN_ERROR, UPLOAD_INCOMPLETE_ERROR, UPLOAD_ONLY_IMAGES_ERROR, UPLOAD_PART_INVALID_ERROR } from "../api/uploads.mjs";
+import { handleUploadRoutes, sweepStaleUploadParts, UPLOAD_TIER_ERROR, UPLOAD_UNKNOWN_ERROR, UPLOAD_INCOMPLETE_ERROR, UPLOAD_ONLY_IMAGES_ERROR, UPLOAD_PART_INVALID_ERROR } from "../api/uploads.mjs";
 import { handleMediaRoutes } from "../api/media.mjs";
 import { handleMessageRoutes, sendMessageToChannel } from "../api/messages.mjs";
 import { _resetFilterWordsCacheForTests } from "../api/filterstore.mjs";
@@ -40,6 +40,8 @@ import {
   GC_UPLOAD_PART_CHUNKS,
   GC_UPLOAD_PART_REQUEST_BYTES,
   GC_UPLOAD_PARTS_MAX,
+  GC_UPLOAD_STAGED_CAP,
+  GC_UPLOAD_STAGING_TTL_SECONDS,
   MAX_ATTACHMENT_BYTES,
   RATE_LIMIT_BINDINGS,
 } from "../constants.mjs";
@@ -491,6 +493,87 @@ test("a staged set that raced past the verify read: the folded arms answer 400 w
   );
   assert.equal(junk.status, 404);
   assert.deepEqual(junkDb.calls, [], "an unparseable id touches nothing");
+});
+
+test("the abandon is the PLAIN owner-scoped delete: a clear with the commit's hold-back shape cannot run at all", async () => {
+  const { row: sessionRows, headers } = await sessionFixtures();
+  const db = fakeDb([sessionRoute(sessionRows)]);
+  await dispatchUploads(
+    new Request(ORIGIN + "/api/uploads/BBBBBBBBBBBB", { method: "DELETE", headers: { Origin: ORIGIN, ...headers } }),
+    envWithLimiters({ GOOBER_DB: db }),
+  );
+  const clear = db.calls.find((call) => call.call === "run" && call.sql.startsWith("DELETE FROM gc_upload_parts"));
+  assert.ok(clear, "the staging rows die with the abandon");
+  // The commit's clear rides a 6-placeholder hold-back arm (the identity
+  // tuple's mime/size/created_at pair); an abandon carrying that shape binds
+  // FAR fewer values than the SQL holds — real D1 refuses the statement
+  // outright, so rows would never leave. The route's clear has no such arm.
+  assert.equal((clear.sql.match(/\?/g) || []).length, clear.bound.length,
+    "the clear's placeholder count matches its bind count (D1 would throw otherwise)");
+  assert.doesNotMatch(clear.sql, /gc_attachment_chunks/, "no hold-back arm rides the abandon");
+});
+
+test("the abandon refuses while a sound-pack clip still references the token (409, zero deletes)", async () => {
+  const { row: sessionRows, headers } = await sessionFixtures();
+  const db = fakeDb([
+    sessionRoute(sessionRows),
+    { test: (sql) => sql.includes("FROM gc_sound_pack_sounds WHERE upload_id = ?"), first: async () => ({ "1": 1 }) },
+  ]);
+  const response = await dispatchUploads(
+    new Request(ORIGIN + "/api/uploads/AAAAAAAAAAAA", { method: "DELETE", headers: { Origin: ORIGIN, ...headers } }),
+    envWithLimiters({ GOOBER_DB: db }),
+  );
+  assert.equal(response.status, 409, "a clip-referenced token's bytes are not the uploader's to abandon");
+  assert.equal(
+    db.calls.some((call) => call.call === "run" && call.sql.startsWith("DELETE FROM gc_upload_parts")),
+    false, "the reference refusal fires before any delete",
+  );
+});
+
+test("the staged cap: an uploader at the cap cannot mint a fresh staging, the cap-arm is the constant's shape", async () => {
+  // The counter reads the uploader's DISTINCT staging uploads whose token no
+  // gc_sound_pack_sounds row references.
+  const activeCountRoute = (active) => ({
+    test: (sql) => sql.includes("COUNT(DISTINCT upload_id)") && sql.includes("FROM gc_upload_parts"),
+    first: async () => ({ active }),
+  });
+  const firstPart = async (fixtures, db) => dispatchUploads(
+    new Request(ORIGIN + "/api/uploads/chunks", {
+      method: "POST",
+      headers: { Origin: ORIGIN, ...fixtures.headers },
+      body: chunkForm(0, pngPart(), { size: String(LARGE_TOTAL) }),
+    }),
+    envWithLimiters({ GOOBER_DB: db }),
+  );
+  const fixture = await sessionFixtures();
+  const fullDb = fakeDb([
+    sessionRoute(fixture.row), plusTierRoute("plus"), activeCountRoute(GC_UPLOAD_STAGED_CAP),
+  ]);
+  const full = await firstPart(fixture, fullDb);
+  assert.equal(full.status, 409, "the cap refuses the fresh staging outright");
+  assert.equal(
+    fullDb.calls.some((call) => call.call === "batch"), false,
+    "nothing staged behind the refusal",
+  );
+  const roomyDb = fakeDb([
+    sessionRoute(fixture.row), plusTierRoute("plus"), activeCountRoute(GC_UPLOAD_STAGED_CAP - 1),
+  ]);
+  const roomy = await firstPart(fixture, roomyDb);
+  assert.equal(roomy.status, 201, "one under the cap still opens");
+});
+
+test("the sweep arm: a TTL delete that never touches a clip-referenced token", async () => {
+  const db = fakeDb([]);
+  const at = nowSeconds() + 10_000;
+  await sweepStaleUploadParts({ GOOBER_DB: db }, at);
+  const clear = db.calls.find((call) => call.call === "run" && call.sql.startsWith("DELETE FROM gc_upload_parts"));
+  assert.ok(clear, "the sweep is one staging DELETE");
+  assert.match(clear.sql, /created_at < \?/, "the TTL rides the cutoff arm");
+  assert.match(clear.sql, /NOT EXISTS \(SELECT 1 FROM gc_sound_pack_sounds s WHERE s\.upload_id = gc_upload_parts\.upload_id\)/,
+    "a candidate/approved clip's tokens are never swept");
+  assert.equal(clear.bound.length, 1, "the cutoff is the one bind");
+  assert.equal(Number(clear.bound[0]), at - GC_UPLOAD_STAGING_TTL_SECONDS,
+    "the cutoff is now minus the TTL constant");
 });
 
 // --- media.mjs's paged large-row serving ------------------------------------------

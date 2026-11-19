@@ -270,6 +270,25 @@ export const GC_UPLOAD_CHUNKS_MAX = GC_UPLOAD_PARTS_MAX * GC_UPLOAD_PART_CHUNKS;
 // "1 GiB (lane bound: 125 MiB today)".
 export const GC_UPLOAD_LANE_MAX_BYTES = GC_UPLOAD_PARTS_MAX * GC_UPLOAD_PART_BYTES;
 
+// The staging table's per-uploader cap (GO-HAYWIRE cycle-3): the first-part
+// INSERT mints a fresh random uploadId on every call, so without a per-
+// uploader cap the read bucket bounds only per-request — abandoned stagings
+// could pile up unbounded (PARTS_MAX × PART_BYTES of rows per uploadId). The
+// cap counts the uploader's DISTINCT staging tokens and EXCLUDES tokens an
+// approved gc_sound_pack_sounds clip points at (the pack's own bytes); a
+// candidate's token still counts, so the cap bounds the whole staging pool
+// per member.
+export const GC_UPLOAD_STAGED_CAP = 8;
+
+// The staging rows' orphan TTL (GO-HAYWIRE cycle-3): the abandon route is
+// the client's lever, but an abandoned tab never calls it, so staging rows
+// could persist forever. The sweep arm (uploads.mjs's sweepStaleUploadParts)
+// deletes rows older than this TTL — never a row any gc_sound_pack_sounds
+// clip (candidate or approved) still references. No scheduled handler exists
+// in worker.mjs today; the arm ships exported+tested and the wiring lane is
+// the worker's first cron export.
+export const GC_UPLOAD_STAGING_TTL_SECONDS = 7 * 86400;
+
 export const TURNSTILE_SITEVERIFY_URL = "https://challenges.cloudflare.com/turnstile/v0/siteverify";
 
 // Voice (Phase 2): one WS binary frame per 20ms Opus packet, fanned out by the

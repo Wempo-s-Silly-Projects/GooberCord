@@ -30,7 +30,7 @@ import { readFileSync, readdirSync } from "node:fs";
 import worker from "../worker.mjs";
 import * as C from "../constants.mjs";
 import { RATE_LIMIT_BINDINGS } from "../constants.mjs";
-import { nowSeconds } from "../api/core/crypto.mjs";
+import { nowSeconds, sha256Hex } from "../api/core/crypto.mjs";
 
 const ORIGIN = "https://goobercord.itswempo.workers.dev";
 const SERVER_ID = 1;
@@ -278,6 +278,59 @@ function packDb(options = {}) {
         return { data: staged.parts[0] };
       },
     },
+    {
+      // The staging clear's arms, ENCODED (the lifecycle fake): a token
+      // another clip still references is never cleared, the mod gate + the
+      // pack-in-server arm ride the statement, and a refused arm deletes
+      // nothing.
+      test: (sql) => sql.startsWith("DELETE FROM gc_upload_parts"),
+      run: (bound, sql) => {
+        if (sql.includes("s.status = 'candidate'")) {
+          // The drop arm: [clipId, packId, clipId, clipId, packId, serverId,
+          // serverId, actorId, serverId, actorId].
+          const isMod = roster.includes(Number(bound[7])) &&
+            Number(bound[7]) === Number(bound[9]) && Number(bound[6]) === Number(bound[8]);
+          const clip = clipOf(bound[0]);
+          const pack = packOf(Number(bound[4]));
+          if (!sql.includes("gc_sound_packs p WHERE p.id = ? AND p.server_id = ?") ||
+              !sql.includes("r.id <> ?")) {
+            return { meta: { changes: 0 } };
+          }
+          if (!pack || pack.server_id !== Number(bound[5]) || !isMod) {
+            return { meta: { changes: 0 } };
+          }
+          if (!clip || clip.status !== "candidate" || clip.pack_id !== Number(bound[1])) {
+            return { meta: { changes: 0 } };
+          }
+          if (clips.some((c) => c.upload_id === clip.upload_id && c.id !== clip.id)) {
+            return { meta: { changes: 0 } }; // another clip still references the token
+          }
+          const cleared = staging.delete(String(clip.upload_id));
+          return { meta: { changes: cleared ? 1 : 0 } };
+        }
+        // The pack-delete arm: [packId, packId, packId, serverId, serverId,
+        // actorId, serverId, actorId].
+        if (sql.includes("upload_id IN (SELECT s.upload_id FROM gc_sound_pack_sounds")) {
+          if (!sql.includes("r.pack_id <> ?") ||
+              !sql.includes("gc_sound_packs p WHERE p.id = ? AND p.server_id = ?")) {
+            return { meta: { changes: 0 } };
+          }
+          const isMod = roster.includes(Number(bound[5])) &&
+            Number(bound[5]) === Number(bound[7]) && Number(bound[4]) === Number(bound[6]);
+          const pack = packOf(Number(bound[2]));
+          if (!pack || pack.server_id !== Number(bound[3]) || !isMod) {
+            return { meta: { changes: 0 } };
+          }
+          let changes = 0;
+          for (const clip of clips.filter((c) => c.pack_id === Number(bound[0]))) {
+            if (clips.some((c) => c.upload_id === clip.upload_id && c.pack_id !== Number(bound[0]))) continue;
+            if (staging.delete(String(clip.upload_id))) changes += 1;
+          }
+          return { meta: { changes } };
+        }
+        return { meta: { changes: 0 } };
+      },
+    },
   ];
 
   const db = {
@@ -308,6 +361,15 @@ function packDb(options = {}) {
       };
       return statement;
     },
+    async batch(statements) {
+      const results = [];
+      for (const statement of statements) results.push(await statement.run());
+      calls.push({
+        call: "batch",
+        statements: statements.map((statement) => ({ sql: statement.sql, bound: statement.bound })),
+      });
+      return results;
+    },
   };
   return db;
 }
@@ -318,6 +380,13 @@ function envOf(db) {
     if (env[binding]) continue;
     env[binding] = { limit: async ({ key }) => ({ success: true, key }) };
   }
+  return env;
+}
+
+// The list ride's own limiter recorder: the READ bucket's key, pinned.
+function envOfRecordingRead(db, seen) {
+  const env = envOf(db);
+  env.GC_READ_RATE_LIMITER = { limit: async ({ key }) => { seen.push(key); return { success: true, key }; } };
   return env;
 }
 
@@ -544,4 +613,90 @@ test("the drop arm takes candidates only: an approved clip refuses through the s
   );
   assert.equal(kept.status, 400, "an approved clip is not a candidate — the status arm refuses");
   assert.equal(db.clips.length, 1, "the approved clip stayed");
+});
+
+test("the drop takes the candidate's staged bytes with it, unless another pack's clip still references the token", async () => {
+  const db = packDb({
+    roster: [USER_ID],
+    packs: [[PACK_ID, { server_id: SERVER_ID, name: "theater" }]],
+    clips: [
+      { id: CLIP_ID, pack_id: PACK_ID, name: "waiting", upload_id: STAGED_ID, status: "candidate", added_by: USER_ID },
+    ],
+    staging: [[STAGED_ID, { parts: [mp3Head()] }]],
+  });
+  const dropped = await worker.fetch(
+    authed("DELETE", `/api/servers/${SERVER_ID}/sound-packs/${PACK_ID}/clips/${CLIP_ID}`),
+    envOf(db), {},
+  );
+  assert.equal(dropped.status, 200);
+  assert.equal(db.staging.has(STAGED_ID), false,
+    "a dropped candidate's bytes leave the staging table with the row");
+
+  const shared = packDb({
+    roster: [USER_ID],
+    packs: [[PACK_ID, { server_id: SERVER_ID, name: "theater" }]],
+    clips: [
+      { id: CLIP_ID, pack_id: PACK_ID, name: "waiting", upload_id: STAGED_ID, status: "candidate", added_by: USER_ID },
+      { id: CLIP_ID + 1, pack_id: PACK_ID + 1, name: "other", upload_id: STAGED_ID, status: "candidate", added_by: USER_ID },
+    ],
+    staging: [[STAGED_ID, { parts: [mp3Head()] }]],
+  });
+  const sharedDrop = await worker.fetch(
+    authed("DELETE", `/api/servers/${SERVER_ID}/sound-packs/${PACK_ID}/clips/${CLIP_ID}`),
+    envOf(shared), {},
+  );
+  assert.equal(sharedDrop.status, 200);
+  assert.equal(shared.staging.has(STAGED_ID), true,
+    "a token another pack's clip still references is never cleared");
+});
+
+test("pack delete takes its clips' staged bytes with it, and a non-mod's delete never touches the bytes", async () => {
+  const db = packDb({
+    roster: [USER_ID],
+    packs: [[PACK_ID, { server_id: SERVER_ID, name: "theater" }]],
+    clips: [
+      { id: CLIP_ID, pack_id: PACK_ID, name: "kept", upload_id: STAGED_ID, status: "approved", added_by: USER_ID },
+      { id: CLIP_ID + 1, pack_id: PACK_ID, name: "waiting", upload_id: STAGED_ID + "X", status: "candidate", added_by: USER_ID },
+    ],
+    staging: [[STAGED_ID, { parts: [mp3Head()] }], [STAGED_ID + "X", { parts: [mp3Head(128)] }]],
+  });
+  const outsider = packDb({
+    roster: [],
+    packs: [[PACK_ID, { server_id: SERVER_ID, name: "theater" }]],
+    clips: [{ id: CLIP_ID, pack_id: PACK_ID, name: "kept", upload_id: STAGED_ID, status: "approved", added_by: USER_ID }],
+    staging: [[STAGED_ID, { parts: [mp3Head()] }]],
+  });
+  const refused = await worker.fetch(
+    authed("DELETE", `/api/servers/${SERVER_ID}/sound-packs/${PACK_ID}`),
+    envOf(outsider), {},
+  );
+  assert.equal(refused.status, 404, "a non-mod's pack delete answers the shared 404");
+  assert.equal(outsider.staging.has(STAGED_ID), true, "a refused pack delete never touches the bytes");
+
+  const deleted = await worker.fetch(
+    authed("DELETE", `/api/servers/${SERVER_ID}/sound-packs/${PACK_ID}`),
+    envOf(db), {},
+  );
+  assert.equal(deleted.status, 200);
+  assert.equal(db.packs.size, 0, "the pack row left");
+  assert.equal(db.staging.has(STAGED_ID), false, "the pack's approved clip's bytes cleared");
+  assert.equal(db.staging.has(STAGED_ID + "X"), false, "the pack's candidate's bytes cleared");
+});
+
+test("the list ride carries the READ bucket's rate limit", async () => {
+  const db = packDb({
+    roster: [USER_ID],
+    packs: [[PACK_ID, { server_id: SERVER_ID, name: "theater" }]],
+  });
+  const seen = [];
+  const response = await worker.fetch(
+    authed("GET", `/api/servers/${SERVER_ID}/sound-packs`),
+    envOfRecordingRead(db, seen), {},
+  );
+  assert.equal(response.status, 200);
+  // The limiter's wire key is the scope:actor pair, hashed (coins-module's
+  // mirror): the list's per-user identity rides the read bucket beside the
+  // worker's global per-IP read gate.
+  assert.ok(seen.includes(await sha256Hex("read:sound-packs:" + USER_ID)),
+    "the list ride limits on the read bucket, per user");
 });
