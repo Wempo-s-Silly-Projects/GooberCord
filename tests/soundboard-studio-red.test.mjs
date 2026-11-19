@@ -29,7 +29,6 @@ import { readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 
 const HERE = dirname(new URL(import.meta.url).pathname);
-const STUDIO = "soundboard-studio";
 const MODULE = "../public/js/ui/soundboard-studio.js";
 const CONSTANTS = readFileSync(join(HERE, "../constants.mjs"), "utf8");
 const EN = JSON.parse(readFileSync(join(HERE, "../public/locales/en.json"), "utf8"));
@@ -37,7 +36,7 @@ const EN = JSON.parse(readFileSync(join(HERE, "../public/locales/en.json"), "utf
 const loadStudio = () => import(MODULE);
 
 test("pack create, list, and delete ride the mod gate (T85 row 1)", async () => {
-  const studio = await loadStudio();
+  await loadStudio();
   // The CRUD consults, exactly the spec's route shapes:
   const source = readFileSync(join(HERE, MODULE), "utf8");
   assert.match(source, /export (async )?function listPacks\(serverId\)/,
@@ -58,10 +57,6 @@ test("pack create, list, and delete ride the mod gate (T85 row 1)", async () => 
     "the per-pack arm rides the packs path, never a separate root");
   // The mod-only delete arm carries its one confirm (no bulk, no auto).
   assert.match(source, /openDialog\(/, "the delete arm confirms through the shared dialog");
-  void assert.deepEqual;
-  void studio.listPacks;
-  void studio.createPack;
-  void studio.deletePack;
 });
 
 test("the 5MB clip cap is the constants seat, mirrored once, never a second declaration (T85 row 2)", async () => {

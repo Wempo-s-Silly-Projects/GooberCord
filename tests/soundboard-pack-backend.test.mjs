@@ -38,7 +38,6 @@ const USER_ID = 7;
 const PACK_ID = 44;
 const CLIP_ID = 91;
 const STAGED_ID = "ACDEFGHIJKLM"; // exactly 12 chars, the upload-id grammar
-const DAY = 86400;
 
 const SESSION_TOKEN = "A".repeat(40);
 
@@ -309,12 +308,6 @@ function packDb(options = {}) {
       };
       return statement;
     },
-    async batch(statements) {
-      const results = [];
-      for (const statement of statements) results.push(await statement.run());
-      calls.push({ call: "batch", statements: statements.map((s) => ({ sql: s.sql, bound: s.bound })) });
-      return results;
-    },
   };
   return db;
 }
@@ -468,8 +461,7 @@ test("a member posts a clip candidate against the staged bytes: the size, mime, 
   assert.equal(db.clips[0].mime, "audio/mpeg", "the sniffed mime rides the row");
   assert.equal(db.clips[0].size_bytes, mp3Head().length, "the staged set's size rides the row");
   // The over-cap arm: the staged set's bytes exceed the 5MB floor.
-  const big = new Uint8Array(C.GC_SOUND_PACK_CLIP_MAX_BYTES + 1);
-  big[0] = 0x49; big[1] = 0x44; big[2] = 0x33;
+  const big = mp3Head(C.GC_SOUND_PACK_CLIP_MAX_BYTES + 1);
   const bigDb = packDb({
     roster: [USER_ID],
     packs: [[PACK_ID, { server_id: SERVER_ID, name: "theater" }]],
@@ -552,5 +544,4 @@ test("the drop arm takes candidates only: an approved clip refuses through the s
   );
   assert.equal(kept.status, 400, "an approved clip is not a candidate — the status arm refuses");
   assert.equal(db.clips.length, 1, "the approved clip stayed");
-  assert.ok(DAY > 0, "keeps the day constant honest until a time-armed row arrives");
 });

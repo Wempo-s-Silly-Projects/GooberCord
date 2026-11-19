@@ -54,8 +54,9 @@ export function deletePack(serverId, packId) {
 }
 
 // The candidate arms: approve commits the staging reference into the pack
-// (staged bytes ride the 0025 gc_upload_parts lane); drop rides the staging
-// abandon route — refusal is deletion of the staging rows, nothing invented.
+// (staged bytes ride the 0025 gc_upload_parts lane); drop removes only the
+// candidate row — a refused candidate's staged bytes keep riding the
+// EXISTING staging abandon route (nothing new is invented here for refusal).
 export function approveClip(serverId, packId, clipId) {
   return api(`/api/servers/${serverId}/sound-packs/${packId}/clips`, {
     method: "POST", body: { clipId },
@@ -179,7 +180,7 @@ function candidateArm(serverId, candidate) {
   const seat = h("span", { class: "row-controls" }, errorLine,
     h("button", {
       class: "row-quiet-control", type: "button", text: t("gc.studio.approve"),
-      onClick: async () => {
+      onclick: async () => {
         errorLine.textContent = "";
         try { await approveClip(serverId, candidate.packId, candidate.id); }
         catch (error) { errorLine.textContent = error.message; } // verbatim
@@ -187,7 +188,7 @@ function candidateArm(serverId, candidate) {
     }),
     h("button", {
       class: "row-quiet-control", type: "button", text: t("gc.studio.drop"),
-      onClick: async () => {
+      onclick: async () => {
         errorLine.textContent = "";
         try { await dropClip(serverId, candidate.packId, candidate.id); }
         catch (error) { errorLine.textContent = error.message; } // verbatim

@@ -220,39 +220,37 @@ test("a full inventory blocks only the NEW create — 400 with the cap copy, row
   );
 });
 
-test("the sticker list caps payload answers the LEVEL's effective numbers (L2), rows ride UNCAPPED", () => {
-  return (async () => {
-    const rows = [];
-    for (let i = 0; i < 70; i += 1) {
-      rows.push({
-        id: i + 1, server_id: SERVER_ID, name: "wumpus" + i,
-        attachment_id: ATTACHMENT_ID, created_at: 900,
-      });
-    }
-    const { headers } = await SESSION_FIX;
-    const db = fakeDb([
-      { test: SESSION_READ_TEST, first: async () => (await SESSION_FIX).row },
-      { test: MEMBERSHIP_TEST, first: async () => ({ member: 1 }) },
-      { test: BOOST_READ_TEST, first: async () => ({ boosts: 7 }) },
-      {
-        test: (sql) => sql.includes("SELECT id, server_id, name, attachment_id, created_at FROM gc_emoji"),
-        all: async () => ({ results: [] }),
-      },
-      {
-        test: (sql) => sql.includes("SELECT id, server_id, name, attachment_id, created_at FROM gc_stickers"),
-        all: async () => ({ results: rows }),
-      },
-    ]);
-    const response = await dispatch(
-      new Request(ORIGIN + "/api/servers/" + SERVER_ID + "/stickers", { method: "GET", headers }),
-      envWithLimiters({ GOOBER_DB: db }),
-    );
-    assert.equal(response.status, 200);
-    const body = await response.json();
-    assert.deepEqual(body.caps, { emoji: 150, stickers: 30, sounds: 36 }, "the L2 effective caps ride the payload");
-    // Disabled-not-deleted at the route level: a legacy sticker inventory OVER
-    // its level's cap (and over the base 5) is READ COMPLETE — never trimmed,
-    // never deleted; every <s:name:id> token must still resolve.
-    assert.equal(body.stickers.length, 70, "an over-cap legacy inventory lists whole");
-  })();
+test("the sticker list caps payload answers the LEVEL's effective numbers (L2), rows ride UNCAPPED", async () => {
+  const rows = [];
+  for (let i = 0; i < 70; i += 1) {
+    rows.push({
+      id: i + 1, server_id: SERVER_ID, name: "wumpus" + i,
+      attachment_id: ATTACHMENT_ID, created_at: 900,
+    });
+  }
+  const { headers } = await SESSION_FIX;
+  const db = fakeDb([
+    { test: SESSION_READ_TEST, first: async () => (await SESSION_FIX).row },
+    { test: MEMBERSHIP_TEST, first: async () => ({ member: 1 }) },
+    { test: BOOST_READ_TEST, first: async () => ({ boosts: 7 }) },
+    {
+      test: (sql) => sql.includes("SELECT id, server_id, name, attachment_id, created_at FROM gc_emoji"),
+      all: async () => ({ results: [] }),
+    },
+    {
+      test: (sql) => sql.includes("SELECT id, server_id, name, attachment_id, created_at FROM gc_stickers"),
+      all: async () => ({ results: rows }),
+    },
+  ]);
+  const response = await dispatch(
+    new Request(ORIGIN + "/api/servers/" + SERVER_ID + "/stickers", { method: "GET", headers }),
+    envWithLimiters({ GOOBER_DB: db }),
+  );
+  assert.equal(response.status, 200);
+  const body = await response.json();
+  assert.deepEqual(body.caps, { emoji: 150, stickers: 30, sounds: 36 }, "the L2 effective caps ride the payload");
+  // Disabled-not-deleted at the route level: a legacy sticker inventory OVER
+  // its level's cap (and over the base 5) is READ COMPLETE — never trimmed,
+  // never deleted; every <s:name:id> token must still resolve.
+  assert.equal(body.stickers.length, 70, "an over-cap legacy inventory lists whole");
 });
