@@ -577,15 +577,17 @@ export class ChatRoom extends (workerd?.DurableObject ?? DurableObjectBase) {
 
   // The cycle-13 bump: ONE bounded write for every per-caller Map (the
   // cycle-4/12 floors and the voice-auth cache, plus the cycle-13 voice
-  // floors). The stale sweep stays the PRIMARY eviction — each caller's own
-  // window decides; a fully-fresh map past the cap now dies from the OLDEST
-  // inserted entry (Map insertion order: the first key) instead of growing
-  // unbounded under a distinct-user flood. Before inserting a new key the
-  // map caps hard at GC_FLOOR_MAP_CAP (512), so one bump never nets the Map
-  // above the cap; a re-arm of an existing key never evicts an innocent
-  // caller's slot.
+  // floors). The stale sweep stays the PRIMARY eviction — it fires when the
+  // map is AT the cap (the guard is >=, reachable after every insert that
+  // met a full map) and each caller's own window decides; the oldest-
+  // inserted entry dies only when no entry is stale (deslop-h13-voice
+  // MEDIUM-1: the old > guard could never fire — cap-at-insert holds size
+  // <= 512 at every entry). Before inserting a new key the map caps hard
+  // at GC_FLOOR_MAP_CAP (512), so one bump never nets the Map above the
+  // cap; a re-arm of an existing key never evicts an innocent caller's
+  // slot.
   #bumpBoundedCache(cache, key, isStale, value) {
-    if (cache.size > GC_FLOOR_MAP_CAP) {
+    if (cache.size >= GC_FLOOR_MAP_CAP) {
       for (const [entryKey, entry] of cache) {
         if (isStale(entry)) cache.delete(entryKey);
       }
