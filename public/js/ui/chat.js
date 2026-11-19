@@ -756,13 +756,26 @@ function dropAndAdopt(channelId, message) {
   refreshColumn(columnNodeRef, channelId);
 }
 
+// The fx_burst runtime (the 2026-11-19 cosmetics slate's Phase 3): the server
+// answers a burst-spending ADD with reaction.fxBurst, and the flagged payload
+// pins the ONE-SHOT CSS animation onto the message row — a decorative overlay
+// (aria-hidden, no copy, no i18n key) that removes itself at animationend.
+function fireBurst(message) {
+  const row = columnNodeRef?.querySelector(`[data-message-id="${message.id}"] .chat-row`);
+  if (!row) return; // the row's column is gone — nothing to burst
+  const burst = h("span", { class: "fx-burst", "aria-hidden": "true" });
+  burst.addEventListener("animationend", () => burst.remove());
+  row.append(burst);
+}
+
 function reactionPicker(message) {
   const grid = h("div", { class: "reaction-grid" },
     ...UI_REACTIONS_COMMON.map((emoji) => h("button", {
       class: "icon-button reaction-choice", type: "button", text: emoji,
       onClick: async () => {
         try {
-          await toggleReaction(message.id, emoji);
+          const payload = await toggleReaction(message.id, emoji);
+          if (payload?.reaction?.fxBurst) fireBurst(message);
           refreshColumn(columnNodeRef, currentChannelId);
         } finally {
           dialog.close();
@@ -774,7 +787,8 @@ function reactionPicker(message) {
       class: "icon-button reaction-choice reaction-super", type: "button", text: emoji,
       onClick: async () => {
         try {
-          await toggleReaction(message.id, emoji);
+          const payload = await toggleReaction(message.id, emoji);
+          if (payload?.reaction?.fxBurst) fireBurst(message);
           refreshColumn(columnNodeRef, currentChannelId);
         } catch (error) {
           grid.append(h("p", { class: "form-error", text: error.message })); // the 403 verbatim

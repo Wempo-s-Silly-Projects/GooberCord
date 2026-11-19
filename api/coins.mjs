@@ -75,6 +75,7 @@ import {
   GC_COSMETIC_CHANNEL_BANNER_PRICE,
   GC_COSMETIC_FLAIR_PRICE,
   GC_COSMETIC_FRAME_PRICE,
+  GC_COSMETIC_FX_BURST_ITEM,
   GC_COSMETIC_FX_BURST_PRICE,
   GC_COSMETIC_FX_BURST_USES,
   GC_COSMETIC_INVENTORY_SKUS,
@@ -863,9 +864,13 @@ async function handleCosmeticEquipRoute(request, env) {
   const body = await readJson(request);
   const sku = typeof body?.itemKey === "string" ? inventoryShape(body.itemKey) : null;
   if (!sku) throw new HttpError(400, "That cosmetic is not in the shop.");
-  // The kind guard: slots carry 'own' items — a consumable is used, never
-  // equipped, and the refusal rides before the slot's clear can run.
-  if (sku.kind !== "own") {
+  // The kind guard: slots carry 'own' items — with ONE admitted exception (the
+  // 2026-11-19 slate's Phase 3): the effects slot's pack IS the equip surface,
+  // because the reaction route's burst arm spends only the EQUIPPED row. The
+  // equip stays the slot's standing state ride (clear the slot's own SKUs, set
+  // the picked row) — a consumable equipped here never changes qty, only the
+  // auto-spend arm's visibility.
+  if (sku.kind !== "own" && sku.itemKey !== GC_COSMETIC_FX_BURST_ITEM) {
     throw new HttpError(400, "That cosmetic is a consumable pack.");
   }
 

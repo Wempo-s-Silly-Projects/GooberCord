@@ -1581,3 +1581,39 @@ textarea {
   display: block;
   flex-shrink: 0;
 }
+
+/* ============================== fx_burst ============================== */
+
+/* The fx_burst pack's render (cosmetics slate Phase 3): one ONE-SHOT burst
+   overlay on the row the flagged ADD landed on — pure CSS confetti dots, the
+   overlay removes itself at animationend (the client pins the class, the
+   sheet carries the animation). */
+.fx-burst {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  animation: fx-burst-fade 700ms ease-out forwards;
+}
+.fx-burst::before {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  box-shadow:
+    -3.2rem -1.2rem var(--yellow), -2.4rem 1.1rem var(--coral),
+    -1.6rem 1.6rem var(--link), 3.1rem -1rem var(--coin),
+    2.6rem 1.3rem var(--yellow), 1.4rem 1.8rem var(--coral),
+    0.4rem -2rem var(--link), -0.9rem 2.2rem var(--coin);
+  animation: fx-burst-scatter 700ms ease-out forwards;
+}
+@keyframes fx-burst-fade {
+  from { opacity: 1; }
+  to { opacity: 0; }
+}
+@keyframes fx-burst-scatter {
+  from { transform: scale(0.2); }
+  to { transform: scale(2.4); }
+}

@@ -41,7 +41,7 @@ import { HttpError, json, rateLimit, readJson } from "./core/http.mjs";
 import { channelForUser, enforceChannelBits, enforceMemberGatesForChannel } from "./messages.mjs";
 import { SERVER_PERMISSIONS, holdsRolesBitsSql, holdsRolesBitsParams } from "./permissions.mjs";
 import { plusActiveExpr, plusMemberActive, plusPerkActive, publicIsPlus } from "./plus.mjs";
-import { GC_PLUS_REACTIONS, GC_REACTIONS_MAX_UNIQUE_PER_MESSAGE } from "../constants.mjs";
+import { GC_COSMETIC_FX_BURST_ITEM, GC_PLUS_REACTIONS, GC_REACTIONS_MAX_UNIQUE_PER_MESSAGE } from "../constants.mjs";
 
 // The parity law reads Discord's real caps directly (verified 2026-11-17):
 // docs/parity-limits.md — Friends 1000. Discord's cap is also cheap insurance
@@ -136,14 +136,38 @@ const REQUEST_DELETE_SQL =
     "OR (requester_id = ? AND target_id = ?)";
 
 // The reaction reads/writes. The grouped detail read joins users for the
-// per-emoji member lists the View-Reactions dialog renders.
+// per-emoji member lists the View-Reactions dialog renders. The fx_burst
+// column (0057) rides the SELECT: the cosmetics effects arm (Phase 3) flags
+// the rows its spend lands on, and the reads echo the flag ADDITIVELY — a
+// row without the flag keeps the exact payload shape it always had.
 const REACTION_GROUPED_SQL =
-  "SELECT r.emoji AS emoji, r.user_id AS user_id, u.username AS username " +
+  "SELECT r.emoji AS emoji, r.user_id AS user_id, u.username AS username, r.fx_burst AS fx_burst " +
   "FROM gc_message_reactions r JOIN users u ON u.id = r.user_id " +
   "WHERE r.message_id = ? ORDER BY r.emoji, r.created_at, r.user_id";
 // The message's reactions ride the LIST payload as one grouped read per page
 // (api/messages.mjs imports this SQL — a single source of truth with this file).
 export const MESSAGE_REACTIONS_GROUPED_SQL = REACTION_GROUPED_SQL;
+
+// The cosmetics effects arm (the 2026-11-19 slate's Phase 3): a fresh
+// reaction ADD by a member whose EQUIPPED fx_burst pack still holds uses
+// spends exactly one use and pins the burst flag onto the minted row. The
+// pair is ONE batch (one transaction), and each statement carries the WHOLE
+// guard set so the decrement and the flag land together or not at all — the
+// flag rides FIRST (its arms read the PRE-state: the row is unflagged and
+// the pack is live), the consume rides SECOND (its arms: the pack's qty
+// floor and the flag THERE — visible only because the batch is one
+// transaction). A loser is all-zero with the original pack row surviving
+// (the economy-skill law 3 shape, Phase 1's purchase idiom).
+const BURST_FLAG_SQL =
+  "UPDATE gc_message_reactions SET fx_burst = 1 " +
+  "WHERE message_id = ? AND user_id = ? AND emoji = ? AND fx_burst = 0 AND EXISTS (" +
+    "SELECT 1 FROM gc_cosmetic_inventory iv WHERE iv.user_id = ? AND iv.item_key = ? " +
+    "AND iv.kind = 'consumable' AND iv.equipped = 1 AND iv.qty > 0)";
+const BURST_CONSUME_SQL =
+  "UPDATE gc_cosmetic_inventory SET qty = qty - 1, updated_at = ? " +
+  "WHERE user_id = ? AND item_key = ? AND kind = 'consumable' AND equipped = 1 AND qty > 0 AND EXISTS (" +
+    "SELECT 1 FROM gc_message_reactions r WHERE r.message_id = ? AND r.user_id = ? " +
+    "AND r.emoji = ? AND r.fx_burst = 1)";
 
 // --- the moderation guard (replicated from api/servers.mjs) ----------------------
 //
@@ -525,6 +549,24 @@ function emojiFromBody(body) {
   return raw;
 }
 
+// The cosmetics effects arm (Phase 3): ONE batch — the flag statement first,
+// the consume second (each carrying the WHOLE guard set, see BURST_FLAG_SQL).
+// Answer truth: "the effect fired" IS "the pack spent one use" ("the consume
+// fired"). Never a thrower: the caller wraps it best-effort (the reaction
+// never fails for the effect — the coin grant / timeout rides carry the same
+// discipline).
+async function fireReactionBurstArm(env, messageId, userId, emoji) {
+  const results = await env.GOOBER_DB.batch([
+    env.GOOBER_DB.prepare(BURST_FLAG_SQL).bind(
+      messageId, userId, emoji, userId, GC_COSMETIC_FX_BURST_ITEM,
+    ),
+    env.GOOBER_DB.prepare(BURST_CONSUME_SQL).bind(
+      nowSeconds(), userId, GC_COSMETIC_FX_BURST_ITEM, messageId, userId, emoji,
+    ),
+  ]);
+  return Number(results?.[1]?.meta?.changes) === 1;
+}
+
 // PUT = the toggle-on gate: channel access first, then the member-state gates
 // (the mod desk's timed-out pair — a timed-out member cannot ADD a reaction),
 // then the INSERT-or-ignore. Already-present rows are idempotent 200s.
@@ -580,7 +622,23 @@ async function handleAddReactionRoute(request, env, messageId) {
   ).run();
 
   if (Number(insert?.meta?.changes) === 1) {
-    return json({ reaction: { messageId: Number(message.id), emoji, userId: selfId, mine: true } }, 201);
+    // The cosmetics effects arm rides the verdict (Phase 3): a fresh ADD by
+    // an equipped pack holder spends one use and flags the row. Best-effort —
+    // the burst never fails the reaction (the timeout/grant rides carry the
+    // same discipline).
+    let burst = false;
+    try {
+      burst = await fireReactionBurstArm(env, Number(message.id), selfId, emoji);
+    } catch (error) {
+      console.error("Cosmetic burst arm failed:", error?.name || "UnknownError", {
+        messageId: Number(message.id),
+        userId: selfId,
+      });
+    }
+    return json({ reaction: {
+      messageId: Number(message.id), emoji, userId: selfId, mine: true,
+      ...(burst ? { fxBurst: true } : {}),
+    } }, 201);
   }
 
   const held = await env.GOOBER_DB.prepare(
@@ -672,7 +730,11 @@ async function handleListReactionsRoute(request, env, messageId) {
   for (const row of rows) {
     const key = String(row.emoji);
     const entry = byEmoji.get(key) || { emoji: key, users: [] };
-    entry.users.push({ id: Number(row.user_id), username: row.username });
+    // The fx_burst echo (Phase 3): ADDITIVE — flagged rows gain fxBurst, an
+    // unflagged row keeps the exact entry shape it always had.
+    entry.users.push(row.fx_burst
+      ? { id: Number(row.user_id), username: row.username, fxBurst: true }
+      : { id: Number(row.user_id), username: row.username });
     byEmoji.set(key, entry);
   }
 

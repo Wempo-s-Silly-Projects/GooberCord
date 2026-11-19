@@ -715,7 +715,11 @@ test("an equip body outside the catalog is a 400 with no write", async () => {
   assert.equal(db.calls.filter((entry) => entry.call === "batch" || entry.call === "run").length, 0);
 });
 
-test("equipping a CONSUMABLE is refused before the batch: slots carry 'own' items only", async () => {
+test("equipping the fx_burst pack rides the ONE batch (the effects slot's equipped arm)", async () => {
+  // Phase 3 amendment (the 2026-11-19 slate): the burst arm spends only the
+  // EQUIPPED row, so the effects slot's consumable IS the equip surface — the
+  // equip stays the same clear-then-set batch. A consumable OUTSIDE that slot
+  // would still be refused (no such SKU exists in v1).
   const db = shopDb({ ...SEED_FUNDS, inventory: [
     { user_id: USER_ID, item_key: "fx_burst_confetti", kind: "consumable", qty: GC_COSMETIC_FX_BURST_USES, equipped: 0, server_id: null },
   ] });
@@ -724,9 +728,11 @@ test("equipping a CONSUMABLE is refused before the batch: slots carry 'own' item
     method: "POST", body: { itemKey: "fx_burst_confetti" },
   });
   const response = await dispatch(built, env);
-  assert.equal(response.status, 400);
-  assert.equal(db.invRow(USER_ID, "fx_burst_confetti").equipped, 0, "the slot never moved");
-  assert.equal(db.calls.filter((entry) => entry.call === "batch").length, 0, "no clear, no set");
+  assert.equal(response.status, 200);
+  assert.equal(db.invRow(USER_ID, "fx_burst_confetti").equipped, 1, "the pack is the slot's active effect");
+  assert.equal(db.invRow(USER_ID, "fx_burst_confetti").qty, GC_COSMETIC_FX_BURST_USES, "the equip never moves qty");
+  const batch = db.calls.find((entry) => entry.call === "batch");
+  assert.ok(batch, "one batch, one transaction");
 });
 
 // --- the consumable use (the guarded claim, economy-skill law 3) -------------------
