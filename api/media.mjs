@@ -48,6 +48,7 @@ import {
   sanitizeImage,
   sniffImageMime,
 } from "./core/images.mjs";
+import { securityHeaders } from "./core/http.mjs";
 import { audioResponse } from "./core/audio.mjs";
 
 // Intake refusals, shared by the standalone upload and the send-with-image
@@ -282,8 +283,10 @@ const STANDALONE_ROW_DELETE_SQL =
 // the AWAITED store-of-record put. A failed put rolls the just-inserted
 // byte-less row back and rejects 503: bytes are durable in R2 or no row
 // survives (a crash between the two leaves a pending row the empty chunk set
-// 404s, and a reviewer's reject removes). No R2 delete fires for the
-// rolled-back row: a put that threw almost certainly left nothing behind.
+// 404s, and a reviewer's reject removes). The rollback's object delete is the
+// same best-effort ride as every other byte-death path — a put that threw
+// almost certainly left nothing behind, so it sweeps only the rare
+// timeout-after-write object.
 // Returns the inserted row's id; each caller keeps its own wire shape.
 export async function insertStandaloneAttachment(env, uploaderId, prepared, now, failedInsertErrorCopy) {
   if (env.GC_MEDIA) {
@@ -300,12 +303,17 @@ export async function insertStandaloneAttachment(env, uploaderId, prepared, now,
     } catch {
       // Best-effort sweep: a D1 failure in the delete itself must never mask
       // the 503 (worst case is the pending byte-less row the serving path
-      // already 404s and the reviewer queue can remove).
+      // already 404s and the reviewer queue can remove). The row's death
+      // rides the same object-delete as every other byte-death path in this
+      // module — a put that threw almost certainly left nothing behind, so
+      // the common case is a no-op sweep (the rare timeout-after-write
+      // object must never orphan).
       try {
         await env.GOOBER_DB.prepare(STANDALONE_ROW_DELETE_SQL).bind(id).run();
       } catch {
         // the 503 below is the contract; the row removal rides best-effort
       }
+      scheduleAttachmentObjectDelete(env, undefined, id);
       throw new HttpError(503, STORE_FAILED_ERROR);
     }
     return id;
@@ -537,7 +545,29 @@ async function serveAttachmentObject(env, row) {
   } catch {
     return null;
   }
-  if (!object || typeof object.arrayBuffer !== "function") return null;
+  // The >LANE streaming law: a >MAX row's bytes never whole-buffer on the
+  // serving path — buffering a 125 MiB lane-max object would push the
+  // isolate at its 128 MB floor (the reviewer's MEDIUM against the
+  // whole-buffer consult). The intake side already sniff-verified the
+  // EXACT bytes these objects hold (the same-sanitized-bytes law pins
+  // every put to the prepared buffer), so the streaming lane trusts the
+  // row's stored mime and sizes itself from the object. >MAX rows are
+  // image rows (multipart file intake admits images; sound/sound-pack
+  // caps sit far under MAX), so the streaming headers mirror
+  // imageResponse's shape.
+  if (!object) return null;
+  if (Number(row.size_bytes) > MAX_ATTACHMENT_BYTES) {
+    if (!object.body) return null;
+    const cache = row.status === "approved" ? "public, max-age=31536000, immutable" : "private, max-age=300";
+    const headers = securityHeaders();
+    headers.set("Content-Type", row.mime);
+    headers.set("Cache-Control", cache);
+    headers.set("X-Content-Type-Options", "nosniff");
+    headers.set("Content-Disposition", 'inline; filename="image"');
+    if (object.size) headers.set("Content-Length", String(object.size));
+    return new Response(object.body, { status: 200, headers });
+  }
+  if (typeof object.arrayBuffer !== "function") return null;
   const bytes = new Uint8Array(await object.arrayBuffer());
   if (bytes.length === 0) return null;
   const cache = row.status === "approved" ? "public, max-age=31536000, immutable" : "private, max-age=300";
@@ -563,17 +593,21 @@ async function handleAttachmentServingRoute(request, env, attachmentId) {
     }
   }
 
-  // The small lanes' proven set (every row the single-buffer intakes bore,
-  // up to 20 MiB) answers R2-first (the durable intake put) and assembles
-  // from the D1 chunk set as the fallback; a LARGE lane
-  // row streams paged above (D1-only — every large row was born there).
+  // The R2 store of record is consulted FIRST, for every row size: the
+  // plus-tier multipart intakes put bytes ONLY in R2 (zero chunk rows), so
+  // routing a >MAX size row to the D1 chunk paging before the consult
+  // answered the empty set with an eternal 404. A hit serves with the row's
+  // own cache verdict; a miss falls through to the lanes below — the LARGE
+  // lane's paged stream (its legacy/D1 chunk rows) and the small lanes'
+  // assembled chunk fallback — exactly where they served before (the
+  // no-binding dev lane keeps byte-identical serving).
+  const mirrored = await serveAttachmentObject(env, row);
+  if (mirrored) return mirrored;
   if (Number(row.size_bytes) > MAX_ATTACHMENT_BYTES) {
     const streamed = await streamChunkedAttachment(env, row);
     if (!streamed) throw new HttpError(404, "Attachment not found.");
     return streamed;
   }
-  const mirrored = await serveAttachmentObject(env, row);
-  if (mirrored) return mirrored;
   const bytes = await assembledChunkBytes(env, row.id);
   if (bytes !== null) {
     const cache = row.status === "approved" ? "public, max-age=31536000, immutable" : "private, max-age=300";

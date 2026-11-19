@@ -511,10 +511,12 @@ test("a failed R2 put on the sound intake sweeps the byte-less pending row and r
   );
   // Fail closed: exactly one put attempt, then the compensating delete
   // sweeps the just-inserted pending row and the create rejects — never a
-  // committed byte-less asset, and no gc_sounds row ever references it.
+  // committed byte-less asset, and no gc_sounds row ever references it. The
+  // row's death also rides its object delete (the shared standalone intake's
+  // byte-death path — lane-r2-audit FINDING 2).
   assert.equal(response.status, 503);
   assert.match((await bodyOf(response)).error, /upload could not be stored/);
-  assert.deepEqual(r2.calls.map((call) => call.op), ["put"]);
+  assert.deepEqual(r2.calls.map((call) => call.op), ["put", "delete"]);
   const rollback = db.calls.find(
     (call) => call.call === "run" && call.sql.startsWith("DELETE FROM gc_attachments WHERE id = ?") && call.sql.includes("status = 'pending'"),
   );

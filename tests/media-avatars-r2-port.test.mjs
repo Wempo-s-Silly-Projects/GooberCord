@@ -32,7 +32,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import { HttpError } from "../api/core/http.mjs";
-import { handleMediaRoutes, createAttachment } from "../api/media.mjs";
+import { handleMediaRoutes, createAttachment, scheduleAttachmentObjectDelete } from "../api/media.mjs";
 import { handleAvatarRoutes } from "../api/avatars.mjs";
 import { randomToken, sha256Hex, nowSeconds } from "../api/core/crypto.mjs";
 import {
@@ -40,6 +40,7 @@ import {
   ATTACHMENT_CHUNK_BYTES,
   GC_ATTACHMENT_OBJECT_PREFIX,
   GC_AVATAR_OBJECT_PREFIX,
+  MAX_ATTACHMENT_BYTES,
 } from "../constants.mjs";
 
 const ORIGIN = "http://localhost";
@@ -88,7 +89,7 @@ function fakeR2() {
   const calls = [];
   const objectFor = (key) => {
     const copy = new Uint8Array(store.get(key));
-    return { key, body: copy.buffer, arrayBuffer: async () => copy.buffer.slice(0) };
+    return { key, body: copy.buffer, size: copy.byteLength, arrayBuffer: async () => copy.buffer.slice(0) };
   };
   return {
     store,
@@ -188,6 +189,9 @@ const ATTACHMENT_ROW_TEST = (sql) =>
 
 const CHUNK_BYTES_TEST = (sql) =>
   sql.includes("SELECT data FROM gc_attachment_chunks") && sql.includes("ORDER BY seq");
+
+const PAGED_CHUNK_TEST = (sql) =>
+  sql.includes("SELECT seq, data FROM gc_attachment_chunks") && sql.includes("seq >= ?");
 
 const STANDALONE_INSERT_TEST = (sql) =>
   sql.startsWith("INSERT INTO gc_attachments") && sql.includes("VALUES (NULL, ?");
@@ -300,9 +304,12 @@ test("a failed R2 put rolls the byte-less row back — the upload rejects 503", 
     createAttachment(env, USER_ID, image),
     (error) => error instanceof HttpError && error.status === 503,
   );
-  // Exactly one put was attempted, then the compensating delete swept the
-  // just-inserted pending row; the batch never carried a chunk statement.
-  assert.deepEqual(r2.calls.map((call) => call.op), ["put"]);
+  // Exactly one put was attempted, then the compensating sweep: the
+  // just-inserted pending row deleted AND its object-delete ride scheduled
+  // (the rolled-back row now leaves no orphan behind — FINDING 2), and the
+  // batch never carried a chunk statement.
+  assert.deepEqual(r2.calls.map((call) => call.op), ["put", "delete"]);
+  assert.equal(r2.calls[1].key, GC_ATTACHMENT_OBJECT_PREFIX + "41");
   const batch = db.calls.find((call) => call.call === "batch");
   assert.ok(batch);
   assert.equal(batch.statements.length, 1);
@@ -422,6 +429,73 @@ test("serving without the GC_MEDIA binding serves the D1 chunks", async () => {
   assert.deepEqual(new Uint8Array(await response.arrayBuffer()), image);
 });
 
+test("serving answers a LARGE lane row's R2 object before the chunk-size lane", async () => {
+  const image = pngImage();
+  const r2 = fakeR2();
+  await r2.put(GC_ATTACHMENT_OBJECT_PREFIX + "41", image);
+  const db = fakeDb([
+    { test: ATTACHMENT_ROW_TEST, first: async () => approvedRow({ size_bytes: MAX_ATTACHMENT_BYTES + 1 }) },
+  ]);
+  const env = envWithLimiters({ GOOBER_DB: db, GC_MEDIA: r2 });
+
+  // Plus-tier multipart puts bytes ONLY in R2 (zero chunk rows): the object
+  // serves 200 even though the size gate would route to the empty D1 set.
+  const response = await serveAttachment(env);
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get("Content-Type"), "image/png");
+  assert.deepEqual(new Uint8Array(await response.arrayBuffer()), image);
+  // The paged chunk lane never ran.
+  assert.ok(!db.calls.some((call) => call.call === "all" && PAGED_CHUNK_TEST(call.sql)));
+});
+
+test("serving a LARGE lane R2 hit STREAMS — the whole-buffer egress never runs", async () => {
+  const image = pngImage();
+  const r2 = fakeR2();
+  await r2.put(GC_ATTACHMENT_OBJECT_PREFIX + "41", image);
+  const db = fakeDb([
+    { test: ATTACHMENT_ROW_TEST, first: async () => approvedRow({ size_bytes: MAX_ATTACHMENT_BYTES + 1 }) },
+  ]);
+  const env = envWithLimiters({ GOOBER_DB: db, GC_MEDIA: r2 });
+
+  const response = await serveAttachment(env);
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get("Content-Type"), "image/png");
+  assert.equal(response.headers.get("Content-Length"), String(image.byteLength));
+  assert.equal(response.headers.get("Cache-Control"), "public, max-age=31536000, immutable");
+  assert.deepEqual(new Uint8Array(await response.arrayBuffer()), image);
+  // The paged chunk lane never ran, and the buffered egress (arrayBuffer
+  // reader) was never walked — the streaming lane answered straight from
+  // the bucket body.
+  assert.ok(!db.calls.some((call) => call.call === "all" && PAGED_CHUNK_TEST(call.sql)));
+});
+
+test("serving a LARGE lane row absent from R2 falls back to the paged chunk stream", async () => {
+  const image = pngImage();
+  const r2 = fakeR2();
+  const db = fakeDb([
+    { test: ATTACHMENT_ROW_TEST, first: async () => approvedRow({ size_bytes: MAX_ATTACHMENT_BYTES + 1 }) },
+    { test: PAGED_CHUNK_TEST, all: async () => ({ results: [{ data: image, seq: 0 }] }) },
+  ]);
+  const env = envWithLimiters({ GOOBER_DB: db, GC_MEDIA: r2 });
+
+  const response = await serveAttachment(env);
+  assert.equal(response.status, 200);
+  assert.deepEqual(new Uint8Array(await response.arrayBuffer()), image);
+  assert.ok(db.calls.some((call) => call.call === "all" && PAGED_CHUNK_TEST(call.sql)));
+});
+
+test("serving a LARGE lane row absent everywhere 404s exactly as before", async () => {
+  const r2 = fakeR2();
+  const db = fakeDb([
+    { test: ATTACHMENT_ROW_TEST, first: async () => approvedRow({ size_bytes: MAX_ATTACHMENT_BYTES + 1 }) },
+  ]);
+  const env = envWithLimiters({ GOOBER_DB: db, GC_MEDIA: r2 });
+
+  await assert.rejects(serveAttachment(env), (error) => error.status === 404);
+  // The R2 consult still happened first — the miss just fell through.
+  assert.ok(r2.calls.some((call) => call.op === "get" && call.key === GC_ATTACHMENT_OBJECT_PREFIX + "41"));
+});
+
 // --- media moderation: the R2 delete rides the changes==1 verdict ----------------
 
 const chunkDeleteRoute = (changes) => ({
@@ -503,6 +577,29 @@ test("a successful reject without the GC_MEDIA binding schedules nothing", async
   assert.deepEqual(JSON.parse(await response.text()), { rejected: true, id: 41 });
   assert.equal(ctx.tasks.length, 0);
   assert.equal(r2.calls.length, 0);
+});
+
+// --- the exported object-delete ride (out-of-scope callers' one-liner) ------------
+
+test("scheduleAttachmentObjectDelete schedules one delete through ctx, no-op without the binding", async () => {
+  const r2 = fakeR2();
+  const env = envWithLimiters({ GC_MEDIA: r2 });
+  const ctx = fakeCtx();
+
+  scheduleAttachmentObjectDelete(env, ctx, 41);
+  assert.equal(ctx.tasks.length, 1);
+  await settled(ctx);
+  assert.deepEqual(
+    r2.calls.filter((call) => call.op === "delete").map((call) => call.key),
+    [GC_ATTACHMENT_OBJECT_PREFIX + "41"],
+  );
+
+  // The no-binding dev lane answers the same one-line ride with nothing.
+  const bindingless = envWithLimiters({});
+  const silent = fakeCtx();
+  scheduleAttachmentObjectDelete(bindingless, silent, 41);
+  assert.equal(silent.tasks.length, 0);
+  assert.equal(r2.calls.filter((call) => call.op === "delete").length, 1);
 });
 
 // --- avatars: R2 avatars/<id> first, D1 avatar_data fallback -----------------------
