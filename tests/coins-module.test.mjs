@@ -910,7 +910,7 @@ test("a body tier outside the pair is a 400 with no write", async () => {
   assert.equal(db.calls.filter((entry) => entry.call === "batch" || entry.call === "run").length, 0);
 });
 
-test("the plus payload's tier rides additive: a legacy row reads null and keeps full semantics", async () => {
+test("the plus payload's tier folds read-side: a legacy row reads 'plus' and keeps full semantics", async () => {
   const db = coinDb({
     ledger: [{ user_id: USER_ID, delta: 10, source: "daily", related_user_id: null, created_at: NOW - 60 }],
     plus: [[USER_ID, { renews_until: NOW + TERM, grace_until: null, tenure_started_at: NOW - 86400, gifted_by: null }]],
@@ -918,7 +918,11 @@ test("the plus payload's tier rides additive: a legacy row reads null and keeps 
   const { env } = envWithLimiters(db);
   const { built } = await authed("/api/coins");
   const body = await bodyOf(await dispatch(built, env));
-  assert.equal(body.plus.tier, null, "the legacy NULL is the never-downgrade invariant's read");
+  // The never-downgrade invariant, now also on the PUBLIC key: the legacy
+  // NULL folds to "plus" (publicPlusTier) so the composer's
+  // coins.plus.tier mirror reads full under the lane the server admits —
+  // the shipped null-tier key painted a free cap against a 1 GiB lane.
+  assert.equal(body.plus.tier, "plus", "the legacy NULL folds, the mirror reads full");
   assert.equal(body.plus.active, true);
 });
 

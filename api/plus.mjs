@@ -119,6 +119,16 @@ export function publicIsPlus(row) {
   return Boolean(row && row.is_plus);
 }
 
+// The tier key the PUBLIC payloads seat (the /me mirror's seat in
+// accounts.mjs and the coins snapshot's plus payload): the read-side fold,
+// idiom of attachmentCapBytes above — the 0022 legacy NULL tier reads full
+// Goober+ ("plus"), only the sold-after-0022 Mini row reads "mini". A SQL
+// COALESCE would rewrite the pinned SELECT texts; the fold rides the row,
+// and the strict-active laws stay the caller's (the routes gate the seat).
+export function publicPlusTier(row) {
+  return row && row.tier === "mini" ? "mini" : "plus";
+}
+
 // --- the cosmetics validators (same discipline as api/accent.mjs) -----------
 
 export const FLAIR_MAX = 16;

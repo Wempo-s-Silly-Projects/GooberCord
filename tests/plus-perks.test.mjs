@@ -34,6 +34,7 @@ import {
   plusPerkActive,
   publicCosmetics,
   publicIsPlus,
+  publicPlusTier,
 } from "../api/plus.mjs";
 import { HttpError, json } from "../api/core/http.mjs";
 import { randomToken, sha256Hex, nowSeconds } from "../api/core/crypto.mjs";
@@ -174,6 +175,16 @@ test("attachmentCapBytes rides the TIERS: plus 1 GiB, mini 50 MiB, free 20 MiB, 
     NOW,
   );
   assert.deepEqual(rowlessCaps, { fileBytes: 20 * 1024 * 1024, requestBytes: 20 * 1024 * 1024 + 512 * 1024, tier: null });
+});
+
+test("publicPlusTier folds the legacy NULL tier to 'plus' on the public key (attachmentCapBytes's idiom, read-side)", () => {
+  // The 0022 legacy rows (sold before the tier column) ride no tier value —
+  // the PUBLIC payloads seat the fold same way the cap resolver does, so the
+  // composer's coins.plus.tier mirror and the /me mirror both read full.
+  assert.equal(publicPlusTier({ tier: null }), "plus");
+  assert.equal(publicPlusTier({ tier: undefined }), "plus");
+  assert.equal(publicPlusTier({ tier: "plus" }), "plus");
+  assert.equal(publicPlusTier({ tier: "mini" }), "mini");
 });
 
 // --- account-routes scaffolding ---------------------------------------------------
@@ -323,6 +334,23 @@ test("GET /api/me: grace mints the FALSE badge with perks off, and the cosmetics
   assert.equal("flair" in body.user, false);
 });
 
+test("GET /api/me: the legacy NULL tier seats plusTier 'plus' (a full member's mirror never absents)", async () => {
+  const db = fakeDb([
+    sessionRoute,
+    { test: ACCENTS_TEST, first: async () => null },
+    { test: COSMETICS_ROWR_TEST, first: async () => null },
+    // The 0022 legacy row: ACTIVE term, no tier value — before the read-side
+    // fold this truthy-gate dropped the key, and the composer's laneTier
+    // fell through to the free cap under a 1 GiB server lane.
+    tierRowRoute(1, null),
+  ]);
+  const response = await dispatch(authed("GET", "/api/me"), envWithLimiters({ GOOBER_DB: db }));
+  assert.equal(response.status, 200);
+  const body = await bodyOf(response);
+  assert.equal(body.user.isPlus, true);
+  assert.equal(body.user.plusTier, "plus");
+});
+
 // --- PATCH /api/me/cosmetics -------------------------------------------------------
 
 const COSMETICS_UPSERT_TEST = (sql) =>
@@ -461,7 +489,7 @@ test("PATCH /api/me/cosmetics: null clears, absent body is allowed, and invalid 
 
 // --- the tiered coin mints ---------------------------------------------------------
 
-function coinRoutesDb({ plus, ledger = [], day = { earned: 0, daily: 0, message: 0, voice: 0 } }) {
+function coinRoutesDb({ plus, plusTier, ledger = [], day = { earned: 0, daily: 0, message: 0, voice: 0 } }) {
   const routes = [
     sessionRoute,
     // plusPerkActive's ONE indexed term read.
@@ -490,7 +518,7 @@ function coinRoutesDb({ plus, ledger = [], day = { earned: 0, daily: 0, message:
     {
       test: (sql) => sql.startsWith("SELECT renews_until, grace_until, tenure_started_at, gifted_by"),
       first: async () => plus
-        ? { renews_until: NOW + 1000, grace_until: null, tenure_started_at: NOW - 9000, gifted_by: null }
+        ? { renews_until: NOW + 1000, grace_until: null, tenure_started_at: NOW - 9000, gifted_by: null, tier: plusTier }
         : null,
     },
   ];
@@ -533,6 +561,30 @@ test("an inactive term mints the FREE claim values and answers the free standing
   const body = await bodyOf(response);
   assert.equal(body.dailyCeiling, 250);
   assert.equal(body.daily.grant, 25);
+});
+
+test("GET /api/coins: the legacy NULL tier folds to 'plus' on the snapshot (the composer's mirror)", async () => {
+  // The 0022 legacy row reads full Goober+ on the PUBLIC key — before the
+  // read-side fold the snapshot carried tier null, the composer's
+  // plusFullTerm fell through, and a full member's lanes painted the free cap.
+  const db = coinRoutesDb({ plus: true, plusTier: null });
+  const url = new URL(ORIGIN + "/api/coins");
+  const response = await handleCoinRoutes(
+    authed("GET", "/api/coins"), envWithLimiters({ GOOBER_DB: db }), url, url.pathname, "GET", undefined,
+  );
+  assert.equal(response.status, 200);
+  const body = await bodyOf(response);
+  assert.equal(body.plus.hasPlus, true);
+  assert.equal(body.plus.active, true);
+  assert.equal(body.plus.tier, "plus");
+  // The Mini's own key stays exact (only the NULL folds).
+  const miniDb = coinRoutesDb({ plus: true, plusTier: "mini" });
+  const miniResponse = await handleCoinRoutes(
+    authed("GET", "/api/coins"),
+    envWithLimiters({ GOOBER_DB: miniDb }),
+    url, url.pathname, "GET", undefined,
+  );
+  assert.equal((await bodyOf(miniResponse)).plus.tier, "mini");
 });
 
 test("grantMessageCoins: an active term mints 3 per message; caps stay UNSCALED", async () => {

@@ -54,7 +54,13 @@ import { hashPassword, isValidPassword, isValidPasswordPepper, verifyPassword } 
 import { publicRole, ROLE_MEMBER_DB } from "./core/roles.mjs";
 import { verifyTotpCode } from "./core/totp.mjs";
 import { isStrictHexAccent, publicAccent } from "./accent.mjs";
-import { isValidBanner, isValidFlair, plusPerkActive, publicCosmetics } from "./plus.mjs";
+import {
+  isValidBanner,
+  isValidFlair,
+  plusPerkActive,
+  publicCosmetics,
+  publicPlusTier,
+} from "./plus.mjs";
 import { applyWordFilter, containsFilteredWord, normalizeUsernameForFilter } from "./filter.mjs";
 import { ensureFilterWords, filterWords } from "./filterstore.mjs";
 import { relayNetworkBanCheck, relaySet, relayVerify } from "./relay.mjs";
@@ -583,7 +589,9 @@ async function handleMeRoute(request, env) {
       // grace members keep a lapsed badge with perks OFF. api/plus.mjs's
       // two-predicate note explains the split from publicPlus's display.
       // The tier rides the SAME row (wave-19: the upload tiers' client face —
-      // me.plusTier seats the composer's tier mirrors; no row, no key).
+      // me.plusTier seats the composer's tier mirrors; no row, no key). The
+      // 0022 legacy NULL tier folds read-side (publicPlusTier) — a full
+      // member's mirror never absents under the server's 1 GiB lane.
       // POSITIONAL binds (the fleet's universal idiom) — the named-bind
       // object form this seat briefly rode 500'd real prod D1 while the
       // fakeDb suite passed (the owner's Nov 19 blank-shell report): a
@@ -599,8 +607,12 @@ async function handleMeRoute(request, env) {
       isPlus: Boolean(plusRow?.active),
       // The upload tiers' seat (wave-19): only an ACTIVE term's tier paints —
       // a lapsed term answers the strict-active law, absence adds no key
-      // (the accent pair's idiom).
-      ...(plusRow?.active && plusRow?.plusTier ? { plusTier: plusRow.plusTier } : {}),
+      // (the accent pair's idiom). The NULL tier folds to "plus"
+      // (publicPlusTier): the legacy rows read full, never absent. The
+      // SELECT aliases the column (tier AS plusTier) — the row-based helper
+      // sees the aliased key through the { tier } wrapper, never a silent
+      // undefined fold.
+      ...(plusRow?.active ? { plusTier: publicPlusTier({ tier: plusRow.plusTier }) } : {}),
       // Additive, the accent pair's idiom: an unset banner/flair adds NO key
       // (the 0005 shape is untouched for a member who never decorated).
       ...(cosmetics.banner !== null ? { banner: cosmetics.banner } : {}),

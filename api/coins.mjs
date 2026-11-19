@@ -100,7 +100,7 @@ import {
   GC_SERVER_GRANT,
   GC_SERVER_MINT_DAILY_CAP,
 } from "../constants.mjs";
-import { plusPerkActive } from "./plus.mjs";
+import { plusPerkActive, publicPlusTier } from "./plus.mjs";
 import { isValidUsername } from "./usernames.mjs";
 
 // --- the guard SQL (the economy's teeth) ------------------------------------
@@ -577,10 +577,13 @@ function publicPlus(row, now) {
     giftedBy: row.gifted_by === null || row.gifted_by === undefined
       ? null
       : Number(row.gifted_by),
-    // The 0022 tier (additive): a legacy NULL row reads null — the READ side
-    // still answers full Goober+ everywhere the strict perk predicate rides;
-    // the tier key exists so the shop can never mis-sell a Mini onto it.
-    tier: typeof row.tier === "string" ? row.tier : null,
+    // The 0022 tier (additive): the read-side fold seats the legacy NULL row
+    // as "plus" (publicPlusTier, attachmentCapBytes's idiom) — the tier key
+    // exists so the shop can never mis-sell a Mini onto it AND so the
+    // composer's mirror (coins.plus.tier === "plus") reads full under the
+    // lane its server cap already admits; only the sold-after-0022 Mini row
+    // reads "mini".
+    tier: publicPlusTier(row),
   };
 }
 
