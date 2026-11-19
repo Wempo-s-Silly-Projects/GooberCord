@@ -194,7 +194,7 @@ test("the weld carries the echo's consumable state: qty AND equipped (the spend'
 // uncommitted handback has no committed range to fingerprint.
 test("freeze: the frozen paths stay untouched across LANE_BASE..LANE_TIP", () => {
   const LANE_BASE = "8ce8d26";
-  const LANE_TIP = "LANE_TIP"; // placeholder — the lead retargets at commit time
+  const LANE_TIP = "c97c239";
   const tip = LANE_TIP === "LANE_TIP" ? LANE_BASE : LANE_TIP;
   let touched;
   try {
@@ -221,7 +221,7 @@ test("freeze: the frozen paths stay untouched across LANE_BASE..LANE_TIP", () =>
 
 test("freeze: api/coins.mjs is byte-identical across LANE_BASE..LANE_TIP (the wave's own range)", () => {
   const LANE_BASE = "8ce8d26";
-  const LANE_TIP = "LANE_TIP"; // placeholder — the lead retargets at commit time
+  const LANE_TIP = "c97c239";
   const tip = LANE_TIP === "LANE_TIP" ? LANE_BASE : LANE_TIP;
   let bytes;
   try {
