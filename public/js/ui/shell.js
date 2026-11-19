@@ -51,10 +51,15 @@ import { coinFooterLine } from "./economy.js";
 import { serverAdminRights } from "./settings.js";
 import { wempoAccountsSignOutUrl } from "./landing.js";
 import { renderBookmarksPanel } from "./bookmarks.js";
+import { renderCapsulesPanel } from "./capsules.js";
 
 // The bookmarks panel: its route registers here (the shell owns the nav
 // entry AND its door; main.js's route table stays untouched).
 router.addRoute("/bookmarks", "bookmarks", renderBookmarksPanel);
+
+// The capsules panel: the server-scoped page rides the same shell-owned
+// wire (the wave-11 slate; main.js's route table stays untouched).
+router.addRoute("/s/:serverId/capsules", "server-capsules", renderCapsulesPanel);
 
 // AGPL §13's source-offer rides the shell's user footer: every signed-in
 // screen carries the quiet anchor next to sign-out, pointing at the repo.
@@ -300,6 +305,15 @@ function channelRail() {
   rail.append(h("a", { class: "channel-row bookmarks-item", href: "/bookmarks",
     "aria-label": t("gc.shell.nav.bookmarks") },
   h("span", { class: "channel-hash", text: "*" }), t("gc.shell.nav.bookmarks")));
+
+  // The capsules door: the active server's own time-capsule panel
+  // (capsules.js owns it) — the same text-and-label grammar; it rides the
+  // server-scoped half of the rail, so the door only exists on a server.
+  if (server) {
+    rail.append(h("a", { class: "channel-row capsules-item", href: `/s/${server.id}/capsules`,
+      "aria-label": t("gc.shell.nav.capsules") },
+    h("span", { class: "channel-hash", text: "✉" }), t("gc.shell.nav.capsules")));
+  }
 
   if (server && Array.isArray(server.channels)) {
     // Channels file under their categories when the server has any;

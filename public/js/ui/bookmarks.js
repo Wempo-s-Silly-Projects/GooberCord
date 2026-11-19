@@ -35,11 +35,14 @@ import { t } from "../i18n.js";
 
 // GET /api/bookmarks — the private list mirrors into the store lane (the
 // chat row's save state reads THIS lane; no second GET exists anywhere).
+// The envelope's truncated seat rides its own quiet lane key (the wave-11
+// rider): the chat save lane keeps reading the pointer array, untouched.
 const BOOKMARKS_LANE = "bookmarks";
 
 export async function loadBookmarks() {
   const payload = await api("/api/bookmarks");
   store.set({ [BOOKMARKS_LANE]: Array.isArray(payload?.bookmarks) ? payload.bookmarks : [] });
+  store.set({ bookmarksTruncated: payload?.truncated === true });
   return store.get(BOOKMARKS_LANE);
 }
 
@@ -83,17 +86,24 @@ export function renderBookmarksPanel(route, mount) {
     });
     return;
   }
-  panel.append(bookmarkRows(lane));
+  panel.append(bookmarkRows(lane, store.get("bookmarksTruncated") === true));
 }
 
 // The pointer rows: message reference + saved date + the row's own unsave.
 // One explicit click per row (the defaults law); a refused unsave's 404
 // verdict renders verbatim inline and the panel keeps its painted rows.
-function bookmarkRows(rows) {
+// The wave-11 rider: the envelope's truncated seat paints the shown count
+// only when the payload says so — presence, never an invented total (N+1
+// known is a lie).
+function bookmarkRows(rows, truncated) {
   if (rows.length === 0) {
     return h("p", { class: "empty-state", text: t("gc.bookmarks.empty") });
   }
   const errorLine = h("p", { class: "form-error", role: "alert", "aria-live": "polite" });
+  // The shown count rides the rows actually painted; the payload's own
+  // truncated flag is the only seat that turns the line on.
+  const truncatedRow = h("p", { class: "muted count-line", text: t("gc.bookmarks.more", { shown: rows.length }) });
+  const tail = truncated === true ? [truncatedRow, errorLine] : [errorLine];
   const list = h("div", { class: "bookmark-rows" });
   for (const row of rows) {
     list.append(h("div", { class: "bookmark-row" },
@@ -115,7 +125,7 @@ function bookmarkRows(rows) {
         },
       })));
   }
-  return h("div", { class: "bookmark-list" }, list, errorLine);
+  return h("div", { class: "bookmark-list" }, list, ...tail);
 }
 
 // The pointer's saved_at is unix seconds (bookmarks.mjs writes nowSeconds()):
