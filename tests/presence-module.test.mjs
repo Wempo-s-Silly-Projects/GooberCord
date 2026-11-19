@@ -29,7 +29,7 @@ import { PresenceHub } from "../api/presence.mjs";
 import { handlePresenceRoutes } from "../api/presence.mjs";
 import { ChatRoom } from "../api/rooms.mjs";
 import { randomToken, sha256Hex, nowSeconds } from "../api/core/crypto.mjs";
-import { HttpError, json } from "../api/core/http.mjs";
+import { HttpError, json, MAX_JSON_BYTES } from "../api/core/http.mjs";
 
 const ORIGIN = "http://localhost";
 const MEMBER_ID = 7;
@@ -707,4 +707,54 @@ test("POST /api/presence/announce refuses the unsigned and degrades to 503 witho
     { GOOBER_DB: fakeDb([{ test: SESSION_READ_TEST, first: async () => row }]) },
   );
   assert.equal(noBinding.status, 503);
+});
+
+// --- GO-HAYWIRE cycle-4 ------------------------------------------------------------
+
+test("the hub's leave lands only on the user's LAST socket (per-user connect count)", async () => {
+  const hub = new PresenceHub({ setWebSocketAutoResponse() {} }, {});
+  await hubFrame(hub, { type: "connect", userId: 1, username: "alice" });
+  // A second live socket — another room's DO forwarded its own connect.
+  await hubFrame(hub, { type: "connect", userId: 1, username: "alice" });
+
+  // The first close: another socket still holds the user up — no leave.
+  await hubFrame(hub, { type: "leave", userId: 1 });
+  const stillThere = await hubFrame(hub, { type: "list" });
+  assert.deepEqual(stillThere.online.map((entry) => entry.userId), [1]);
+
+  // The last close: now the hub drops the user.
+  await hubFrame(hub, { type: "leave", userId: 1 });
+  const gone = await hubFrame(hub, { type: "list" });
+  assert.deepEqual(gone.online, []);
+});
+
+test("a leave for a user the hub never counted still clears them", async () => {
+  const hub = new PresenceHub({ setWebSocketAutoResponse() {} }, {});
+  // The announce route's heartbeat path upserts without a connect count.
+  await hubFrame(hub, { type: "heartbeat", userId: 5, username: "eve" });
+  await hubFrame(hub, { type: "leave", userId: 5 });
+  const gone = await hubFrame(hub, { type: "list" });
+  assert.deepEqual(gone.online, []);
+});
+
+test("PATCH /api/me/status reads through the bounded body cap (over-MAX is 413)", async () => {
+  const { row, headers } = await sessionFixtures("wempos");
+  const db = fakeDb([{ test: SESSION_READ_TEST, first: async () => row }]);
+
+  // One byte past the shared JSON cap — the unbounded request.json() this
+  // PATCH used to ride would swallow it whole; readJson refuses at the cap.
+  const oversized = JSON.stringify({ statusText: "hi", pad: "x".repeat(MAX_JSON_BYTES + 1) });
+  const response = await dispatch(
+    new Request(`${ORIGIN}/api/me/status`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", ...headers },
+      body: oversized,
+    }),
+    { GOOBER_DB: db },
+  );
+
+  assert.equal(response.status, 413);
+  const body = await bodyOf(response);
+  assert.equal(body.error, "That upload is too large.");
+  assert.deepEqual(db.writes, []);
 });

@@ -307,6 +307,12 @@ export const GC_VOICE_MAX_PARTICIPANTS = 6;
 // can make the DO relay to every other participant.
 export const GC_VOICE_MAX_FRAME_BYTES = 2048;
 
+// The typing frame floor (GO-HAYWIRE cycle-4): every "typing" WS frame fans
+// out to every other socket in the room, so an unthrottled client (or a
+// hostile one) amplified N-1 relays per frame. The DO drops repeats inside
+// this per-(channel, user) window instead of trusting the client's throttle.
+export const GC_TYPING_FLOOR_SECONDS = 2;
+
 // The server rules gate (0012): one owner-set text + per-member acceptance.
 // The owner's rules document is bounded like the forum's own rules page copy
 // (20 KiB); the shared 403's stable message rides the gate's payload so the

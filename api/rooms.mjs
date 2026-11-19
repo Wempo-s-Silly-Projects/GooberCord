@@ -60,6 +60,7 @@ import { sendMessageToChannel as sendMessageToChannelPrimitive, RulesGateError, 
 import { CARE_WS_FRAME_TYPE } from "./filterrules.mjs";
 import { HttpError, json } from "./core/http.mjs";
 import {
+  GC_TYPING_FLOOR_SECONDS,
   GC_VOICE_FRAME_VERSION,
   GC_VOICE_MAX_FRAME_BYTES,
   GC_VOICE_MAX_PARTICIPANTS,
@@ -454,6 +455,61 @@ export class ChatRoom extends (workerd?.DurableObject ?? DurableObjectBase) {
     return ok;
   }
 
+  // The typing floor (GO-HAYWIRE cycle-4): a "typing" frame fans out to every
+  // other socket in the room, so the client-side throttle the typing branch
+  // used to trust was an amplification lever — a hostile socket could inject
+  // typing frames at wire rate and make the DO relay N-1 copies of each. The
+  // floor is the voice TTL-cache's shape, keyed per (channel, user): repeats
+  // inside GC_TYPING_FLOOR_SECONDS are dropped WITHOUT an error frame or a
+  // close, and a hibernate just resets the window (a failed floor only
+  // loosens the throttle, never widens the gate below).
+  static TYPING_FLOOR_MS = GC_TYPING_FLOOR_SECONDS * 1000;
+
+  typingFloorCache = new Map(); // `${channelId}:${userId}` → last accepted (ms)
+
+  typingFloorPassed(meta) {
+    const key = meta.channelId + ":" + meta.userId;
+    const now = Date.now();
+    const last = this.typingFloorCache.get(key);
+    if (last !== undefined && now - last < ChatRoom.TYPING_FLOOR_MS) return false;
+    // Same idle bound as the voice cache: expired entries die on a consult
+    // once the map outgrows its cap, so a long-idle DO never grows unbounded.
+    if (this.typingFloorCache.size > 512) {
+      for (const [entryKey, entryAt] of this.typingFloorCache) {
+        if (now - entryAt >= ChatRoom.TYPING_FLOOR_MS) this.typingFloorCache.delete(entryKey);
+      }
+    }
+    this.typingFloorCache.set(key, now);
+    return true;
+  }
+
+  // The typing frame's M3 re-check — the SAME fragments the msg frame walks
+  // (channel row, membership, the VIEW/SEND pair on server channels), minus
+  // the sender-facing error frame: a kick or a deny revoke here is SILENT,
+  // the voice door's shape. A kicked member's dead socket cannot broadcast
+  // typing at all.
+  async typingAllowed(meta) {
+    let ok = false;
+    try {
+      const channelRow = await fanInChannelRow(this.env, meta.channelId);
+      if (channelRow && (await fanInMembershipOk(this.env, channelRow, meta.userId))) {
+        ok = true;
+        if (channelRow.server_id !== null && channelRow.server_id !== undefined) {
+          await enforceChannelBits(
+            this.env,
+            { id: channelRow.id, server_id: channelRow.server_id },
+            meta.userId,
+            ["VIEW", "SEND"],
+          );
+        }
+      }
+    } catch (error) {
+      void error; // fail closed
+      ok = false;
+    }
+    return ok;
+  }
+
   // The one hot path: an Opus packet in, tagged + relayed out. Header:
   //   client→DO: [0x01][opus packet]
   //   DO→peers:  [0x01][sender userId BE u32][opus packet]
@@ -607,8 +663,14 @@ export class ChatRoom extends (workerd?.DurableObject ?? DurableObjectBase) {
     }
 
     if (type === "typing") {
-      // No persistence; broadcast to the others only (the sender throttles
-      // client-side).
+      // No persistence. Two gates before the fan-out (GO-HAYWIRE cycle-4):
+      // the M3 member re-check first — a kicked or revoked socket fans out
+      // nothing and hears nothing back — then the per-(channel, user) floor,
+      // which bounds the N-1 amplification the formerly client-only throttle
+      // left open. Inside the window the frame is dropped silently: no error
+      // frame, no close.
+      if (!(await this.typingAllowed(meta))) return;
+      if (!this.typingFloorPassed(meta)) return;
       this.broadcastJson(socket, { type: "broadcast", kind: "typing", userId: meta.userId });
       return;
     }
