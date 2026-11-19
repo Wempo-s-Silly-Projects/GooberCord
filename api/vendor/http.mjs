@@ -1,33 +1,45 @@
-// Project Designer — experience/http
-// The response/error/dispatch vocabulary, extracted from wempos-forum's
-// api/core/http.mjs + worker.mjs's api chain (GooberCord carries the same
-// vocabulary in its own api/core — the two were twins first).
+// Copyright 2026 YourLocalGoober
+//
+// This file is part of GooberCord.
+//
+// GooberCord is free software: you can redistribute it and/or modify it
+// under the terms of the GNU Affero General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful, but
+// WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU Affero General Public License for more details.
+//
+// You should have received a copy of the
+// GNU Affero General Public License along with this program.  If not,
+// see <https://www.gnu.org/licenses/>
+
+// api/vendor/http.mjs — fleet-owned response/error/dispatch vocabulary.
 //
 // THE HOUSE RULES this module enforces by construction:
 //   - EVERY response rides the security header set: json() applies it to the
 //     API surface, and the static leg's secureResponse (on makeHttp, with the
-//     app's securityHeaders riding config) applies it to the asset surface —
-//     the apps' worker.mjs carried byte-identical secureResponse/unconditional
-//     twins, which is now this module (static-leg deliverable).
-//   - errors are thrown, never returned: the route handlers raise HttpError
-//     and ONE classifier (errorReply) turns the whole API's possible
-//     failures into the single response shape — { error: message }, the
-//     payload passthrough when a route needs a richer body (the ban screen),
-//     and the ONE shared 500 that never echoes internals ("Forum request
-//     failed:" was the forum's console label; apps pass their own label).
-//   - the shared 403/401/410/429 lives in the route module that owns it —
-//     this module only guarantees the classification plumbing, so no route
-//     can grow its own rival error shape.
+//     app's securityHeaders riding config) applies it to the asset surface.
+//   - errors are thrown, never returned: route handlers raise HttpError and
+//     ONE classifier (errorReply) turns the whole API's possible failures
+//     into the single response shape — { error: message }, the payload
+//     passthrough when a route needs a richer body, and the ONE shared 500
+//     that never echoes internals (apps pass their own console label).
+//   - the shared 403/401/410/429 literals live in the route module that owns
+//     them — this module only guarantees the classification plumbing, so no
+//     route can grow its own rival error shape.
 //   - rate limits key through a SHA-256 of scope:actor (actor when given,
 //     else the connecting IP), resolved through the app's binding-name map;
 //     a missing limiter is a hard 503, never a silently unlimited route.
 //
-// No dependencies, no build step. The D1/database surface is NOT here —
-// experience/db owns it (deliverable 4).
+// No dependencies, no build step. WebCrypto is global in Workers and
+// Node 18+, so no hashing dependency is needed.
 
 export class HttpError extends Error {
-  // `payload` replaces the JSON body when present (the ban-screen login
-  // response, which carries reason/expiresAt beyond the error message).
+  // `payload` replaces the JSON body when present (a login-denied response
+  // that carries reason/expiresAt beyond the error message).
   constructor(status, message, headers = {}, payload = null) {
     super(message);
     this.name = "HttpError";
@@ -40,9 +52,6 @@ export class HttpError extends Error {
 export const MAX_JSON_BYTES = 16 * 1024;
 const TURNSTILE_TOKEN_MAX_LENGTH = 2048;
 
-// sha256Hex: the same identity-hashing the apps' crypto leaf performs
-// (crypto.subtle digest, hex-encoded). Rate-limiter keys arrive normalized;
-// WebCrypto is global in Workers and Node 18+, so no dependency is needed.
 async function sha256Hex(value) {
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
   return Array.from(new Uint8Array(digest)).map((byte) => byte.toString(16).padStart(2, "0")).join("");
@@ -75,9 +84,8 @@ export function json(data, status = 200, headers = {}) {
 }
 
 // The ONE error classifier: HttpErrors ride their own status/shape (payload
-// passthrough included); anything else is console-logged with the app's label
-// and answers the single shared 500. Extraction note: the original inlined
-// this in worker.mjs (apiError); the framework makes it named and shared.
+// passthrough included); anything else is console-logged with the app's
+// label and answers the single shared 500.
 export function errorReply(error, consoleLabel = "Request failed:") {
   if (error instanceof HttpError) {
     return json(error.payload || { error: error.message }, error.status, error.headers);
@@ -88,9 +96,7 @@ export function errorReply(error, consoleLabel = "Request failed:") {
 
 // The ONE dispatch chain: a route file exports handler(request, env, url,
 // path, method, ctx); the first truthy response wins; nobody matched falls
-// to the app's 404 copy. (Original: the handlers-for-loop in worker.mjs's
-// routeApi — the array-of-handlers shape is kept EXACTLY so migrating a
-// route file is a one-line import swap, never a rewrite.)
+// to the chain's 404 (or the app's after-tail, when it passes one).
 export function dispatch(handlers, after = null) {
   return async (request, env, url, path, method, ctx) => {
     for (const handler of handlers) {
@@ -102,18 +108,15 @@ export function dispatch(handlers, after = null) {
   };
 }
 
-// --- the static leg -----------------------------------------------------------
+// --- the static leg ------------------------------------------------------------
 
 // Conditional gets (If-None-Match / If-Modified-Since) are dropped before the
 // asset pipeline sees them — but only for DOCUMENT requests: ASSETS.fetch
-// answers them with a bare 304 that bypasses the app-side stamping entirely,
-// so the browser would keep its pre-stamp, pre-security-header HTML until the
+// answers them with a bare 304 that bypasses app-side stamping entirely, so
+// the browser would keep its pre-stamp, pre-security-header HTML until the
 // etag changed. Only HTML documents get stamped, so only document requests
-// need the force-200 trade; every other asset (JS/CSS/images) keeps its
-// correct 304 revalidation path instead of a full 200 per visit. (The two
-// apps carried this block byte-identical in their worker.mjs; the extraction
-// keeps the names — unconditional, isDocumentRequest — so migrating a worker
-// is an import swap, never a rewrite.)
+// need the force-200 trade; every other asset keeps its correct 304
+// revalidation path instead of a full 200 per visit.
 const CONDITIONAL_HEADERS = ["If-None-Match", "If-Modified-Since"];
 const DOCUMENT_SECFETCH_DESTS = new Set(["document", "iframe", "frame"]);
 
@@ -132,9 +135,7 @@ export function unconditional(request) {
   if (!isDocumentRequest(request)) return request;
   const headers = new Headers(request.headers);
   for (const name of CONDITIONAL_HEADERS) headers.delete(name);
-  // The rebuilt request spells URL + method explicitly (the forum twin's
-  // shape; GooberCord rebuilt by Request-copy instead). Behaviorally
-  // identical for the GET document requests this leg serves — the explicit
+  // The rebuilt request spells URL + method explicitly; the explicit
   // spelling wins because it does not depend on the original request's
   // internals surviving a copy.
   return new Request(request.url, { method: request.method, headers });
@@ -167,10 +168,9 @@ export function makeHttp({
   }
 
   // requireMutationApplied: the guarded-WRITE pin — an INSERT/UPDATE/DELETE
-  // the row guard refused (changes === 0) answers the shared 403, exactly
-  // like the original: the route's WHERE clause carries the session's ban
-  // gate, so a refused mutation IS "currently banned" from the caller's
-  // point of view. The message stays the pair's literal.
+  // the row guard refused (changes === 0) answers the shared 403: the
+  // route's WHERE clause carries the session's ban gate, so a refused
+  // mutation IS "currently banned" from the caller's point of view.
   function requireMutationApplied(result) {
     if (Number(result?.meta?.changes) !== 1) {
       throw new HttpError(403, "This account is currently banned.");
@@ -238,15 +238,12 @@ export function makeHttp({
     return result;
   }
 
-  // The static leg: an upstream (ASSETS) response re-wrapped with the security
-  // header set the app chose on config. Body, status, and statusText pass
-  // through untouched; the header set is the only thing the leg decides. The
-  // framework default serves the framework's own set; a divergent app (a
-  // voice policy, say) passes ITS securityHeaders and every static response
-  // rides that one instead — the same re-assertion point the apps' inline
-  // secureResponse used. (The build-stamping that often surrounds this call
-  // stays app-side: it differs per app — build-meta injection is an app's
-  // document, not a framework concern.)
+  // The static leg: an upstream (ASSETS) response re-wrapped with the
+  // security header set the app chose on config. Body, status, and
+  // statusText pass through untouched; the header set is the only thing the
+  // leg decides. (The build-stamping that often surrounds this call stays
+  // app-side: it differs per app — build-meta injection is an app's
+  // document, not this module's concern.)
   function secureResponse(response) {
     return new Response(response.body, {
       status: response.status,
@@ -265,8 +262,7 @@ export function makeHttp({
   };
 }
 
-// requireTurnstile stays an app-side concern for now: it fetches siteverify
-// with the app's secret/hostnames and the shared fail-closed refusals — the
-// extraction lands with experience/auth (deliverable 5), which owns every
-// credential-adjacent call, so the verification wall ships in one piece.
-// Deliberate: half a Turnstile here is worse than the whole one there.
+// requireTurnstile stays an app-side concern: it fetches siteverify with the
+// app's secret/hostnames, so the credential-adjacent call keeps living in
+// api/core/http.mjs (app-owned), half of a Turnstile wall is worse than the
+// whole one.
