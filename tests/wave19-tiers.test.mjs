@@ -67,6 +67,7 @@ const TOUCHED = [
   "public/js/ui/uploads.js",
   "public/js/ui/chat.js",
   "tests/plus-perks.test.mjs",
+  "tests/wave14-uploads.test.mjs",
   "tests/wave19-tiers.test.mjs",
 ];
 
@@ -511,7 +512,7 @@ test("the reused size-refusal key rides en + the 8 REAL translations", () => {
 // the source pins carry the freeze.
 test("freeze: every module outside the wave's touched set stays byte-identical", () => {
   const LANE_BASE = "100cf8b";
-  const LANE_TIP = "LANE_TIP"; // the lead's retarget seat
+  const LANE_TIP = "536d23d";
   const tip = LANE_TIP === "LANE_TIP" ? LANE_BASE : LANE_TIP;
   let touched;
   try {
