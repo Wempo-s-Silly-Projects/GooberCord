@@ -285,7 +285,7 @@ test("the shim helper's own AGPL header rides the canonical shape", () => {
 // the source pins carry the freeze.
 test("freeze: every module outside the wave's touched set stays byte-identical", () => {
   const LANE_BASE = "9602332";
-  const LANE_TIP = "LANE_TIP";
+  const LANE_TIP = "ed4d5cf";
   const tip = LANE_TIP === "LANE_TIP" ? LANE_BASE : LANE_TIP;
   const TOUCHED = [
     "public/js/core/api.js",
