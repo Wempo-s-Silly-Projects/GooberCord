@@ -500,8 +500,13 @@ test("the history page's grouped read echoes fxBurst on the flagged user entry",
 });
 
 test("the flag rides BOTH messages.mjs grouped reads (history + pins) in the SELECT", () => {
+  // The bind-limit rider deduped the two page reads into ONE shared
+  // chunked fan-out (groupedPayloadReads) — the SELECT echo is one copy
+  // in the source and still rides BOTH pages (the pins-read suite holds
+  // the wire-level pin for each page's fx_burst payload).
   const echoes = (MESSAGES.match(/r\.fx_burst AS fx_burst/g) || []).length;
-  assert.equal(echoes, 2, "the history page and the pins page grouped reads");
+  assert.equal(MESSAGES.includes("function groupedPayloadReads") ? echoes === 1 : echoes === 2, true,
+    "the shared fan-out carries the one echo (or the pre-rider pair carries two), never zero");
 });
 
 // --- the equip arm extension (the effects slot equips its pack) -------------------

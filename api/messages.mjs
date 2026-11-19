@@ -571,6 +571,37 @@ function groupReactionRows(rows, reactionGroupsByMessage) {
   }
 }
 
+// The pages' grouped reads' fan-out (the history page and the pins page
+// share it — one loop, never a drifted pair). The attachments + reactions
+// IN-list reads chunk the id list at PINS_READ_BIND_CHUNK so no statement's
+// bind list crosses D1's 100-bind per-query limit on a full page (the
+// attachment chunk's bound list alone is 1 + its ids). A chunk is a
+// partition of the id list — a message's rows all land in one — so the
+// merged maps come out in the single read's exact grouping order.
+async function groupedPayloadReads(env, userId, messageIds, attachmentIdsByMessage, reactionGroupsByMessage) {
+  for (let start = 0; start < messageIds.length; start += PINS_READ_BIND_CHUNK) {
+    const chunk = messageIds.slice(start, start + PINS_READ_BIND_CHUNK);
+    const placeholders = chunk.map(() => "?").join(",");
+    const attachments = (await env.GOOBER_DB.prepare(
+      "SELECT id, message_id FROM gc_attachments " +
+        "WHERE " + ATTACHMENT_GATE_SQL + " AND message_id IN (" +
+        placeholders + ") ORDER BY id",
+    ).bind(userId, ...chunk).all()).results || [];
+    for (const row of attachments) {
+      const list = attachmentIdsByMessage.get(Number(row.message_id)) || [];
+      list.push(Number(row.id));
+      attachmentIdsByMessage.set(Number(row.message_id), list);
+    }
+    const reactions = (await env.GOOBER_DB.prepare(
+      "SELECT r.message_id AS message_id, r.emoji AS emoji, r.user_id AS user_id, u.username AS username, r.fx_burst AS fx_burst " +
+        "FROM gc_message_reactions r JOIN users u ON u.id = r.user_id " +
+        "WHERE r.message_id IN (" + placeholders + ") " +
+        "ORDER BY r.created_at, r.user_id",
+    ).bind(...chunk).all()).results || [];
+    groupReactionRows(reactions, reactionGroupsByMessage);
+  }
+}
+
 // Validation + filter gate shared by the send and the edit. The forum's
 // masking pass decides: a body that would mask is refused (FilterError), a
 // body that survives unchanged is stored verbatim.
@@ -1073,32 +1104,13 @@ async function handleListMessagesRoute(request, env, url, channelId) {
   // initial history load).
   ).bind(...(after === null ? [nowSeconds(), channelId] : [nowSeconds(), channelId, after])).all()).results || [];
 
-  // Attachments ride one grouped read with the visibility gate: approved
-  // rows for everyone, pending rows only for THIS viewer.
+  // Attachments ride the shared grouped read fan-out with the visibility
+  // gate: approved rows for everyone, pending rows only for THIS viewer.
   const messageIds = page.map((row) => Number(row.id));
   const attachmentIdsByMessage = new Map();
   const reactionGroupsByMessage = new Map();
   if (messageIds.length) {
-    const result = await env.GOOBER_DB.prepare(
-      "SELECT id, message_id FROM gc_attachments " +
-        "WHERE " + ATTACHMENT_GATE_SQL + " AND message_id IN (" +
-        messageIds.map(() => "?").join(",") + ") ORDER BY id",
-    ).bind(userId, ...messageIds).all();
-    for (const row of result.results || []) {
-      const list = attachmentIdsByMessage.get(Number(row.message_id)) || [];
-      list.push(Number(row.id));
-      attachmentIdsByMessage.set(Number(row.message_id), list);
-    }
-    // The social layer's reactions: ONE grouped read for the whole page (the
-    // same IN-list discipline the attachments read rides above), each group
-    // carrying the emoji's user list for the chip count + personal state.
-    const reactions = (await env.GOOBER_DB.prepare(
-      "SELECT r.message_id AS message_id, r.emoji AS emoji, r.user_id AS user_id, u.username AS username, r.fx_burst AS fx_burst " +
-        "FROM gc_message_reactions r JOIN users u ON u.id = r.user_id " +
-        "WHERE r.message_id IN (" + messageIds.map(() => "?").join(",") + ") " +
-        "ORDER BY r.created_at, r.user_id",
-    ).bind(...messageIds).all()).results || [];
-    groupReactionRows(reactions, reactionGroupsByMessage);
+    await groupedPayloadReads(env, userId, messageIds, attachmentIdsByMessage, reactionGroupsByMessage);
   }
 
   // Discord marks-on-read: the tail read IS the ack. The caller's own member
@@ -1534,34 +1546,14 @@ async function handleChannelPinsRoute(request, env, channelId) {
   ).bind(nowSeconds(), channelId).all()).results || [];
 
   // Attachments and reactions ride the SAME grouped reads the history page
-  // uses (one read each for the whole payload, never per-row) — fanned out
-  // into fixed-size id chunks so no statement's bind list crosses D1's
-  // 100-bind per-query limit on a near-cap page. A message's rows all land
-  // in one chunk (the chunk is a partition of the id list), so per-message
-  // grouping and ordering come out exactly as the single read produced them.
+  // uses (one read each for the whole payload, never per-row) — the shared
+  // fan-out chunks them under the D1 bind limit exactly as the history
+  // page's grouped reads do.
   const messageIds = page.map((row) => Number(row.id));
   const attachmentIdsByMessage = new Map();
   const reactionGroupsByMessage = new Map();
-  for (let start = 0; start < messageIds.length; start += PINS_READ_BIND_CHUNK) {
-    const chunk = messageIds.slice(start, start + PINS_READ_BIND_CHUNK);
-    const placeholders = chunk.map(() => "?").join(",");
-    const attachments = (await env.GOOBER_DB.prepare(
-      "SELECT id, message_id FROM gc_attachments " +
-        "WHERE " + ATTACHMENT_GATE_SQL + " AND message_id IN (" +
-        placeholders + ") ORDER BY id",
-    ).bind(userId, ...chunk).all()).results || [];
-    for (const row of attachments) {
-      const list = attachmentIdsByMessage.get(Number(row.message_id)) || [];
-      list.push(Number(row.id));
-      attachmentIdsByMessage.set(Number(row.message_id), list);
-    }
-    const reactions = (await env.GOOBER_DB.prepare(
-      "SELECT r.message_id AS message_id, r.emoji AS emoji, r.user_id AS user_id, u.username AS username, r.fx_burst AS fx_burst " +
-        "FROM gc_message_reactions r JOIN users u ON u.id = r.user_id " +
-        "WHERE r.message_id IN (" + placeholders + ") " +
-        "ORDER BY r.created_at, r.user_id",
-    ).bind(...chunk).all()).results || [];
-    groupReactionRows(reactions, reactionGroupsByMessage);
+  if (messageIds.length) {
+    await groupedPayloadReads(env, userId, messageIds, attachmentIdsByMessage, reactionGroupsByMessage);
   }
 
   return json({

@@ -484,6 +484,64 @@ test("read marker POST: behind is the 400, thread-foreign is the 400, non-member
   );
 });
 
+// The history page's grouped reads ride the SAME bind-budget law as the
+// pins page (the shared fan-out): a full MAX_PAGE_LIMIT page must never
+// put a statement over D1's 100-bind per-query limit — the attachment
+// read (its bound list alone is 1 + page ids) chunks at the same constant,
+// merges keep the page's listed id order and per-message grouping, and the
+// forward-only tail ack still rides the newest page id exactly as before.
+test("history GET at the page cap: 100 messages fan out in 90-id chunks, the ack and grouped shape unchanged", async () => {
+  const { row } = await sessionFixtures();
+  const token = randomToken();
+  const session = { ...row, token_hash: await sha256Hex(token) };
+  // The history module's own MAX_PAGE_LIMIT (module-local in
+  // api/messages.mjs — a constants move stays outside this rider's scope).
+  const pageIds = Array.from({ length: 100 }, (_, index) => 300 - index);
+  const db = fakeDb([
+    { test: SESSION_READ_TEST, first: async () => session },
+    { test: CHANNEL_ACCESS_TEST, first: async () => ({ id: 5, server_id: null, kind: "dm" }) },
+    { test: (sql) => sql.includes("FROM gc_messages m JOIN users u") && sql.includes("ORDER BY m.id DESC"),
+      all: async () => ({ results: pageIds.map(pinRow) }) },
+    { test: (sql) => sql.includes("FROM gc_attachments") && sql.includes("message_id IN"),
+      all: async (bound) => ({ results: bound.slice(1).map((id) => ({ id: id * 10, message_id: id })) }) },
+    { test: (sql) => sql.includes("FROM gc_message_reactions r JOIN users u"),
+      all: async (bound) => ({
+        results: bound.map((id) => ({ message_id: id, emoji: "🔥", user_id: 7, username: "wempos" })),
+      }) },
+  ]);
+  const response = await handleMessageRoutes(
+    new Request(ORIGIN + "/api/channels/5/messages", { headers: { Cookie: "goober_session=" + token } }),
+    envWithLimiters({ GOOBER_DB: db }),
+    new URL(ORIGIN + "/api/channels/5/messages"),
+    "/api/channels/5/messages",
+    "GET",
+    {},
+  );
+  assert.equal(response.status, 200);
+
+  const attachmentReads = db.calls.filter((call) =>
+    call.call === "all" && call.sql.includes("FROM gc_attachments") && call.sql.includes("message_id IN"));
+  const reactionReads = db.calls.filter((call) =>
+    call.call === "all" && call.sql.includes("FROM gc_message_reactions"));
+  assert.equal(attachmentReads.length, 2, "a 100-message page rides ceil(100/90) = 2 chunked attachment reads");
+  assert.equal(reactionReads.length, 2, "and the same 2 chunked reaction reads");
+  assert.deepEqual(attachmentReads.map((call) => call.bound.length), [91, 11],
+    "each chunk's bind list stays under the 100-bind D1 limit (ids + the gate bind)");
+  assert.equal(Math.max(...reactionReads.map((call) => call.bound.length)), 90,
+    "no reaction chunk ever exceeds the chunk size");
+
+  const body = await response.json();
+  const idsInOrder = pageIds.slice(0, 90).concat(pageIds.slice(90));
+  assert.deepEqual(body.messages.map((m) => m.id), idsInOrder, "the merged page order is the listed id order");
+  assert.deepEqual(body.messages.map((m) => m.attachmentIds[0]), idsInOrder.map((id) => id * 10),
+    "every message keeps its own attachment across the chunk merge");
+  assert.ok(body.messages.every((m) => m.reactions[0].emoji === "🔥"), "every message keeps its reaction group");
+  const ack = db.calls.find((call) => call.call === "run" && MARKER_UPDATE_TEST(call.sql));
+  assert.ok(ack, "the tail read still carries the ack");
+  assert.deepEqual(ack.bound, [pageIds[0], 5, USER_ID, pageIds[0], pageIds[0], 5],
+    "the ack still rides the newest page id");
+});
+
 // --- the history tail's auto-advance ------------------------------------------------
 
 test("the history tail acks: GET without a cursor advances the caller's marker to the page's newest id", async () => {
