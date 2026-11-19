@@ -1,4 +1,5 @@
 {
+  "gc.app.title": "GooberCord",
   "gc.auth.banned.heading": "حسابك محظور حاليًا",
   "gc.auth.banned.noReason": "لم يُقدَّم سبب.",
   "gc.auth.banned.reactivates": "يُعاد تفعيله",
@@ -306,7 +307,7 @@
   "gc.shell.theme.dark": "النمط الداكن",
   "gc.shell.theme.light": "النمط الفاتح",
   "gc.shell.user.signOut": "تسجيل الخروج",
-"gc.shell.user.source": "الكود المصدري (AGPLv3)",
+  "gc.shell.user.source": "الكود المصدري (AGPLv3)",
   "gc.social.blocks.blockOrIgnore": "حظر أو تجاهل",
   "gc.social.blocks.confirm": "حظر {{name}}؟",
   "gc.social.blocks.empty": "لا حسابات محظورة أو متجاهَلة.",

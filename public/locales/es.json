@@ -1,4 +1,5 @@
 {
+  "gc.app.title": "GooberCord",
   "gc.auth.banned.heading": "Tu cuenta está actualmente baneada",
   "gc.auth.banned.noReason": "No se dio ningún motivo.",
   "gc.auth.banned.reactivates": "Se reactiva",
@@ -217,7 +218,7 @@
   "gc.settings.sections.mod": "Escritorio de mod",
   "gc.settings.verification.help": "0–4: los niveles más altos piden verificación a las cuentas y a los miembros más recientes.",
   "gc.settings.verification.label": "Nivel de verificación",
-  "gc.settings.nav.server": "Server",
+  "gc.settings.nav.server": "Servidor",
   "gc.settings.nav.expressions": "Expresiones",
   "gc.mod.rules.editTail": "— edición",
   "gc.mod.rules.noActions": "sin acciones",
@@ -303,7 +304,7 @@
   "gc.shell.theme.dark": "Tema oscuro",
   "gc.shell.theme.light": "Tema claro",
   "gc.shell.user.signOut": "Cerrar sesión",
-"gc.shell.user.source": "Código fuente (AGPLv3)",
+  "gc.shell.user.source": "Código fuente (AGPLv3)",
   "gc.social.blocks.blockOrIgnore": "Bloquear o ignorar",
   "gc.social.blocks.confirm": "¿Bloquear a {{name}}?",
   "gc.social.blocks.empty": "Ninguna cuenta bloqueada ni ignorada.",
