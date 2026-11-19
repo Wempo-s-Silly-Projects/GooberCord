@@ -123,15 +123,17 @@ test("invites: 'empty select = never' is real, not invented refusal (the sharp e
   // Absent keys are simply not SENT — the lenient body carries only chosen knobs.
   assert.match(SETTINGS, /if \(maxAge !== ""\) body\.maxAgeSeconds = Number\(maxAge\)/);
   assert.match(SETTINGS, /if \(maxUses !== ""\) body\.maxUses = Number\(maxUses\)/);
-  const apiSource = readFileSync(join(HERE, "../api/servers.mjs"), "utf8");
-  const minAge = Number(/INVITE_MAX_AGE_MIN = (\d+)/.exec(apiSource)[1]);
-  const maxAge = Number(/INVITE_MAX_AGE_MAX = (\d+)/.exec(apiSource)[1]);
+  // T-R25-SPLIT-SERVERS: the invite knobs seat in api/server-invites.mjs
+  // (the wave-25 seam — servers.mjs re-exports them; the values live there).
+  const seamSource = readFileSync(join(HERE, "../api/server-invites.mjs"), "utf8");
+  const minAge = Number(/INVITE_MAX_AGE_MIN = (\d+)/.exec(seamSource)[1]);
+  const maxAge = Number(/INVITE_MAX_AGE_MAX = (\d+)/.exec(seamSource)[1]);
   assert.equal(minAge, 60);
   assert.equal(maxAge, 2592000);
   for (const choice of settingsChoiceValues()) {
     assert.ok(choice >= minAge && choice <= maxAge, `expiry choice ${choice} inside the route's window`);
   }
-  const usesMax = Number(/INVITE_MAX_USES_MAX = (\d+)/.exec(apiSource)[1]);
+  const usesMax = Number(/INVITE_MAX_USES_MAX = (\d+)/.exec(seamSource)[1]);
   assert.equal(usesMax, 100);
   for (const cap of settingsUseCapValues()) {
     assert.ok(cap >= 1 && cap <= usesMax, `use cap ${cap} inside the route's window`);
