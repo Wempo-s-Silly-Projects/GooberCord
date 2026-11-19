@@ -47,6 +47,8 @@ import {
   GC_UPLOAD_PART_CHUNKS,
   GC_UPLOAD_PART_REQUEST_BYTES,
   GC_UPLOAD_PARTS_MAX,
+  GC_UPLOAD_STAGED_CAP,
+  GC_UPLOAD_STAGING_TTL_SECONDS,
   MAX_ATTACHMENT_BYTES,
 } from "../constants.mjs";
 
@@ -55,6 +57,10 @@ export const UPLOAD_PART_INVALID_ERROR = "That upload part is invalid.";
 export const UPLOAD_UNKNOWN_ERROR = "That upload does not exist.";
 export const UPLOAD_INCOMPLETE_ERROR = "The upload did not finish — send it again.";
 export const UPLOAD_ONLY_IMAGES_ERROR = "Only image files are accepted.";
+export const UPLOAD_CLIP_LOCKED_ERROR =
+  "Those bytes belong to a sound-pack clip — drop the clip to release them.";
+export const UPLOAD_STAGED_CAP_ERROR =
+  "You already have " + GC_UPLOAD_STAGED_CAP + " uploads staged.";
 
 const uploadMaxKib = () => Math.ceil(GC_UPLOAD_PART_BYTES / (1024 * 1024));
 const PART_TOO_LARGE_ERROR = "That part is more than " + uploadMaxKib() + " MiB.";
@@ -145,6 +151,15 @@ const STAGING_VERIFY_SQL =
 
 const STAGING_HEAD_SQL =
   "SELECT data FROM gc_upload_parts WHERE upload_id = ? AND uploader_id = ? AND seq = 0";
+
+// The PER-UPLOADER STAGED CAP's read (GO-HAYWIRE cycle-3): the uploader's
+// DISTINCT staging tokens, EXCLUDING tokens an approved gc_sound_pack_sounds
+// clip points at (the pack's own bytes are not a pending staging). The read
+// rides the first-part path only, right before the fresh uploadId is minted.
+const STAGED_ACTIVE_SQL =
+  "SELECT COUNT(DISTINCT upload_id) AS active FROM gc_upload_parts " +
+  "WHERE uploader_id = ? AND NOT EXISTS (SELECT 1 FROM gc_sound_pack_sounds s " +
+  "WHERE s.upload_id = gc_upload_parts.upload_id AND s.status = 'approved')";
 
 // The identity tuple, the e0ba49c shape media.mjs's standalone INSERT rides
 // (no last_insert_rowid dependence): the row is born inside the same batch
@@ -246,6 +261,12 @@ export async function handleUploadChunkRoute(request, env) {
   if (!Number.isInteger(size) || size <= MAX_ATTACHMENT_BYTES || size > GC_UPLOAD_LANE_MAX_BYTES) {
     throw new HttpError(400, "That file size is not a large upload.");
   }
+  // The staged cap: an uploader holding the cap's worth of active stagings
+  // (the fresh random uploadId would mint a ninth) answers the clean refusal.
+  const active = await env.GOOBER_DB.prepare(STAGED_ACTIVE_SQL).bind(uploaderId).first();
+  if (Number(active?.active) >= GC_UPLOAD_STAGED_CAP) {
+    throw new HttpError(409, UPLOAD_STAGED_CAP_ERROR);
+  }
   const uploadId = randomToken(12).replace(/[^A-Za-z0-9_-]/g, "").slice(0, 12);
   await env.GOOBER_DB.batch(partChunkStatements(env, uploadId, uploaderId, 0, chunk, now));
   // NO gc_attachments row exists yet — the row is born at COMMIT with the
@@ -337,16 +358,53 @@ async function readJsonCommit(request) {
 // The abandon route: delete the uploader's staging rows (a client that gives
 // up leaves nothing behind). No staged rows, still a 200 (never an oracle).
 // The owner side of the WHERE carries the auth; a malformed id never touches
-// the table at all.
+// the table at all. TWO cycle-3 arms:
+//   - the clear is the PLAIN owner-scoped DELETE — the commit's hold-back
+//     arm is COMMIT-SHAPED (its identity tuple binds mime/size/created_at the
+//     route can never know; the old shape bound 2 of 6 placeholders and real
+//     D1 refuses every run), and an abandon wants no hold-back anyway;
+//   - a token a gc_sound_pack_sounds clip still references (a pending
+//     candidate's staged bytes, an approved clip's bytes) answers 409 — the
+//     clip's rows are dropped or cleared server-side, never abandoned — and
+//     the clear ALSO carries the arm in-SQL: a clip row born between the 409
+//     check and the DELETE refuses IN THE STATEMENT (the check-then-act
+//     window), correlated, no new binds.
+export const ABANDON_CLEAR_SQL =
+  "DELETE FROM gc_upload_parts WHERE upload_id = ? AND uploader_id = ? " +
+  "AND NOT EXISTS (SELECT 1 FROM gc_sound_pack_sounds WHERE upload_id = gc_upload_parts.upload_id)";
+const CLIP_REFERENCE_SQL = "SELECT 1 FROM gc_sound_pack_sounds WHERE upload_id = ? LIMIT 1";
+
 export async function handleAbandonUploadRoute(request, env, uploadId) {
   const session = await requireUser(request, env);
   await rateLimit(request, env, "upload", "uploads-abandon:" + session.user.id);
-  if (!UPLOAD_ID_RE.test(String(uploadId || ""))) return json({ ok: true });
-  await env.GOOBER_DB.prepare(STAGING_CLEAR_SQL)
-    .bind(String(uploadId), Number(session.user.id))
-    .run();
+  const id = String(uploadId || "");
+  if (!UPLOAD_ID_RE.test(id)) return json({ ok: true });
+  const uploaderId = Number(session.user.id);
+  const reference = await env.GOOBER_DB.prepare(CLIP_REFERENCE_SQL).bind(id).first();
+  if (reference) throw new HttpError(409, UPLOAD_CLIP_LOCKED_ERROR);
+  await env.GOOBER_DB.prepare(ABANDON_CLEAR_SQL).bind(id, uploaderId).run();
   return json({ ok: true });
 }
+
+// The orphan sweep (GO-HAYWIRE cycle-3): staging rows survive the client's
+// abandon route whenever a tab dies mid-upload — no TTL existed anywhere.
+// The arm deletes rows older than GC_UPLOAD_STAGING_TTL_SECONDS, never a row
+// any gc_sound_pack_sounds clip (candidate or approved) still references —
+// those rows ARE the clip's bytes. WIRING LANE: worker.mjs carries no
+// scheduled handler today (no export, no crons route in wrangler.toml), so
+// the sweep ships exported+tested and its first cron export calls it; until
+// then the abandon route and the staged cap bound the same orphans.
+export async function sweepStaleUploadParts(env, nowArg) {
+  const now = Number.isInteger(nowArg) ? nowArg : nowSeconds();
+  await env.GOOBER_DB.prepare(UPLOAD_PARTS_SWEEP_SQL)
+    .bind(now - GC_UPLOAD_STAGING_TTL_SECONDS)
+    .run();
+}
+
+export const UPLOAD_PARTS_SWEEP_SQL =
+  "DELETE FROM gc_upload_parts WHERE created_at < ? " +
+  "AND NOT EXISTS (SELECT 1 FROM gc_sound_pack_sounds s " +
+  "WHERE s.upload_id = gc_upload_parts.upload_id)";
 
 // --- dispatch ------------------------------------------------------------------
 

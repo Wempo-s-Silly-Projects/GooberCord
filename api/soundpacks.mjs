@@ -36,8 +36,13 @@
 // 512KB gc_sounds row and the GC_SOUNDBOARD_* constants stay untouched).
 // Candidates reference the STAGING lane verbatim (0025's gc_upload_parts by
 // client-held upload id) — the bytes are already staged when the candidate
-// is created, and a refused candidate's staging rows ride the EXISTING
-// staging abandon route (nothing new is invented for refusal).
+// is created, and the lifecycle arms keep the bytes aligned with the rows
+// (GO-HAYWIRE cycle-3): a dropped candidate and a deleted pack clear their
+// tokens' staging bytes server-side (never a token another clip still
+// references), and the staging abandon route REFUSES while any clip points
+// at the token — an approved clip's bytes survive any uploader abandon.
+// Nothing adopts/rewrites the staging id: the gc_upload_parts row keeps its
+// free-form token and the clip IS the reference.
 //
 // THE SLOTS CAP IS THE SHARED RESOLVER: the mod's approve commits a
 // candidate through one statement whose cap arm counts the pack's APPROVED
@@ -126,6 +131,12 @@ const CLIP_INSERT_SQL =
     "SELECT ?, ?, ?, ?, ?, 'candidate', ?, ? " +
     "WHERE EXISTS (SELECT 1 FROM gc_sound_packs p WHERE p.id = ? AND p.server_id = ?) " +
     "AND EXISTS (SELECT 1 FROM gc_server_members m WHERE m.server_id = ? AND m.user_id = ?) " +
+    // The staged-bytes arm (deslop rider): the clip can only be born on
+    // staging that ACTUALLY exists at write time — a set the 7d sweep (or an
+    // abandon) removed between verifyStagedClip's reads and this INSERT
+    // answers changes 0 and the route's shared 404, never a row for dead
+    // bytes.
+    "AND EXISTS (SELECT 1 FROM gc_upload_parts u WHERE u.upload_id = ? AND u.uploader_id = ?) " +
     "AND NOT EXISTS (SELECT 1 FROM gc_sound_pack_sounds WHERE pack_id = ? AND upload_id = ?) " +
     "AND NOT EXISTS (SELECT 1 FROM gc_sound_pack_sounds WHERE pack_id = ? AND name = ?)";
 
@@ -138,6 +149,32 @@ const CLIP_APPROVE_SQL =
 
 const CLIP_DROP_SQL =
   "DELETE FROM gc_sound_pack_sounds WHERE id = ? AND pack_id = ? AND status = 'candidate' " +
+    "AND EXISTS (SELECT 1 FROM gc_sound_packs p WHERE p.id = ? AND p.server_id = ?) AND " +
+    MANAGE_GUARD_SQL;
+
+// The drop's staging clear (GO-HAYWIRE cycle-3): the dying candidate's token
+// bytes leave gc_upload_parts IN THE SAME BATCH — but only when NO other
+// clip (r.id <> the dying one) still references the token, only from the
+// candidate's own uploader_id, with the SAME manage guard + pack-in-server
+// arm as the row delete riding the statement (a non-mod's refusal never
+// touches the bytes).
+const CLIP_DROP_CLEAR_SQL =
+  "DELETE FROM gc_upload_parts WHERE upload_id = " +
+    "(SELECT s.upload_id FROM gc_sound_pack_sounds s WHERE s.id = ? AND s.pack_id = ? AND s.status = 'candidate') " +
+    "AND uploader_id = (SELECT s2.added_by FROM gc_sound_pack_sounds s2 WHERE s2.id = ?) " +
+    "AND NOT EXISTS (SELECT 1 FROM gc_sound_pack_sounds r WHERE r.upload_id = gc_upload_parts.upload_id AND r.id <> ?) " +
+    "AND EXISTS (SELECT 1 FROM gc_sound_packs p WHERE p.id = ? AND p.server_id = ?) AND " +
+    MANAGE_GUARD_SQL;
+
+// The pack delete's staging clear (same law, pack-scoped): every token the
+// pack's clips point at leaves the staging table with the pack, but only
+// tokens NO OTHER pack's clip still references (r.pack_id <> the dying one).
+// It rides BEFORE the pack's guarded DELETE in the batch — the dying
+// cascade's rows are still readable for the clear's arms.
+const PACK_DELETE_CLEAR_SQL =
+  "DELETE FROM gc_upload_parts WHERE upload_id IN " +
+    "(SELECT s.upload_id FROM gc_sound_pack_sounds s WHERE s.pack_id = ?) " +
+    "AND NOT EXISTS (SELECT 1 FROM gc_sound_pack_sounds r WHERE r.upload_id = gc_upload_parts.upload_id AND r.pack_id <> ?) " +
     "AND EXISTS (SELECT 1 FROM gc_sound_packs p WHERE p.id = ? AND p.server_id = ?) AND " +
     MANAGE_GUARD_SQL;
 
@@ -167,6 +204,9 @@ const STAGED_HEAD_SQL =
 
 async function handleListPacksRoute(request, env, serverId) {
   const session = await requireSignedInRead(request, env);
+  // The READ bucket mirrors the write arms' key (GO-HAYWIRE cycle-3: the
+  // packs+candidates ride was the one un-limited route on the block).
+  await rateLimit(request, env, "read", "sound-packs:" + session.user.id);
   const serverIdNum = Number(serverId);
   await memberGate(env, serverIdNum, Number(session.user.id));
   const packs = await env.GOOBER_DB.prepare(PACK_LIST_SQL).bind(serverIdNum).all();
@@ -217,10 +257,20 @@ async function handleDeletePackRoute(request, env, serverId, packId) {
   await rateLimit(request, env, "write", "soundpacks:" + session.user.id);
   const serverIdNum = Number(serverId);
   const packIdNum = validId(packId);
-  const result = await env.GOOBER_DB.prepare(PACK_DELETE_SQL).bind(
-    packIdNum, serverIdNum, ...manageGuardParams(serverIdNum, Number(session.user.id)),
-  ).run();
-  if (Number(result?.meta?.changes) !== 1) {
+  const actorId = Number(session.user.id);
+  // ONE atomic batch: the staging clear runs FIRST (the dying cascade's clip
+  // rows are still readable), the pack's guarded delete follows — the same
+  // transaction, so a refused guard leaves bytes AND rows exactly as they
+  // were.
+  const results = await env.GOOBER_DB.batch([
+    env.GOOBER_DB.prepare(PACK_DELETE_CLEAR_SQL).bind(
+      packIdNum, packIdNum, packIdNum, serverIdNum, ...manageGuardParams(serverIdNum, actorId),
+    ),
+    env.GOOBER_DB.prepare(PACK_DELETE_SQL).bind(
+      packIdNum, serverIdNum, ...manageGuardParams(serverIdNum, actorId),
+    ),
+  ]);
+  if (Number(results[1]?.meta?.changes) !== 1) {
     throw new HttpError(404, UNKNOWN_SERVER_404);
   }
   return json({ ok: true });
@@ -310,6 +360,7 @@ async function handleCandidateCreateArm(env, context) {
       packIdNum, name, uploadId, staged.size, staged.mime, actorId, nowSeconds(),
       packIdNum, serverIdNum,
       serverIdNum, actorId,
+      uploadId, actorId,
       packIdNum, uploadId,
       packIdNum, name,
     ).run();
@@ -331,12 +382,21 @@ async function handleDropClipRoute(request, env, serverId, packId, clipId) {
   const serverIdNum = Number(serverId);
   const packIdNum = validId(packId);
   const clipIdNum = validId(clipId);
-  const result = await env.GOOBER_DB.prepare(CLIP_DROP_SQL).bind(
-    clipIdNum, packIdNum,
-    packIdNum, serverIdNum,
-    ...manageGuardParams(serverIdNum, Number(session.user.id)),
-  ).run();
-  if (Number(result?.meta?.changes) !== 1) {
+  const actorId = Number(session.user.id);
+  // ONE atomic batch: the staging clear (the dropped token's bytes) rides
+  // BEFORE the guarded row delete, inside the same transaction — the clear's
+  // own arms (status, other-references, pack, mod guard) refuse for a
+  // non-mod or a foreign pack exactly like the row delete's do.
+  const results = await env.GOOBER_DB.batch([
+    env.GOOBER_DB.prepare(CLIP_DROP_CLEAR_SQL).bind(
+      clipIdNum, packIdNum, clipIdNum, clipIdNum, packIdNum, serverIdNum,
+      ...manageGuardParams(serverIdNum, actorId),
+    ),
+    env.GOOBER_DB.prepare(CLIP_DROP_SQL).bind(
+      clipIdNum, packIdNum, packIdNum, serverIdNum, ...manageGuardParams(serverIdNum, actorId),
+    ),
+  ]);
+  if (Number(results[1]?.meta?.changes) !== 1) {
     // The status arm's refusal means the clip is out of the candidate
     // ladder; anything else (missing clip, foreign pack, non-mod) stays the
     // shared 404.
