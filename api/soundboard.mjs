@@ -198,6 +198,22 @@ async function createSoundAttachment(env, uploaderId, fileBytes) {
 const OWN_SOUND_MIME_SQL =
   "SELECT mime FROM gc_attachments WHERE id = ? AND uploader_id = ? LIMIT 1";
 
+// The mint-branch sweep (GO-HAYWIRE cycle-3 FIX 1, media.mjs's rollback
+// shape): ONLY the row + object THIS create just minted — the pre-existing
+// JSON-branch asset is never swept. Best-effort, ride-before-cleanup
+// ordering; every fall-through arm (changes!=1 AND the INSERT catch's
+// UNIQUE 409 rethrow) rides the same helper.
+async function sweepMintedAttachment(env, ctx, attachmentId) {
+  try {
+    await env.GOOBER_DB.prepare(
+      "DELETE FROM gc_attachments WHERE id = ? AND status = 'pending'",
+    ).bind(attachmentId).run();
+  } catch (error) {
+    console.error(errorName(error));
+  }
+  scheduleAttachmentObjectDelete(env, ctx, Number(attachmentId));
+}
+
 // --- routes ----------------------------------------------------------------------
 
 async function handleListSoundsRoute(request, env, serverId) {
@@ -302,28 +318,21 @@ async function handleCreateSoundRoute(request, env, serverId, ctx) {
     attachmentId, attachmentId, attachmentId,
     Number(serverId),
     cap,
-  ).run().catch((error) => {
+  ).run().catch(async (error) => {
     if (/UNIQUE|SQLITE_CONSTRAINT/i.test(String(error))) {
+      // The duplicate-name 409 rides the catch BEFORE the changes!=1 block:
+      // the just-minted pending row + object must never survive it.
+      if (minted) await sweepMintedAttachment(env, ctx, attachmentId);
       throw new HttpError(409, "That sound name is already taken in this server.");
     }
     throw error;
   });
 
   if (Number(result?.meta?.changes) !== 1) {
-    // The belt-and-braces sweep (GO-HAYWIRE cycle-3 FIX 1, media.mjs's
-    // rollback shape): a guarded INSERT that fell through leaves the row +
-    // object THIS create just minted to die — the pre-existing JSON-branch
-    // asset is never swept. Best-effort, ride-before-cleanup ordering.
-    if (minted) {
-      try {
-        await env.GOOBER_DB.prepare(
-          "DELETE FROM gc_attachments WHERE id = ? AND status = 'pending'",
-        ).bind(attachmentId).run();
-      } catch (error) {
-        console.error(errorName(error));
-      }
-      scheduleAttachmentObjectDelete(env, ctx, Number(attachmentId));
-    }
+    // The belt-and-braces sweep: a guarded INSERT that fell through leaves
+    // the row + object THIS create just minted to die — the pre-existing
+    // JSON-branch asset is never swept. Best-effort, ride-before-cleanup.
+    if (minted) await sweepMintedAttachment(env, ctx, attachmentId);
     // Zero changes — classify by the failing arm, in arm order (the
     // expression lane's exact discipline: one read for the caller-own-asset
     // + shared-asset + count questions, the authority read the

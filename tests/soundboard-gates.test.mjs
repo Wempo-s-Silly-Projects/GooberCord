@@ -153,14 +153,24 @@ const BOOSTS_TEST = (sql) => sql.includes("SELECT boosts FROM gc_servers WHERE i
 
 // The common board routes: the session answers, membership per `member`, and
 // the boost resolver's row. Insert/authority routes ride per test.
-function baseRoutes({ member = true, role = "member", permissions = MANAGE_BIT, insertChanges = 1, count = 0 } = {}) {
+function baseRoutes({
+  member = true,
+  role = "member",
+  permissions = MANAGE_BIT,
+  insertChanges = 1,
+  insertError = null,
+  count = 0,
+} = {}) {
   return [
     { test: SESSION_TEST, first: async () => (await SESSION_FIXTURES).row },
     { test: MEMBERSHIP_TEST, first: async () => (member ? { member: 1 } : null) },
     { test: ROLE_READ_TEST, first: async () => (member ? { role } : null) },
     { test: MERGED_TEST, first: async () => ({ permissions }) },
     { test: BOOSTS_TEST, first: async () => ({ boosts: 14 }) },
-    { test: SOUND_INSERT_TEST, run: async () => ({ meta: { changes: insertChanges } }) },
+    { test: SOUND_INSERT_TEST, run: async () => {
+      if (insertError) throw insertError;
+      return { meta: { changes: insertChanges } };
+    } },
     {
       test: (sql) => sql.includes("SELECT EXISTS (SELECT 1 FROM gc_attachments a"),
       first: async () => ({ ownAttachment: 1, count, size: GC_SOUNDBOARD_SOUND_MAX_BYTES, messageId: null, soundsUsed: 0, emojiUsed: 0, stickersUsed: 0 }),
@@ -213,6 +223,24 @@ test("changes!=1 fall-through sweeps the minted pending row and schedules the ob
   assert.ok(sweep, "the minted pending row is swept");
   const deleteCall = r2.calls.find((entry) => entry.op === "delete");
   assert.ok(deleteCall, "the R2 object delete is scheduled");
+});
+
+// The UNIQUE(server_id, name) 409 rides the INSERT's catch BEFORE the
+// changes!=1 block — the mint branch's duplicate-name retry (the common
+// user-error path) must sweep the just-minted pending row + object too.
+test("duplicate-name 409 in the mint branch sweeps the minted pending row and empties the R2 store", async () => {
+  const { response, db, r2 } = await multipartCreate(
+    baseRoutes({ insertError: new Error("UNIQUE constraint failed: gc_sounds.server_id, gc_sounds.name") }),
+    "dropthebass",
+  );
+  assert.equal(response.status, 409);
+  const sweep = db.calls.find((entry) =>
+    entry.statements
+      ? entry.statements.some((statement) => PENDING_ROW_DELETE_TEST(statement.sql))
+      : PENDING_ROW_DELETE_TEST(entry.sql),
+  );
+  assert.ok(sweep, "the minted pending row is swept despite the UNIQUE 409");
+  assert.equal(r2.store.size, 0, "the minted R2 object is gone after the 409");
 });
 
 // FIX 2: the resolver's cap is bound, never concatenated into the statement.
