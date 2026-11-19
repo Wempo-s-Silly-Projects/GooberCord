@@ -213,9 +213,12 @@ test("the economy re-rule: no coin statement fires in the seat — tags are FREE
   assert.ok(!MODULE_SOURCE.includes("gc_coin_ledger"), "no route here touches the ledger");
 });
 
-test("the tag text law rides a locale-key reference OR the short-string cap", () => {
+test("the tag text law rides the short-string cap on BOTH arms (the locale-key lookalike caps too)", () => {
   assert.match(MODULE_SOURCE, /GC_REACTION_TAG_TEXT_MAX/);
-  assert.ok(MODULE_SOURCE.includes("[a-z0-9_]+(\\.[a-z0-9_]+)+"), "the locale-key shape is pinned");
+  assert.match(MODULE_SOURCE, /length >= 1 && length <= GC_REACTION_TAG_TEXT_MAX/,
+    "one code-point cap for every tag text — the free-text law carries the c20 rider");
+  assert.doesNotMatch(MODULE_SOURCE, /LOCALE_KEY_SHAPE/,
+    "the shape test collapsed into the one shared cap — a dead regex never lingers");
 });
 
 // --- the mod's map -------------------------------------------------------------
@@ -275,6 +278,70 @@ test("PUT past GC_REACTION_TAGS_MAX answers the shared 404: the cap rides the st
   assert.equal(response.status, 404);
 });
 
+// THE c20 fix (GO-HAYWIRE F1): the plain < MAX count made the at-cap
+// re-PUT's SELECT yield no row AT ALL — the conflict never resolved, the
+// DO UPDATE arm never evaluated, the edit flow dead-ended at the shared
+// 404. Both arms now exclude the candidate's own row (count-minus-candidate
+// in the insert arm via its bound emoji seat, count-minus-excluded.emoji in
+// the update arm); a NEW emoji at cap still trips the arm.
+test("at a full 20-row map a re-PUT of an EXISTING emoji still refreshes (changes 1, 200)", async () => {
+  const db = await seededDb();
+  const insert = db.prepare(
+    "INSERT INTO gc_server_reaction_tags (server_id, emoji, tag_text, created_by, created_at) VALUES (?, ?, ?, ?, ?)",
+  );
+  for (let i = 1; i <= 20; i++) insert.run(SERVER_ID, "e" + i, "tag" + i, MOD_ID, NOW);
+  const response = await dispatch(
+    authed("PUT", "/api/servers/" + SERVER_ID + "/reaction-tags", MOD_ID, { emoji: "e1", tag: "refreshed" }),
+    envFor(db),
+  );
+  assert.equal(response.status, 200, "the cap predicate must EXCLUDE the candidate's own row");
+  const body = await bodyOf(response);
+  assert.equal(body.tag.tag, "refreshed");
+  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM gc_server_reaction_tags").get().n, 20,
+    "the re-PUT refreshes in place, never a second row");
+});
+
+// THE c20 namespace wall (GO-HAYWIRE F2, the capsules.mjs:81-91 law): the
+// tag's own server_id must be the URL's — a member of BOTH servers could
+// address the other server's tag through either URL, on the opt AND the
+// un-opt door.
+test("a member of two servers cannot opt to the other server's tag through either URL", async () => {
+  const db = await seededDb();
+  db.prepare("INSERT INTO gc_server_members (server_id, user_id, role, joined_at) VALUES (?, ?, ?, ?)")
+    .run(2, MEMBER_ID, "member", NOW);
+  db.prepare(
+    "INSERT INTO gc_server_reaction_tags (server_id, emoji, tag_text, created_by, created_at) VALUES (?, ?, ?, ?, ?)",
+  ).run(2, "🔥", "victory", MOD_ID, NOW);
+  const foreignTagId = Number(db.prepare("SELECT id FROM gc_server_reaction_tags WHERE server_id = ?").get(2).id);
+
+  const refused = await dispatch(
+    authed("POST", "/api/servers/" + SERVER_ID + "/reaction-tags/" + foreignTagId + "/opt", MEMBER_ID),
+    envFor(db),
+  );
+  assert.equal(refused.status, 404, "the opt's WHERE must carry the URL's server namespace");
+  assert.equal((await bodyOf(refused)).error, "Reaction tag not found.");
+  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM gc_reaction_tag_opts").get().n, 0,
+    "the cross-server opt never plants an opts row");
+
+  // The un-opt leg: the member's own opt (made through the tag's OWN
+  // server's URL) survives a wrong-namespace delete.
+  const legit = await dispatch(
+    authed("POST", "/api/servers/2/reaction-tags/" + foreignTagId + "/opt", MEMBER_ID),
+    envFor(db),
+  );
+  assert.equal(legit.status, 200, "the tag's own namespace keeps admitting the act");
+
+  const cross = await dispatch(
+    authed("DELETE", "/api/servers/" + SERVER_ID + "/reaction-tags/" + foreignTagId + "/opt", MEMBER_ID),
+    envFor(db),
+  );
+  assert.equal(cross.status, 404, "the un-opt's WHERE must carry the URL's server namespace");
+  assert.equal(
+    db.prepare("SELECT COUNT(*) AS n FROM gc_reaction_tag_opts WHERE tag_id = ? AND user_id = ?")
+      .get(foreignTagId, MEMBER_ID).n, 1,
+    "the wrong-namespace delete never drops the member's own opt");
+});
+
 test("DELETE unmapping rides the role inside the WHERE: a non-mod's unmap is the same shared 404, a mod's lands", async () => {
   const db = await seededDb();
   db.prepare(
@@ -312,6 +379,28 @@ test("the tag text law: an overlong free-text tag answers 400 before any stateme
   );
   assert.equal(keyed.status, 200);
   assert.equal(db.prepare("SELECT tag_text FROM gc_server_reaction_tags").get().tag_text, "gc.tags.campfire");
+});
+
+// THE c20 rider (GO-HAYWIRE F5): the locale-key arm rode NO length cap — a
+// 5000-char locale-key lookalike passed the shape blind. The cap is ONE
+// shared rule now; a key exactly at GC_REACTION_TAG_TEXT_MAX stays valid.
+test("an oversized locale-key lookalike answers 400; a key exactly at the cap is admitted", async () => {
+  const db = await seededDb();
+  const oversized = "gc.tags." + "a".repeat(40);
+  const refused = await dispatch(
+    authed("PUT", "/api/servers/" + SERVER_ID + "/reaction-tags", MOD_ID, { emoji: "🔥", tag: oversized }),
+    envFor(db),
+  );
+  assert.equal(refused.status, 400, "the tag-text arm must ride GC_REACTION_TAG_TEXT_MAX too");
+  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM gc_server_reaction_tags").get().n, 0);
+
+  const atTheCap = "gc.tags." + "a".repeat(24);
+  const admitted = await dispatch(
+    authed("PUT", "/api/servers/" + SERVER_ID + "/reaction-tags", MOD_ID, { emoji: "🔥", tag: atTheCap }),
+    envFor(db),
+  );
+  assert.equal(admitted.status, 200, "the cap is the value 32, not the cap minus one");
+  assert.equal(db.prepare("SELECT tag_text FROM gc_server_reaction_tags").get().tag_text, atTheCap);
 });
 
 // THE cycle-5 emoji hygiene: an emoji of unbounded length rides straight into

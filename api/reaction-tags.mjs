@@ -46,14 +46,16 @@ import { GC_REACTION_TAG_EMOJI_MAX, GC_REACTION_TAG_TEXT_MAX, GC_REACTION_TAGS_M
 // tag, and an unknown id all answer this ONE copy — no oracle between them.
 const SHARED_404 = "Reaction tag not found.";
 
-// The tag text law: a locale-key reference or a short server-native string
-// of at most GC_REACTION_TAG_TEXT_MAX code points — NO painted free-text
-// of unbounded length. Empty is neither.
-const LOCALE_KEY_SHAPE = /^[a-z0-9_]+(\.[a-z0-9_]+)+$/;
-
+// The tag text law: a short server-native string (or a locale-key reference
+// like gc.tags.campfire — the same string law either way) of at most
+// GC_REACTION_TAG_TEXT_MAX code points — NO painted free-text of unbounded
+// length. Empty is neither. The cap rides BOTH arms (the c20 fix): the old
+// shape's blind pass let a 5000-char locale-key lookalike through, and once
+// the cap is shared the shape test adds nothing beyond it, so it collapsed
+// into this one rule.
 function isValidTagText(tagText) {
-  if (LOCALE_KEY_SHAPE.test(tagText)) return true;
-  return [...tagText].length >= 1 && [...tagText].length <= GC_REACTION_TAG_TEXT_MAX;
+  const length = [...tagText].length;
+  return length >= 1 && length <= GC_REACTION_TAG_TEXT_MAX;
 }
 
 // The emoji hygiene law (cycle-5): the emoji half of the pair is
@@ -69,20 +71,27 @@ function isValidEmoji(emoji) {
 // WHERE and the DO UPDATE arm its own, so a non-mod's write (or a PUT past
 // the map cap) makes zero changes either way. The UNIQUE (server_id, emoji)
 // pair is the conflict target; a re-PUT refreshes in place, never a second
-// row. Binds, textual order (10): server_id, emoji, tag_text, created_by,
-// created_at (5) | server_id, user_id, server_id (the insert arm's role +
-// cap), user_id, server_id (the update arm's role + cap, server_id resolved
-// against the target row). 10 binds, this order.
+// row. The cap EXCLUDES the candidate's own row in BOTH arms (the c20 fix):
+// the plain < MAX count made the at-cap re-PUT's SELECT yield no row AT ALL
+// — the conflict never resolved, the DO UPDATE arm never evaluated, and the
+// edit flow dead-ended at the shared 404 — so the insert arm counts
+// count-minus-candidate (the pair's own emoji rides its bound seat) and the
+// update arm counts count-minus-excluded.emoji; a NEW emoji at cap still
+// trips the arm (nothing matches, the full count stands). Binds, textual
+// order (11): server_id, emoji, tag_text, created_by, created_at (5) |
+// server_id, user_id, server_id, emoji (the insert arm's role + count) |
+// user_id, server_id (the update arm's role + count, server_id resolved
+// against the target row). 11 binds, this order.
 const TAG_PUT_SQL =
   "INSERT INTO gc_server_reaction_tags (server_id, emoji, tag_text, created_by, created_at) " +
   "SELECT ?, ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM gc_server_members pm " +
     "WHERE pm.server_id = ? AND pm.user_id = ? AND pm.role IN ('owner','moderator')) " +
-  "AND (SELECT COUNT(*) FROM gc_server_reaction_tags t WHERE t.server_id = ?) < " + GC_REACTION_TAGS_MAX +
+  "AND (SELECT COUNT(*) FROM gc_server_reaction_tags t WHERE t.server_id = ? AND t.emoji != ?) < " + GC_REACTION_TAGS_MAX +
   " ON CONFLICT (server_id, emoji) DO UPDATE SET tag_text = excluded.tag_text, " +
     "created_by = excluded.created_by, created_at = excluded.created_at " +
   "WHERE EXISTS (SELECT 1 FROM gc_server_members pm " +
     "WHERE pm.server_id = gc_server_reaction_tags.server_id AND pm.user_id = ? AND pm.role IN ('owner','moderator')) " +
-  "AND (SELECT COUNT(*) FROM gc_server_reaction_tags t WHERE t.server_id = ?) < " + GC_REACTION_TAGS_MAX;
+  "AND (SELECT COUNT(*) FROM gc_server_reaction_tags t WHERE t.server_id = ? AND t.emoji != excluded.emoji) < " + GC_REACTION_TAGS_MAX;
 
 // The refreshed-row read after the upsert (both paths answer the same
 // truth). Three binds: server_id, emoji, user_id.
@@ -110,23 +119,35 @@ const TAG_MAP_READ_SQL =
 
 // The opt: reachability (the tag row in a server this member belongs to)
 // lives INSIDE the statement; ON CONFLICT (tag_id, user_id) — the opts
-// table's own PK — DO NOTHING keeps the act idempotent. Five binds:
-// tag_id, user_id, opted_at, tag_id, user_id.
+// table's own PK — DO NOTHING keeps the act idempotent. The c20 namespace
+// wall (the capsules.mjs:81-91 law): the tag's own server_id must be the
+// URL's — a member of two servers cannot address their server-B tag through
+// a server-A URL. Six binds: tag_id, user_id, opted_at, tag_id, server_id,
+// user_id.
 const TAG_OPT_SQL =
   "INSERT INTO gc_reaction_tag_opts (tag_id, user_id, opted_at) SELECT ?, ?, ? " +
   "WHERE EXISTS (SELECT 1 FROM gc_server_reaction_tags t " +
     "JOIN gc_server_members pm ON pm.server_id = t.server_id " +
-    "WHERE t.id = ? AND pm.user_id = ?) " +
+    "WHERE t.id = ? AND t.server_id = ? AND pm.user_id = ?) " +
   "ON CONFLICT (tag_id, user_id) DO NOTHING";
 
 // The zero-change opt's own-row read: splits "already mine" from "not
-// reachable" against the CALLER's row only. Two binds: tag_id, user_id.
-const TAG_OPT_OWN_SQL = "SELECT 1 AS mine FROM gc_reaction_tag_opts WHERE tag_id = ? AND user_id = ? LIMIT 1";
+// reachable" against the CALLER's row only — AND through the tag's own
+// server_id (the c20 fix rode the namespace wall into this arm too, so a
+// duplicate answer never confirms an opt through the wrong server's URL).
+// Three binds: tag_id, user_id, server_id.
+const TAG_OPT_OWN_SQL =
+  "SELECT 1 AS mine FROM gc_reaction_tag_opts o " +
+  "JOIN gc_server_reaction_tags t ON t.id = o.tag_id " +
+  "WHERE o.tag_id = ? AND o.user_id = ? AND t.server_id = ? LIMIT 1";
 
 // The un-opt: self-scoped, the caller's (tag_id, user_id) row IS the only
-// key. Two binds: tag_id, user_id.
+// key — and the c20 namespace wall rides the same EXISTS (a wrong-server's
+// URL never drops the member's own opt). Four binds: tag_id, user_id,
+// tag_id, server_id.
 const TAG_UNOPT_SQL =
-  "DELETE FROM gc_reaction_tag_opts WHERE tag_id = ? AND user_id = ?";
+  "DELETE FROM gc_reaction_tag_opts WHERE tag_id = ? AND user_id = ? " +
+  "AND EXISTS (SELECT 1 FROM gc_server_reaction_tags t WHERE t.id = ? AND t.server_id = ?)";
 
 // The mine read: ONLY the caller's opted tags for THIS server, newest opt
 // first — no other member's row, no count across members (privacy law).
@@ -153,7 +174,7 @@ async function handleTagPutRoute(request, env, serverId) {
 
   const result = await env.GOOBER_DB.prepare(TAG_PUT_SQL).bind(
     serverId, emoji, tagText, userId, nowSeconds(),
-    serverId, userId, serverId,
+    serverId, userId, serverId, emoji,
     userId, serverId,
   ).run();
   if (Number(result.meta?.changes) !== 1) {
@@ -195,17 +216,17 @@ async function handleTagUnmapRoute(request, env, serverId) {
 }
 
 async function handleTagOptRoute(request, env, serverId, tagId) {
-  void serverId;
   const session = await requireUser(request, env);
   const userId = Number(session.user.id);
   await rateLimit(request, env, "write", "reaction-tags:opt:" + tagId + ":" + userId);
 
   const result = await env.GOOBER_DB.prepare(TAG_OPT_SQL)
-    .bind(tagId, userId, nowSeconds(), tagId, userId).run();
+    .bind(tagId, userId, nowSeconds(), tagId, serverId, userId).run();
   if (Number(result.meta?.changes) === 1) {
     return json({ opted: true });
   }
-  const own = await env.GOOBER_DB.prepare(TAG_OPT_OWN_SQL).bind(tagId, userId).first();
+  const own = await env.GOOBER_DB.prepare(TAG_OPT_OWN_SQL)
+    .bind(tagId, userId, serverId).first();
   if (own) {
     return json({ opted: true, duplicate: true });
   }
@@ -213,12 +234,12 @@ async function handleTagOptRoute(request, env, serverId, tagId) {
 }
 
 async function handleTagUnoptRoute(request, env, serverId, tagId) {
-  void serverId;
   const session = await requireUser(request, env);
   const userId = Number(session.user.id);
   await rateLimit(request, env, "write", "reaction-tags:unopt:" + tagId + ":" + userId);
 
-  const result = await env.GOOBER_DB.prepare(TAG_UNOPT_SQL).bind(tagId, userId).run();
+  const result = await env.GOOBER_DB.prepare(TAG_UNOPT_SQL)
+    .bind(tagId, userId, tagId, serverId).run();
   if (Number(result.meta?.changes) !== 1) {
     throw new HttpError(404, SHARED_404);
   }

@@ -121,7 +121,12 @@ async function handleBookmarkSaveRoute(request, env, messageId) {
     userId, messageId, savedAt, messageId, userId, userId, userId, messageId,
   ).run();
   if (Number(result.meta?.changes) === 1) {
-    return json({ saved: true, id: Number(result.meta?.last_row_id) || 0, savedAt });
+    // The id seat rides ONLY a real row id (the capsules.mjs publicCapsule
+    // idiom — the c20 rider): a meta miss ships NO id at all, never an
+    // id of 0 — Number(null) is 0, and an id of 0 is a lie, not a seat.
+    const lastRowId = result.meta?.last_row_id;
+    const id = lastRowId !== undefined && lastRowId !== null ? { id: Number(lastRowId) } : {};
+    return json({ saved: true, ...id, savedAt });
   }
 
   const own = (await env.GOOBER_DB.prepare(BOOKMARK_DUPLICATE_READ_SQL)

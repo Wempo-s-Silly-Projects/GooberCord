@@ -44,6 +44,7 @@ const SHELL = read("public/js/ui/shell.js");
 // The byte-frozen backend shapes the client mirrors (read, never edited).
 const REACTION_TAGS_API = read("api/reaction-tags.mjs");
 const MESSAGES_API = read("api/messages.mjs");
+const BOOKMARKS_API = read("api/bookmarks.mjs");
 const CONSTANTS = read("constants.mjs");
 
 const STAGED = ["de", "es", "fr", "pt", "ru", "ja", "zh", "ar"];
@@ -151,13 +152,74 @@ test("the panel's only auto-pull is its own two reads — every opt act is membe
 test("the opt flips ride ONE click per act; the lane updates immutably", () => {
   assert.match(TAGS_UI, /await optOutTag\(serverId, row\.id\)/);
   assert.match(TAGS_UI, /await optInTag\(serverId, row\.id\)/);
-  assert.match(TAGS_UI, /mineRows\.filter\(\(entry\) => entry\.id !== row\.id\)/,
-    "the un-opt rebuilds the lane (never an in-place splice)");
-  assert.match(TAGS_UI, /\[\.\.\.mineRows, \{ id: row\.id, emoji: row\.emoji, tag: row\.tag \}\]/,
-    "the opt appends the map row's own shape (no invented fields)");
   assert.match(TAGS_UI, /errorLine\.textContent = error\.message;/,
     "the 404/409 refusal family paints verbatim (no re-worded client side)");
 });
+
+// --- the c20 fix lane (GO-HAYWIRE) --------------------------------------------
+
+test("F3: the opt flips rebuild the lane from the STORE at call time — the double-flip pin", () => {
+  // The render-closure's mineRows is a snapshot: two flips inside one
+  // latency window wrote the snapshot twice and resurrected/dropped rows.
+  // The bookmarks.js idiom reads the CURRENT lane at call time.
+  assert.doesNotMatch(TAGS_UI, /\[\.\.\.mineRows,/,
+    "the render-closure snapshot is never written back");
+  assert.doesNotMatch(TAGS_UI, /: mineRows\.filter\(/,
+    "the un-opt never filters the render-closure snapshot");
+  assert.match(TAGS_UI, /store\.get\(mineKey\(serverId\)\) \|\| \[\]\)\.filter\(\(entry\) => entry\.id !== row\.id\)/,
+    "the un-opt rebuilds the CURRENT lane (the bookmarks unsaveBookmark idiom)");
+  assert.match(TAGS_UI,
+    /\[\.\.\.currentMine, \{ id: row\.id, emoji: row\.emoji, tag: row\.tag \}\]/,
+    "the opt appends the map row's own shape onto the CURRENT lane");
+  // The same-tag double-click rides the presence check (the bookmarks
+  // saveBookmark idiom): the second append must not double-row the lane.
+  assert.match(TAGS_UI, /currentMine\.some\(\(entry\) => entry\.id === row\.id\)/,
+    "the opt's presence check absorbs the double-click");
+});
+
+test("F1: the PUT's cap excludes the candidate's own row in BOTH arms", () => {
+  assert.match(REACTION_TAGS_API,
+    /AND \(SELECT COUNT\(\*\) FROM gc_server_reaction_tags t WHERE t\.server_id = \? AND t\.emoji != \?\) < " \+ GC_REACTION_TAGS_MAX/,
+    "the insert arm rides count-minus-candidate: at a full map its plain < MAX count yielded no row AT ALL, so the conflict never resolved and the DO UPDATE arm never evaluated");
+  assert.match(REACTION_TAGS_API,
+    /AND \(SELECT COUNT\(\*\) FROM gc_server_reaction_tags t WHERE t\.server_id = \? AND t\.emoji != excluded\.emoji\) < " \+ GC_REACTION_TAGS_MAX/,
+    "the update arm rides count-minus-excluded — a NEW emoji at cap still trips the arm");
+});
+
+test("F2: the opt pair carries the URL's server namespace in every WHERE", () => {
+  assert.match(REACTION_TAGS_API,
+    /WHERE t\.id = \? AND t\.server_id = \? AND pm\.user_id = \?/,
+    "TAG_OPT_SQL answers only the URL's own namespace (the capsules.mjs:81-91 law)");
+  assert.match(REACTION_TAGS_API,
+    /DELETE FROM gc_reaction_tag_opts WHERE tag_id = \? AND user_id = \? " \+\s*"AND EXISTS \(SELECT 1 FROM gc_server_reaction_tags t WHERE t\.id = \? AND t\.server_id = \?\)/,
+    "TAG_UNOPT_SQL carries the namespace wall too");
+  assert.match(REACTION_TAGS_API,
+    /"JOIN gc_server_reaction_tags t ON t\.id = o\.tag_id " \+\s*"WHERE o\.tag_id = \? AND o\.user_id = \? AND t\.server_id = \? LIMIT 1"/,
+    "the duplicate read answers only through the right namespace");
+  assert.doesNotMatch(REACTION_TAGS_API, /void serverId;/, "the namespace is never discarded");
+});
+
+test("F5: the locale-key arm rides the same GC_REACTION_TAG_TEXT_MAX cap", () => {
+  assert.match(REACTION_TAGS_API, /length >= 1 && length <= GC_REACTION_TAG_TEXT_MAX/,
+    "both arms cap at GC_REACTION_TAG_TEXT_MAX — a 5000-char locale-key lookalike never passes");
+  assert.doesNotMatch(REACTION_TAGS_API, /LOCALE_KEY_SHAPE/,
+    "the shape test collapsed into the one shared cap — no dead regex lingers");
+});
+
+test("F6: the bookmark fresh save ships no id:0 lie on a meta miss", () => {
+  assert.doesNotMatch(BOOKMARKS_API, /Number\(result\.meta\?\.last_row_id\) \|\| 0/,
+    "Number(null) is 0 and an id of 0 is a lie — the capsule idiom rides");
+  assert.match(BOOKMARKS_API, /lastRowId !== undefined && lastRowId !== null/,
+    "the id seat rides ONLY a real row id (the capsules.mjs publicCapsule idiom)");
+});
+
+test("F7: the mod table paints the failed-load face on a malformed read, never a valid-empty", () => {
+  assert.match(SETTINGS, /const rows = Array\.isArray\(payload\?\.tags\) \? payload\.tags : null;/,
+    "a malformed payload seats null, never the empty-table arm");
+  assert.match(SETTINGS, /rows === null[\s\S]{0,220}?text: t\("gc\.tags\.loadFailed"\),[\s\S]{0,120}?tableSeat\.replaceChildren\(/,
+    "the member panel's failed-load face paints into the table seat — the key is REUSED, never an invented one");
+});
+
 
 // --- the verbatim paint (payload-truth) ------------------------------------
 
@@ -235,10 +297,21 @@ test("diff scope: the lane touches NO backend file, no constants seat, no core w
     touched = execFileSync("git", [
       "diff", "--name-only", LANE_BASE, LANE_TIP, "--", ...FROZEN_WAVE13_PATHS,
     ], { cwd: ROOT, encoding: "utf8" }).trim();
-  } catch {
-    // A non-git run (an exported tree) cannot answer — the other source-read
-    // pins carry the freeze there.
-    return;
+  } catch (error) {
+    // The catch is an ARM, not a swallow: a genuinely no-history
+    // environment (a shallow checkout, a non-git run) cannot answer the
+    // range, so the other source-read pins carry the freeze there — but in
+    // a FULL checkout the throw IS the defect (a mistyped SHA) and must
+    // fail loud. The checkout state itself decides the arm.
+    let isShallow;
+    try {
+      isShallow = execFileSync("git", ["rev-parse", "--is-shallow-repository"],
+        { cwd: ROOT, encoding: "utf8" }).trim() === "true";
+    } catch {
+      return; // not a git checkout at all (an exported tree)
+    }
+    if (isShallow) return;
+    throw error;
   }
   assert.equal(touched, "", `${touched ? touched : ""} — the frozen paths must stay untouched`);
 });

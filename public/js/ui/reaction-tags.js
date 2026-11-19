@@ -150,12 +150,24 @@ function tagRowsPanel(tagRows, mineRows, serverId) {
           text: mineRow ? t("gc.tags.optOut") : t("gc.tags.optIn"),
           onClick: async () => {
             try {
+              // Both flips rebuild the lane from the STORE at call time
+              // (the bookmarks.js unsaveBookmark/saveBookmark idiom — the
+              // c20 fix): the render-closure's mineRows is a snapshot, and
+              // two flips inside one latency window writing the snapshot
+              // resurrected/dropped rows. The opt's own presence check
+              // absorbs the same-tag double-click.
               if (mineRow) {
                 await optOutTag(serverId, row.id);
-                store.set({ [mineKey(serverId)]: mineRows.filter((entry) => entry.id !== row.id) });
+                store.set(
+                  { [mineKey(serverId)]: (store.get(mineKey(serverId)) || []).filter((entry) => entry.id !== row.id) });
               } else {
                 await optInTag(serverId, row.id);
-                store.set({ [mineKey(serverId)]: [...mineRows, { id: row.id, emoji: row.emoji, tag: row.tag }] });
+                const currentMine = store.get(mineKey(serverId)) || [];
+                if (!currentMine.some((entry) => entry.id === row.id)) {
+                  store.set({
+                    [mineKey(serverId)]: [...currentMine, { id: row.id, emoji: row.emoji, tag: row.tag }],
+                  });
+                }
               }
               router.renderCurrent();
             } catch (error) {

@@ -257,9 +257,19 @@ function reactionTagsPanel(serverId) {
   const tableSeat = h("div", { class: "tag-table" });
   // The table's one paint: the count line rides the rows painted against the
   // mirror, the tag/emoji strings paint verbatim through their own seats
-  // (server-native text, never t()'d).
+  // (server-native text, never t()'d). A malformed payload seats the
+  // failed-load face, never a valid-empty table (the c20 fix — the member
+  // panel's failed-load idiom, reaction-tags.js:60-64): the VALID empty
+  // map's paint alone is the empty state (the lane-c18-fix law).
   const paintTable = (payload) => {
-    const rows = payload?.tags || [];
+    const rows = Array.isArray(payload?.tags) ? payload.tags : null;
+    if (rows === null) {
+      tableSeat.replaceChildren(h("p", {
+        class: "form-error", role: "alert", "aria-live": "polite",
+        text: t("gc.tags.loadFailed"),
+      }));
+      return;
+    }
     tableSeat.replaceChildren(h("div", { class: "manage-list" },
       h("p", { class: "muted count-line",
         text: t("gc.settings.reactionTags.count", { count: rows.length, max: UI_REACTION_TAGS_MAX }) }),

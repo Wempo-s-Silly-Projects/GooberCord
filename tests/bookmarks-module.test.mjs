@@ -159,6 +159,19 @@ test("bookmark save answers the saved shape with the statement gate", async () =
   assert.equal(save.bound[1], 101);
 });
 
+// The c20 rider: a meta miss ships NO id at all — Number(null) is 0, and an
+// id of 0 is a lie, not a seat (the capsules.mjs publicCapsule idiom).
+test("bookmark save answers the id-less envelope on a meta miss (no id:0 lie)", async () => {
+  const { response, body } = await run("POST", "/api/messages/101/bookmark", [
+    { test: BOOKMARK_SAVE_TEST, run: () => ({ meta: { changes: 1 } }) },
+  ]);
+  assert.equal(response.status, 200);
+  assert.equal(body.saved, true);
+  assert.equal("id" in body, false, "the id seat rides ONLY a real row id");
+  assert.equal("duplicate" in body, false);
+});
+
+
 test("bookmark save is idempotent through the owner-scoped duplicate read", async () => {
   const { db, response, body } = await run("POST", "/api/messages/101/bookmark", [
     { test: BOOKMARK_SAVE_TEST, run: () => ({ meta: { changes: 0 } }) },

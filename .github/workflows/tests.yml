@@ -15,6 +15,11 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v5
+        with:
+          # Full history: the wave freeze pins diff committed SHA ranges
+          # (tests/wave13-tags.test.mjs's LANE_BASE/LANE_TIP); a shallow
+          # checkout's bad object made the pins answer VACUOUSLY.
+          fetch-depth: 0
       - name: Check out Forum sources used by parity tests
         uses: actions/checkout@v5
         with:
