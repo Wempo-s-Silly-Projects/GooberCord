@@ -19,8 +19,9 @@
 // The R2 recode port (gc-attachments + avatars onto wempos-forum-r2): pins
 // for the OLD modules' new R2 rides, driven against a Map-backed fake R2
 // bucket alongside the same fake-DB conventions as tests/media-module.test.mjs.
-// Four orders are pinned: the intake put lands only AFTER the D1 commit and
-// only through ctx.waitUntil; serving reads R2 first and falls back to the
+// Four orders are pinned: the intake put is AWAITED — after the D1 commit and
+// before createAttachment resolves, its failure swallowed so an upload keeps
+// its D1 chunk set; serving reads R2 first and falls back to the
 // D1 chunk set (including the fail-safe: an R2 object whose bytes fail the
 // egress verifier never serves); the moderator's reject rides the existing
 // changes==1 verdict with one R2 delete per doomed id; and a missing GC_MEDIA
@@ -236,9 +237,9 @@ async function staffFixtures() {
   };
 }
 
-// --- media intake: the R2 put rides AFTER the D1 commit -------------------------
+// --- media intake: the R2 put is the awaited durable leg -------------------------
 
-test("intake commits D1 first, then puts gc-attachments/<id> through ctx.waitUntil", async () => {
+test("intake commits D1 first, then awaits the R2 put before its success return", async () => {
   const image = pngImage();
   // The batch gate: held shut until the test release, so "no put before the
   // commit" is a real ordering pin, not a code-shape reading.
@@ -253,45 +254,68 @@ test("intake commits D1 first, then puts gc-attachments/<id> through ctx.waitUnt
   };
   const db = fakeDb([gatedStandaloneRoute]);
   const r2 = fakeR2();
-  const ctx = fakeCtx();
   const env = envWithLimiters({ GOOBER_DB: db, GC_MEDIA: r2 });
 
-  const pending = createAttachment(env, USER_ID, image, ctx);
-  // The batch has not resolved — no R2 put may have been scheduled yet.
+  const pending = createAttachment(env, USER_ID, image);
+  // The batch has not resolved — no R2 put may have been attempted yet.
   assert.equal(r2.calls.length, 0);
-  assert.equal(ctx.tasks.length, 0);
 
   releaseBatch();
   const attachment = await pending;
   assert.equal(attachment.id, 41);
-  // The rides schedule AFTER the commit resolved, through ctx.waitUntil.
-  assert.equal(ctx.tasks.length, 1);
-  assert.deepEqual(r2.calls.map((call) => call.op), ["put"]);
-
-  await settled(ctx);
+  // The put is AWAITED on the intake path: it already landed by the time
+  // the route's success returns — a background ride left to settle would
+  // leave the bucket empty here.
+  assert.equal(r2.calls.length, 1);
   assert.equal(r2.calls[0].key, GC_ATTACHMENT_OBJECT_PREFIX + "41");
-  assert.deepEqual(Uint8Array.from(r2.store.get(GC_ATTACHMENT_OBJECT_PREFIX + "41")), image);
-  // The batch rides the gate as one commit.
+  assert.deepEqual(
+    Uint8Array.from(r2.store.get(GC_ATTACHMENT_OBJECT_PREFIX + "41")),
+    image,
+  );
+  // The batch rides the gate as one commit (row + chunk set, the
+  // transition write-through the flip retains).
   const batch = db.calls.find((call) => call.call === "batch");
   assert.ok(batch);
   assert.ok(batch.statements.every((statement) => statement.sql.startsWith("INSERT INTO gc_attachment")));
 });
 
-test("intake without the GC_MEDIA binding schedules nothing and keeps the old shape", async () => {
+test("an R2 put failure keeps the D1 chunk set as the surviving leg — the upload still succeeds", async () => {
+  const image = pngImage();
+  const r2 = fakeR2();
+  r2.put = async (key) => {
+    r2.calls.push({ op: "put", key });
+    throw new Error("bucket down");
+  };
+  const db = fakeDb([standaloneRoute()]);
+  const env = envWithLimiters({ GOOBER_DB: db, GC_MEDIA: r2 });
+
+  // The failed put never 5xxes the upload: the intake resolves with the row
+  // the surviving D1 chunk set backs.
+  const attachment = await createAttachment(env, USER_ID, image);
+  assert.equal(attachment.id, 41);
+  assert.equal(attachment.status, "pending");
+  assert.equal(attachment.sizeBytes, image.length);
+  // The failed attempt stays visible as exactly one put; the batch still
+  // carried the row and its chunk insert set.
+  assert.deepEqual(r2.calls.map((call) => call.op), ["put"]);
+  const batch = db.calls.find((call) => call.call === "batch");
+  assert.ok(batch);
+  assert.ok(batch.statements.some((statement) => statement.sql.startsWith("INSERT INTO gc_attachments")));
+  assert.ok(batch.statements.some((statement) => statement.sql.startsWith("INSERT INTO gc_attachment_chunks")));
+});
+
+test("intake without the GC_MEDIA binding keeps the old shape", async () => {
   const image = pngImage();
   const db = fakeDb([standaloneRoute()]);
-  const ctx = fakeCtx();
   const env = envWithLimiters({ GOOBER_DB: db });
 
-  const attachment = await createAttachment(env, USER_ID, image, ctx);
+  const attachment = await createAttachment(env, USER_ID, image);
   assert.equal(attachment.id, 41);
   assert.equal(attachment.status, "pending");
   assert.equal(attachment.mime, "image/png");
   assert.equal(attachment.width, null);
   assert.equal(attachment.height, null);
   assert.equal(attachment.sizeBytes, image.length);
-  // No binding, no ride: the old D1-only intake scheduled nothing.
-  assert.equal(ctx.tasks.length, 0);
 });
 
 // --- media serving: R2 first, D1 chunks fallback ---------------------------------

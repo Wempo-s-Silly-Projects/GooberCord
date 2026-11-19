@@ -65,11 +65,13 @@ const UNREADABLE_ERROR =
 
 // --- R2 rides (the shared wempos-forum-r2 bucket, binding GC_MEDIA) --------------
 //
-// The D1 tables stay the serving fallback and the row ledger; the bucket is a
-// byte mirror written best-effort. Every helper is a no-op without the
-// binding (local dev runs byte-identically to the D1-only old code), and the
-// rides never fail a route: intake/reject schedule through ctx.waitUntil and
-// swallow their own R2 errors.
+// The D1 tables stay the serving fallback and the row ledger; the intake put
+// (the durable byte leg, awaited before the route's success return) and the
+// moderation delete (still a best-effort ride through ctx.waitUntil) are the
+// two bucket writes. Every helper is a no-op without the binding (local dev
+// runs byte-identically to the D1-only old code), and the intake put swallows
+// its own R2 errors: a failed put keeps the D1 chunk set as the surviving
+// leg, which serving's fallback already covers — never a 5xx'd upload.
 
 const attachmentObjectKey = (attachmentId) => GC_ATTACHMENT_OBJECT_PREFIX + attachmentId;
 
@@ -85,12 +87,18 @@ function scheduleBackgroundTask(ctx, task) {
   void safe;
 }
 
-// Best-effort byte mirror after the D1 commit: the object lands at
-// gc-attachments/<id> only once the row and its chunk set exist, so serving
-// can always fall back to D1 for any attachment whose put did not land.
-export function scheduleAttachmentObjectPut(env, ctx, attachmentId, bytes) {
+// The durable intake leg, AWAITED by the intake before its success return:
+// the object lands at gc-attachments/<id> only once the row and its chunk set
+// exist, so serving can always fall back to D1 for any attachment whose put
+// did not land. The put swallows its own R2 errors — the D1 chunk write-through
+// stays the surviving leg until the backfill receipt retires it.
+export async function putAttachmentObject(env, attachmentId, bytes) {
   if (!env.GC_MEDIA) return;
-  scheduleBackgroundTask(ctx, env.GC_MEDIA.put(attachmentObjectKey(attachmentId), bytes));
+  try {
+    await env.GC_MEDIA.put(attachmentObjectKey(attachmentId), bytes);
+  } catch {
+    // The bucket write is not worth a failed upload: the chunk set serves.
+  }
 }
 
 // One R2 delete per doomed id, riding the caller's changes==1 verdict — the
@@ -243,7 +251,7 @@ export function standaloneAttachmentStatements(env, uploaderId, prepared, now) {
 // The standalone upload: one batch, { attachment } result. No idempotency key
 // exists here — a double-POST makes two pending rows, each reviewed on its
 // own (the queue shows the uploader/size/creation second either way).
-export async function createAttachment(env, uploaderId, fileBytes, ctx = null) {
+export async function createAttachment(env, uploaderId, fileBytes) {
   const prepared = prepareAttachmentBytes(fileBytes);
   const now = nowSeconds();
   const results = await env.GOOBER_DB.batch(
@@ -253,9 +261,11 @@ export async function createAttachment(env, uploaderId, fileBytes, ctx = null) {
   if (!Number.isInteger(id) || id < 1) {
     throw new HttpError(500, "That image could not be stored. Please try again.");
   }
-  // The byte mirror rides AFTER the commit, best-effort: a put that fails (or
-  // never had a binding) leaves the chunks as the serving fallback.
-  scheduleAttachmentObjectPut(env, ctx, id, prepared.bytes);
+  // The durable leg rides AFTER the commit but BEFORE the success return:
+  // awaited, not waitUntil best-effort. A put that fails (or never had a
+  // binding) still returns the row — the surviving D1 chunk set is the
+  // serving fallback until the backfill receipt removes the write-through.
+  await putAttachmentObject(env, id, prepared.bytes);
   return {
     id,
     status: "pending",
@@ -465,8 +475,8 @@ async function handleAttachmentServingRoute(request, env, attachmentId) {
   }
 
   // The small lanes' proven set (every row the single-buffer intakes bore,
-  // up to 20 MiB) answers R2-first (the byte mirror written best-effort at
-  // intake) and assembles from the D1 chunk set as the fallback; a LARGE lane
+  // up to 20 MiB) answers R2-first (the durable intake put) and assembles
+  // from the D1 chunk set as the fallback; a LARGE lane
   // row streams paged above (D1-only — every large row was born there).
   if (Number(row.size_bytes) > MAX_ATTACHMENT_BYTES) {
     const streamed = await streamChunkedAttachment(env, row);
@@ -494,7 +504,7 @@ async function handleUploadAttachmentRoute(request, env, ctx) {
   const files = (await readMultipartWithImage(request)).files;
   if (files.length !== 1) throw new HttpError(400, "Attach exactly one image.");
 
-  const attachment = await createAttachment(env, Number(session.user.id), files[0], ctx);
+  const attachment = await createAttachment(env, Number(session.user.id), files[0]);
   return json({ attachment: { id: attachment.id, status: attachment.status } }, 201);
 }
 
@@ -561,8 +571,9 @@ async function handleAttachmentModerationRoute(request, env, attachmentId, actio
 export async function handleMediaRoutes(request, env, url, path, method, ctx) {
   // ctx (the worker's execution context) completes the dispatch loop's
   // handler signature; these routes schedule background work only through
-  // it (the R2 mirror's put and delete rides). Callers without a ctx (tests,
-  // callers that never schedule) run the rides inline-detached, error-caught.
+  // it (the R2 moderation delete ride — the intake put is awaited inline).
+  // Callers without a ctx (tests, callers that never schedule) run the ride
+  // inline-detached, error-caught.
   void url;
 
   if (method === "POST" && path === "/api/attachments") {
