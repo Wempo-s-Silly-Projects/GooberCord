@@ -21,7 +21,6 @@
 // verbatim, the ledger cursor appends without duplicating, the voice tick is
 // silent when granted:false and stops on stop() without catch-up ticks, and
 // the shop carries claim/bundles/items/apply/gift/ledger as one route.
-import "./helpers/xhr-shim.mjs"; // lane-xhr wave-21: mounts globalThis.XMLHttpRequest (the transport bridge)
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";

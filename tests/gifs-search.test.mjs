@@ -22,7 +22,6 @@
 // the query/limit/position shapes are clamped, and the upstream payload is
 // mapped down to the three picker fields. The upstream fetch is injected via
 // globalThis.fetch (no network in tests).
-import "./helpers/xhr-shim.mjs"; // lane-xhr wave-21: mounts globalThis.XMLHttpRequest (the transport bridge)
 import test from "node:test";
 import assert from "node:assert/strict";
 

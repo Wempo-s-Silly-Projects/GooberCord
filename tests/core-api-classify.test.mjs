@@ -20,7 +20,6 @@
 // once against a fresh /api/me token, the X-Rules-Gate header lands on the
 // error as .rulesGate, and Retry-After parses to .retryAfter — everything
 // else surfaces verbatim with no invented copy.
-import "./helpers/xhr-shim.mjs"; // lane-xhr wave-21: mounts globalThis.XMLHttpRequest (the transport bridge)
 import test from "node:test";
 import assert from "node:assert/strict";
 

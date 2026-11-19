@@ -18,7 +18,6 @@
 
 // The live lane: the ONE socket address, exact frame shapes, the heartbeat,
 // the G-9 reconnecting state, the resume-after handoff, and clean stops.
-import "./helpers/xhr-shim.mjs"; // lane-xhr wave-21: mounts globalThis.XMLHttpRequest (the transport bridge)
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";

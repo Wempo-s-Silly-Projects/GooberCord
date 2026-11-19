@@ -33,7 +33,6 @@
 // The rigs are the suites' own idioms: fakeDb (bookmarks-module.test.mjs),
 // the headless render rig (c15-panels.test.mjs), the source-read pin
 // (c17-caps.test.mjs).
-import "./helpers/xhr-shim.mjs"; // lane-xhr wave-21: mounts globalThis.XMLHttpRequest (the transport bridge)
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";

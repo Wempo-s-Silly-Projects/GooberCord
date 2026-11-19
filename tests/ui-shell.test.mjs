@@ -20,7 +20,6 @@
 // node pins the bytes): the theme engine is Kit's, the door tile is WEMPO,
 // the first-run screen is the ONE screen, and the placeholder routes the
 // later waves re-register carry the names they replace.
-import "./helpers/xhr-shim.mjs"; // lane-xhr wave-21: mounts globalThis.XMLHttpRequest (the transport bridge)
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";

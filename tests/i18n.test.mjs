@@ -21,7 +21,6 @@
 // → en → visible key-tail, the plural rule seat, and en.json's integrity
 // (its keys ride the <product>.<area>.<topic>.<element> scheme; server-class
 // copy stays out — the server never localizes).
-import "./helpers/xhr-shim.mjs"; // lane-xhr wave-21: mounts globalThis.XMLHttpRequest (the transport bridge)
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";

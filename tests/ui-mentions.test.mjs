@@ -20,7 +20,6 @@
 // button law), the /mentions route, dismiss by MESSAGE id, and the 0028
 // contingency (unlanded backend → quiet rail state + inline route error,
 // never a fabricated list).
-import "./helpers/xhr-shim.mjs"; // lane-xhr wave-21: mounts globalThis.XMLHttpRequest (the transport bridge)
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";

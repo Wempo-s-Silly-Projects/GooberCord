@@ -24,7 +24,6 @@
 // constant. The F1/F2 pins render the real module paint headlessly (the
 // i18n.test.mjs StubNode idiom); the LOW rides ride source-reads (the
 // wave10-panels idiom).
-import "./helpers/xhr-shim.mjs"; // lane-xhr wave-21: mounts globalThis.XMLHttpRequest (the transport bridge)
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
