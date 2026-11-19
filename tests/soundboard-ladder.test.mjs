@@ -184,21 +184,25 @@ test("the owner matrix's soundboard ladder constants: base 8, blessings 24/36/48
   );
 });
 
-test("the soundboard CREATE gate answers the LEVEL's cap: 2 boosts arms < 24, 14 arms < 48", async () => {
+test("the soundboard CREATE gate answers the LEVEL's cap: 2 boosts arms bind 24, 14 arms bind 48", async () => {
   const l1 = await createSound(createRoutes({ boosts: 2 }));
   assert.equal(l1.response.status, 201, "an L1 server inventories 24 sounds");
   const l1Insert = l1.db.calls.find((call) => call.call === "run" && call.sql.startsWith("INSERT INTO gc_sounds"));
   assert.ok(l1Insert, "the guarded INSERT ran");
   assert.match(
     l1Insert.sql,
-    /\(SELECT COUNT\(\*\) FROM gc_sounds WHERE server_id = \?\) < 24$/,
-    "the create statement carries the L1 blessing, not the base 8",
+    /\(SELECT COUNT\(\*\) FROM gc_sounds WHERE server_id = \?\) < \?$/,
+    "the create statement's cap rides a placeholder (GO-HAYWIRE C3 FIX 2: bound, never concatenated)",
   );
+  assert.equal(l1Insert.bound[l1Insert.bound.length - 1], 24,
+    "the L1 blessing is the bound cap answer");
 
   const l3 = await createSound(createRoutes({ boosts: 14 }));
   assert.equal(l3.response.status, 201, "an L3 server inventories 48 sounds");
   const l3Insert = l3.db.calls.find((call) => call.call === "run" && call.sql.startsWith("INSERT INTO gc_sounds"));
-  assert.match(l3Insert.sql, /< 48$/, "the L3 blessing rides the create statement");
+  assert.match(l3Insert.sql, /< \?$/, "the L3 blessing rides the create statement's bound cap");
+  assert.equal(l3Insert.bound[l3Insert.bound.length - 1], 48,
+    "the L3 blessing is the bound cap answer");
 });
 
 test("an unanswered boost probe arms the BASE 8 — the tier-blind gate's RED control", async () => {
@@ -209,9 +213,11 @@ test("an unanswered boost probe arms the BASE 8 — the tier-blind gate's RED co
   const insert = db.calls.find((call) => call.call === "run" && call.sql.startsWith("INSERT INTO gc_sounds"));
   assert.match(
     insert.sql,
-    new RegExp("< " + GC_SOUNDBOARD_MAX_PER_SERVER + "$"),
-    "a level-0 (missed) probe arms the base 8",
+    /\) < \?$/,
+    "a level-0 (missed) probe arms the base 8 through the bound cap",
   );
+  assert.equal(insert.bound[insert.bound.length - 1], GC_SOUNDBOARD_MAX_PER_SERVER,
+    "the base 8 is the bound cap answer");
 });
 
 test("a full inventory blocks only the NEW create — 400 with the cap copy, rows stay", async () => {
