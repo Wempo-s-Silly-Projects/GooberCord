@@ -429,10 +429,11 @@ test("the composer wires the tier through the lane predicate", () => {
 
 // --- the /me tier seat (wave-19): route-level pins, the c23 wiring-gap class
 
-// The /me seeding's OWN named-bind read (the :uid shape the accent pair's
-// idiom rides) — never the :? positional shape plusPerkActive uses, so the
-// pin proves the route runs the wave's read, not an old caller's.
-const PLUS_TIER_NAMED_TEST = (sql) => sql.includes("FROM gc_plus_state WHERE user_id = :uid");
+// The /me seeding's OWN positional read — the named-bind object form this
+// route briefly rode 500'd real prod D1 (the owner's Nov 19 blank-shell
+// report); the pin rides the POSITIONAL shape, so the old SQL can never
+// quietly return.
+const PLUS_TIER_NAMED_TEST = (sql) => sql.includes("SELECT renews_until > ? AS active, tier AS plusTier");
 
 async function dispatchAccounts(request, env) {
   const url = new URL(request.url);

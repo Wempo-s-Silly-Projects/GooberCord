@@ -271,10 +271,10 @@ const termRoute = (renews_until) => ({
   first: async () => (renews_until === null ? null : { renews_until }),
 });
 const emptyCosmeticsRoute = { test: COSMETICS_ROWR_TEST, first: async () => null };
-// Wave-19: the /me tier seat — the route's own named-bind read (the :uid
-// shape) answers the ROW { active, plusTier }, never the perk truth's
-// { renews_until } shape.
-const TIER_ROW_TEST = (sql) => sql.startsWith("SELECT renews_until > :now AS active, tier AS plusTier");
+// Wave-19: the /me tier seat — the route's own positional read (the
+// named-bind object form 500'd real prod D1, Nov 19) answers the ROW
+// { active, plusTier }, never the perk truth's { renews_until } shape.
+const TIER_ROW_TEST = (sql) => sql.startsWith("SELECT renews_until > ? AS active, tier AS plusTier");
 const tierRowRoute = (active, plusTier) => ({
   test: TIER_ROW_TEST,
   first: async () => ({ active, plusTier }),

@@ -584,9 +584,13 @@ async function handleMeRoute(request, env) {
       // two-predicate note explains the split from publicPlus's display.
       // The tier rides the SAME row (wave-19: the upload tiers' client face —
       // me.plusTier seats the composer's tier mirrors; no row, no key).
+      // POSITIONAL binds (the fleet's universal idiom) — the named-bind
+      // object form this seat briefly rode 500'd real prod D1 while the
+      // fakeDb suite passed (the owner's Nov 19 blank-shell report): a
+      // real-D1-only novel API surface never rides a route again.
       env.GOOBER_DB.prepare(
-        "SELECT renews_until > :now AS active, tier AS plusTier FROM gc_plus_state WHERE user_id = :uid LIMIT 1",
-      ).bind({ now, uid: userId }).first(),
+        "SELECT renews_until > ? AS active, tier AS plusTier FROM gc_plus_state WHERE user_id = ? LIMIT 1",
+      ).bind(now, userId).first(),
     ]);
     const cosmetics = publicCosmetics(cosmeticsRow);
     const user = {
