@@ -489,10 +489,11 @@
   "gc.economy.quests.earned": "Pièces gagnées",
   "gc.economy.quests.progress": "{{progress}} sur {{goal}}",
   "gc.economy.quests.claim": "Réclamer {{count}} pièces",
+  "gc.economy.quests.claimPlain": "Réclamer la récompense quotidienne",
   "gc.economy.quests.claimed": "Déjà réclamé aujourd'hui",
   "gc.settings.welcomeCard.heading": "Carte de bienvenue",
   "gc.settings.welcomeCard.fieldLabel": "Texte de bienvenue",
   "gc.settings.welcomeCard.save": "Mettre à jour la carte de bienvenue",
-  "gc.settings.welcomeCard.confirm": "Définir ce texte comme la carte de bienvenue du serveur ?",
+  "gc.settings.welcomeCard.confirmHeading": "Confirmer la carte de bienvenue",
   "gc.settings.welcomeCard.saved": "Carte de bienvenue mise à jour."
 }

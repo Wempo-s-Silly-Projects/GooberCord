@@ -306,6 +306,15 @@ function claimPanel(payload) {
 // paint as-is — the goal numbers are the GET's, never a client mirror; the
 // claim rides the shared daily slot and the 409/400 verdict renders inline
 // verbatim, the same lane the plain claim's refusal rides.
+// The kind→key map: the backend GOALS kinds (api/quests.mjs) are message,
+// voice, earn — "earn" resolves to the seated ".earned" key (the payload's
+// bare kind would otherwise build the unwritten ".earn" seat).
+const QUEST_KIND_KEYS = { earn: "gc.economy.quests.earned" };
+
+function questKindKey(kind) {
+  return QUEST_KIND_KEYS[kind] ?? "gc.economy.quests." + kind;
+}
+
 function questsPanel() {
   const panel = h("div", { class: "panel" }, h("h3", { text: t("gc.economy.quests.heading") }));
   const quests = store.get("quests");
@@ -319,15 +328,20 @@ function questsPanel() {
   const rows = (quests.quests || []).map((quest) => h("li", {
     class: "quest-row" + (quest.complete ? " quest-complete" : ""),
   },
-  h("span", { class: "quest-kind", text: t("gc.economy.quests." + quest.kind) }),
+  h("span", { class: "quest-kind", text: t(questKindKey(quest.kind)) }),
   h("span", { class: "quest-progress",
     text: t("gc.economy.quests.progress", { progress: quest.progress, goal: quest.goal }) })));
   panel.append(h("ul", { class: "quest-list" }, ...rows));
+  // The claim label: a claim state absent from the payload (or a rewardless
+  // one) renders the plain label — the {{count}} seat never paints unmatched.
+  const claimState = quests?.claim;
   const claim = h("button", {
     class: "button button-primary quest-claim", type: "button",
-    text: quests?.claim?.claimed
+    text: claimState?.claimed
       ? t("gc.economy.quests.claimed")
-      : t("gc.economy.quests.claim", { count: quests?.claim?.reward }),
+      : claimState && Number.isInteger(claimState.reward)
+        ? t("gc.economy.quests.claim", { count: claimState.reward })
+        : t("gc.economy.quests.claimPlain"),
   });
   claim.disabled = !!quests?.claim?.claimed;
   claim.addEventListener("click", async () => {

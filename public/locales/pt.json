@@ -489,10 +489,11 @@
   "gc.economy.quests.earned": "Moedas ganhas",
   "gc.economy.quests.progress": "{{progress}} de {{goal}}",
   "gc.economy.quests.claim": "Reivindicar {{count}} moedas",
+  "gc.economy.quests.claimPlain": "Reivindicar a recompensa diária",
   "gc.economy.quests.claimed": "Já reivindicado hoje",
   "gc.settings.welcomeCard.heading": "Cartão de boas-vindas",
   "gc.settings.welcomeCard.fieldLabel": "Texto de boas-vindas",
   "gc.settings.welcomeCard.save": "Atualizar cartão de boas-vindas",
-  "gc.settings.welcomeCard.confirm": "Definir este texto como o cartão de boas-vindas do servidor?",
+  "gc.settings.welcomeCard.confirmHeading": "Confirmar o cartão de boas-vindas",
   "gc.settings.welcomeCard.saved": "Cartão de boas-vindas atualizado."
 }

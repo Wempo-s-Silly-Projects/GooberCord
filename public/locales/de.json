@@ -480,10 +480,11 @@
   "gc.economy.quests.earned": "Verdiente Coins",
   "gc.economy.quests.progress": "{{progress}} von {{goal}}",
   "gc.economy.quests.claim": "{{count}} Coins einlösen",
+  "gc.economy.quests.claimPlain": "Tagesbelohnung einlösen",
   "gc.economy.quests.claimed": "Heute bereits eingelöst",
   "gc.settings.welcomeCard.heading": "Begrüßungskarte",
   "gc.settings.welcomeCard.fieldLabel": "Begrüßungstext",
   "gc.settings.welcomeCard.save": "Begrüßungskarte aktualisieren",
-  "gc.settings.welcomeCard.confirm": "Diesen Text als Begrüßungskarte des Servers setzen?",
+  "gc.settings.welcomeCard.confirmHeading": "Begrüßungskarte bestätigen",
   "gc.settings.welcomeCard.saved": "Begrüßungskarte aktualisiert."
 }

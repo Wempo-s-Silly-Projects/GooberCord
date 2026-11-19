@@ -496,10 +496,11 @@
   "gc.economy.quests.earned": "Заработанные монеты",
   "gc.economy.quests.progress": "{{progress}} из {{goal}}",
   "gc.economy.quests.claim": "Получить {{count}} монет",
+  "gc.economy.quests.claimPlain": "Получить ежедневную награду",
   "gc.economy.quests.claimed": "Уже получено сегодня",
   "gc.settings.welcomeCard.heading": "Карточка приветствия",
   "gc.settings.welcomeCard.fieldLabel": "Текст приветствия",
   "gc.settings.welcomeCard.save": "Обновить карточку приветствия",
-  "gc.settings.welcomeCard.confirm": "Установить этот текст как карточку приветствия сервера?",
+  "gc.settings.welcomeCard.confirmHeading": "Подтвердить карточку приветствия",
   "gc.settings.welcomeCard.saved": "Карточка приветствия обновлена."
 }

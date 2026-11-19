@@ -71,11 +71,12 @@ const NEW_KEYS = [
   "gc.economy.quests.earned",
   "gc.economy.quests.progress",
   "gc.economy.quests.claim",
+  "gc.economy.quests.claimPlain",
   "gc.economy.quests.claimed",
   "gc.settings.welcomeCard.heading",
   "gc.settings.welcomeCard.fieldLabel",
   "gc.settings.welcomeCard.save",
-  "gc.settings.welcomeCard.confirm",
+  "gc.settings.welcomeCard.confirmHeading",
   "gc.settings.welcomeCard.saved",
 ];
 
@@ -157,6 +158,25 @@ test("the shop gains the quests block — GET the day, POST the claim", () => {
     "the quests block rides INSIDE renderShop's panel chain");
 });
 
+// The deslop-HIGH pin: the backend's GOALS kinds (api/quests.mjs) are
+// message, voice, EARN — the client's kind→key map must resolve every one
+// of them to a SEATED key ("earn" → gc.economy.quests.earned), never the
+// visible-garbage fallback for a kind the payload actually ships.
+test("the kind-to-key map resolves every backend GOALS kind to a seated key", () => {
+  const kinds = [...QUESTS_API.matchAll(/kind: "([a-z]+)", goal:/g)].map((entry) => entry[1]);
+  assert.deepEqual(kinds, ["message", "voice", "earn"],
+    "the backend GOALS list is the single source of the kinds");
+  const mapSource = ECONOMY.match(/const QUEST_KIND_KEYS = \{([^}]*)\}/)?.[1];
+  assert.ok(mapSource, "the client maps the payload kind through QUEST_KIND_KEYS");
+  const map = new Map([...mapSource.matchAll(/([a-z]+): "(gc\.[a-z.A-Z]+)"/g)]
+    .map((entry) => [entry[1], entry[2]]));
+  for (const kind of kinds) {
+    const key = map.get(kind) ?? "gc.economy.quests." + kind;
+    assert.ok(typeof enData[key] === "string" && enData[key].length > 0,
+      `the payload kind "${kind}" resolves to the seated key ${key}`);
+  }
+});
+
 test("the goal numbers ride the payload's own values — no client mirror literal, no client import", () => {
   assert.match(ECONOMY, /quest\.goal/, "the GET payload carries its goal values (questPayload's shape)");
   assert.match(ECONOMY, /quest\.progress/);
@@ -183,6 +203,18 @@ test("the sink law: the client adds no mint and no ledger write", () => {
   assert.equal(claimSeats, 1, "one claim wire: claimQuest's POST");
 });
 
+test("the claim label never paints an unmatched {{count}} seat", () => {
+  assert.match(ECONOMY, /const claimState = quests\?\.claim;/,
+    "the claim state hoists once (the deslop-LOW pin)");
+  assert.match(ECONOMY, /claimState && Number\.isInteger\(claimState\.reward\)/,
+    "the count seat renders only a reward the payload actually carries");
+  assert.match(ECONOMY, /t\("gc\.economy\.quests\.claim", \{ count: claimState\.reward \}\)/);
+  assert.match(ECONOMY, /t\("gc\.economy\.quests\.claimPlain"\)/,
+    "the rewardless state falls back to the plain label, no raw seat");
+  assert.equal(ECONOMY.match(/t\("gc\.economy\.quests\.claim",/g)?.length, 1,
+    "one counted claim seat: the hoisted state's reward");
+});
+
 // --- F3: welcome card ----------------------------------------------------------
 
 test("the mod write door lives inside the manage gate — one blurb PUT, one explicit save", () => {
@@ -194,10 +226,19 @@ test("the mod write door lives inside the manage gate — one blurb PUT, one exp
 });
 
 test("the PUT fires ONE confirm step later — the defaults law", () => {
-  assert.match(SETTINGS, /openDialog\(document, \{[^}]*welcomeCard\.confirm/, "the confirm gate precedes the PUT");
+  assert.match(SETTINGS, /openDialog\(document, \{[^}]*welcomeCard\.confirmHeading/,
+    "the confirm gate precedes the PUT (heading chrome rides its own seat)");
   assert.equal(SETTINGS.match(/welcome-card`, \{ method: "PUT"/g)?.length, 1, "one PUT seat");
   // The PUT rides ONLY the confirm action's onPress — never the form submit itself.
   assert.doesNotMatch(SETTINGS, /welcomeCardPut\([^)]*\)\{\s*await api/, "the paint/submit path never PUTs directly");
+});
+
+test("the confirm dialog's body is the blurb itself - member-composed text, verbatim", () => {
+  assert.match(SETTINGS, /confirmBody\.textContent = blurb;/,
+    "the body paints the blurb through its own textContent seat, never t()'d");
+  assert.doesNotMatch(SETTINGS, /"gc\.settings\.welcomeCard\.confirm"/,
+    "no reused confirm seat as body");
+  assert.ok(!("gc.settings.welcomeCard.confirm" in enData), "the shared confirm key is unseated, not dead");
 });
 
 test("the blurb cap rides the mirrored constant with provenance", () => {

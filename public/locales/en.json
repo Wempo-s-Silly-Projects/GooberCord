@@ -480,10 +480,11 @@
   "gc.economy.quests.earned": "Coins earned",
   "gc.economy.quests.progress": "{{progress}} / {{goal}}",
   "gc.economy.quests.claim": "Claim {{count}} coins",
+  "gc.economy.quests.claimPlain": "Claim the daily reward",
   "gc.economy.quests.claimed": "Claimed today",
   "gc.settings.welcomeCard.heading": "Welcome card",
   "gc.settings.welcomeCard.fieldLabel": "Welcome blurb",
   "gc.settings.welcomeCard.save": "Update welcome card",
-  "gc.settings.welcomeCard.confirm": "Set this text as the server's welcome card?",
+  "gc.settings.welcomeCard.confirmHeading": "Confirm the welcome card",
   "gc.settings.welcomeCard.saved": "Welcome card updated."
 }

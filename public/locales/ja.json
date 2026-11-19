@@ -473,10 +473,11 @@
   "gc.economy.quests.earned": "獲得コイン",
   "gc.economy.quests.progress": "{{progress}}／{{goal}}",
   "gc.economy.quests.claim": "{{count}} コインを受け取る",
+  "gc.economy.quests.claimPlain": "デイリー報酬を受け取る",
   "gc.economy.quests.claimed": "本日は受取済み",
   "gc.settings.welcomeCard.heading": "ウェルカムカード",
   "gc.settings.welcomeCard.fieldLabel": "カードの文章",
   "gc.settings.welcomeCard.save": "ウェルカムカードを更新",
-  "gc.settings.welcomeCard.confirm": "このテキストをサーバーのウェルカムカードに設定しますか？",
+  "gc.settings.welcomeCard.confirmHeading": "ウェルカムカードの確認",
   "gc.settings.welcomeCard.saved": "ウェルカムカードを更新しました。"
 }

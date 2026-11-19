@@ -152,9 +152,14 @@ function welcomeCardPanel(serverId) {
     event.preventDefault();
     const blurb = form.querySelector("#welcome-card-blurb").value;
     // One explicit confirm step (the defaults law) before the single PUT.
+    // The dialog's body is the blurb itself — member-composed text painted
+    // verbatim through its own textContent seat, never t()'d (the same law
+    // the painted card rides); only the heading chrome rides a key.
+    const confirmBody = h("p", { class: "gate-copy" });
+    confirmBody.textContent = blurb;
     openDialog(document, {
-      heading: t("gc.settings.welcomeCard.confirm"),
-      body: h("p", { class: "gate-copy", text: t("gc.settings.welcomeCard.confirm") }),
+      heading: t("gc.settings.welcomeCard.confirmHeading"),
+      body: confirmBody,
       modalOnly: true,
       actions: [
         { class: "button button-primary", text: t("gc.settings.welcomeCard.save"), onPress: async () => {

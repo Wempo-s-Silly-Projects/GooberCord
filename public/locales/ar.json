@@ -487,10 +487,11 @@
   "gc.economy.quests.earned": "العملات المكتسبة",
   "gc.economy.quests.progress": "{{progress}} من {{goal}}",
   "gc.economy.quests.claim": "استلم {{count}} عملة",
+  "gc.economy.quests.claimPlain": "استلم المكافأة اليومية",
   "gc.economy.quests.claimed": "تم الاستلام اليوم",
   "gc.settings.welcomeCard.heading": "بطاقة الترحيب",
   "gc.settings.welcomeCard.fieldLabel": "نص الترحيب",
   "gc.settings.welcomeCard.save": "تحديث بطاقة الترحيب",
-  "gc.settings.welcomeCard.confirm": "تعيين هذا النص كبطاقة ترحيب للخادم؟",
+  "gc.settings.welcomeCard.confirmHeading": "تأكيد بطاقة الترحيب",
   "gc.settings.welcomeCard.saved": "تم تحديث بطاقة الترحيب."
 }

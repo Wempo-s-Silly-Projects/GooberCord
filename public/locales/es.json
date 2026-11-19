@@ -481,10 +481,11 @@
   "gc.economy.quests.earned": "Monedas ganadas",
   "gc.economy.quests.progress": "{{progress}} de {{goal}}",
   "gc.economy.quests.claim": "Reclamar {{count}} monedas",
+  "gc.economy.quests.claimPlain": "Reclamar la recompensa diaria",
   "gc.economy.quests.claimed": "Ya reclamado hoy",
   "gc.settings.welcomeCard.heading": "Tarjeta de bienvenida",
   "gc.settings.welcomeCard.fieldLabel": "Texto de bienvenida",
   "gc.settings.welcomeCard.save": "Actualizar tarjeta de bienvenida",
-  "gc.settings.welcomeCard.confirm": "¿Establecer este texto como la tarjeta de bienvenida del servidor?",
+  "gc.settings.welcomeCard.confirmHeading": "Confirmar la tarjeta de bienvenida",
   "gc.settings.welcomeCard.saved": "Tarjeta de bienvenida actualizada."
 }
