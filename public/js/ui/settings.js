@@ -196,7 +196,13 @@ function boostTierPanel(serverId) {
   api(`/api/servers/${serverId}/boost-tier`).then((payload) => {
     const nextLevel = payload?.nextLevel ?? null;
     const perks = payload?.levelPerks ?? null;
-    well.append(
+    // The seats gather first and the falsy-skip law (appendChildren,
+    // public/js/core/dom.js:79-83) lives AT the append site: native
+    // ParentNode.append stringifies a bare null into the literal "null", so
+    // the optional arms (L3's topLevel replacement, the absent progress
+    // bar, the silent levelPerks block) answer null INSIDE the array and
+    // are skipped, never handed to the append. L0 and L3 paint clean.
+    const seats = [
       h("p", { class: "boost-tier-badge", text: t("gc.settings.boostTier.tierBadge", { level: payload?.level }) }),
       h("p", { class: "muted", text: t("gc.settings.boostTier.boostsLine", { boosts: payload?.boosts }) }),
       nextLevel !== null
@@ -212,7 +218,11 @@ function boostTierPanel(serverId) {
       perks !== null ? h("p", { class: "muted", text: t("gc.settings.boostTier.perks.audio", { bitrate: perks.audioBitrate }) }) : null,
       perks !== null ? h("p", { class: "muted", text: t("gc.settings.boostTier.perks.upload", { size: perks.uploadBytes }) }) : null,
       perks !== null ? h("p", { class: "muted", text: t("gc.settings.boostTier.perks.stage", { seats: perks.stageSeats }) }) : null,
-    );
+    ];
+    for (const seat of seats) {
+      if (seat === null || seat === undefined) continue;
+      well.append(seat);
+    }
   }).catch((error) => {
     errorLine.textContent = error.message; // the shared 404 / 429 family paints verbatim (G-2)
   });

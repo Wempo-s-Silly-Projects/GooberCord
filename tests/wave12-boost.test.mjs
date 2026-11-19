@@ -357,7 +357,37 @@ test("the panel's refusals paint the server's string verbatim (G-2) and no coin 
   assert.doesNotMatch(panelSource, /coin|ledger/, "the sink law: no coins behind the tier");
 });
 
-// --- the freeze pin (wave-9 lesson, third instance: committed range only) --------
+// --- the append shape (T-WAVE-12 HIGH): the L0/L3 seats skip, never stringify ---
+
+// Native ParentNode.append STRINGIFIES its arguments — a bare null child
+// paints the literal "null". h()'s children ride appendChildren's falsy-skip
+// law (public/js/core/dom.js:79-83, null/undefined/false skipped); the panel's
+// own append site must carry THAT law. No DOM lib runs here (jsdom is banned;
+// no new deps), so the pin is the append shape itself: the well's only append
+// carries ONE Node-shaped seat variable, gated by the falsy-skip skip — the
+// optional seats (the L3 topLevel replacement, the progress bar's L3 absence,
+// the levelPerks arm and its four perk lines) are built into the seats array
+// and skipped, never handed to append.
+test("the panel's append rides the appendChildren falsy-skip law — no bare null seat stringifies", () => {
+  const panelSource = SETTINGS_UI.slice(SETTINGS_UI.indexOf("function boostTierPanel"),
+    SETTINGS_UI.indexOf("function renderServerSettings"));
+  // The seats are gathered first (h() calls only), the optional arms land as
+  // null in the ARRAY — where falsy-skip is legal — never as append arguments.
+  assert.match(panelSource, /const seats = \[/,
+    "the seats gather first, the optional arms answering null INSIDE the array");
+  assert.match(panelSource, /if \(seat === null \|\| seat === undefined\) continue;/,
+    "the falsy-skip law (dom.js:80) lives at the append site");
+  const appends = panelSource.match(/well\.append\([^)]*\)/g) ?? [];
+  assert.equal(appends.length, 1, `one append site (found ${appends.length})`);
+  assert.match(appends[0], /well\.append\(seat\)/,
+    "the append carries one Node-shaped seat variable, never a literal");
+  assert.doesNotMatch(panelSource, /append\([\s\S]{0,200}?\?\s*h\(/,
+    "no inline ternary hands a falsy arm to append — the arms answer inside the seats array");
+  assert.doesNotMatch(panelSource, /append\(\s*(?:null|undefined)\b/,
+    "no bare null/undefined appends (they stringifies as the word 'null')");
+});
+
+// --- the freeze pin (wave-9 lesson, fourth instance: committed range only) --------
 
 // LANE_BASE = bdd723d (main tip at lane open, the wave-12 slate commit);
 // LANE-TIP is the wave's OWN feat commit — the lead retargets the
