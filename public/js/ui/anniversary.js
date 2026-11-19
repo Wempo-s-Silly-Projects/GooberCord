@@ -69,8 +69,16 @@ function truthLine() {
   const state = store.get("meAnniversary");
   const line = h("p", { class: "muted anniversary-truth" });
   if (state && Number.isInteger(state.month) && Number.isInteger(state.day)) {
-    line.textContent = t("gc.anniversary.current", { month: state.month, day: state.day });
+    // F1 (lane-c22-fix, GO-HAYWIRE 2026-11-19): the truth line paints the
+    // selector's own month face — the month index is 0-11, the painted month
+    // is 1-12 (gc.anniversary.monthOption already rides month+1); the day
+    // itself stays verbatim.
+    line.textContent = t("gc.anniversary.current", { month: state.month + 1, day: state.day });
   } else {
+    // F2 (lane-c22-fix, GO-HAYWIRE 2026-11-19): client interim truth — this
+    // line means absence IN THIS SESSION (meAnniversary is session-local;
+    // no GET arm exists yet). The honest GET arm is owner-gated: board row
+    // T-PARITY-ANNIV-GET.
     line.textContent = t("gc.anniversary.empty");
   }
   return line;

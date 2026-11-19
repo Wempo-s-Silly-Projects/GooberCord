@@ -565,5 +565,5 @@
   "gc.anniversary.save": "حفظ",
   "gc.anniversary.clear": "مسح",
   "gc.anniversary.current": "محفوظ: الشهر {{month}}، اليوم {{day}}.",
-  "gc.anniversary.empty": "لا توجد ذكرى محفوظة لديك."
+  "gc.anniversary.empty": "لا يوجد ذكرى محفوظة في هذه الجلسة بعد. بعد الحفظ، يظهر الشهر واليوم هنا."
 }

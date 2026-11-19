@@ -164,8 +164,14 @@ test("the ONE save is the PUT and the ONE clear is the DELETE, no confirm ceremo
 test("the seat reflects the saved truth from the route's own answer", () => {
   assert.match(ANNIV(), /store\.set\(\{ meAnniversary: \{ month: answer\.month, day: answer\.day \} \}\);/,
     "the lane paints the ANSWER, never the form's hope");
-  assert.match(ANNIV(), /t\("gc\.anniversary\.current", \{ month: state\.month, day: state\.day \}\)/,
-    "the saved truth paints month+day only");
+  // TEST-MOVE (lane-c22-fix, GO-HAYWIRE F1 2026-11-19): the paint passes the
+  // human month (state.month + 1) at the ONLY truthLine paint site — the same
+  // face the month selector paints via gc.anniversary.monthOption — while the
+  // day stays verbatim. The old pin (month: state.month raw) BAKED the
+  // defect: a member saved "Month 12" and read "Saved: month 11" (ja/zh read
+  // "11月" for December, nonsense "0月" for January).
+  assert.match(ANNIV(), /t\("gc\.anniversary\.current", \{ month: state\.month \+ 1, day: state\.day \}\)/,
+    "the saved truth paints the selector's month face (raw index + 1) + the verbatim day");
   assert.match(ANNIV(), /t\("gc\.anniversary\.empty"\)/,
     "the absence paints the empty face — no invented state");
 });
@@ -247,6 +253,35 @@ test("the eight staged bundles carry every wave key TRANSLATED", () => {
       assert.notEqual(value, enData[key], `${langKey} carries ${key} TRANSLATED — no en placeholder`);
     }
   }
+});
+
+// TEST-MOVE (lane-c22-fix, GO-HAYWIRE F2 2026-11-19): the empty face is
+// session-honest client interim copy (board row T-PARITY-ANNIV-GET — the
+// honest GET arm is owner-gated). The old bare "You have no anniversary
+// saved." painted a false truth for a member whose anniversary IS live
+// server-side: meAnniversary is session-local, so the line means absence in
+// THIS session, and the copy says exactly that.
+const HONEST_EMPTY = {
+  en: "No anniversary is saved in this session yet. Once you save one, its month and day appear here.",
+  de: "In dieser Sitzung ist noch kein Jahrestag gespeichert. Sobald du einen speicherst, erscheinen Monat und Tag hier.",
+  es: "Todavía no hay ningún aniversario guardado en esta sesión. Cuando guardes uno, su mes y día aparecerán aquí.",
+  fr: "Aucun anniversaire n'est encore enregistré dans cette session. Une fois le vôtre enregistré, son mois et son jour s'affichent ici.",
+  pt: "Nenhum aniversário está salvo nesta sessão ainda. Depois de salvar o seu, o mês e o dia aparecem aqui.",
+  ru: "В этой сессии годовщина ещё не сохранена. После сохранения здесь появятся ваш месяц и день.",
+  ja: "このセッションではまだ記念日が保存されていません。保存すると、月と日がここに表示されます。",
+  zh: "本次会话尚未保存纪念日。保存后，你的月份和日期会显示在这里。",
+  ar: "لا يوجد ذكرى محفوظة في هذه الجلسة بعد. بعد الحفظ، يظهر الشهر واليوم هنا.",
+};
+
+test("the empty face is the session-honest interim copy in every bundle", () => {
+  for (const langKey of ["en", ...STAGED]) {
+    const bundle = JSON.parse(read(`public/locales/${langKey}.json`));
+    assert.equal(bundle["gc.anniversary.empty"], HONEST_EMPTY[langKey],
+      `${langKey} seats the session-honest empty face verbatim`);
+  }
+  const translated = STAGED.filter((langKey) =>
+    HONEST_EMPTY[langKey] !== HONEST_EMPTY.en);
+  assert.equal(translated.length, STAGED.length, "no bundle rides the en placeholder");
 });
 
 test("the en seats interpolate the slots the paint passes", () => {

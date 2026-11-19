@@ -568,5 +568,5 @@
   "gc.anniversary.save": "Сохранить",
   "gc.anniversary.clear": "Очистить",
   "gc.anniversary.current": "Сохранено: месяц {{month}}, день {{day}}.",
-  "gc.anniversary.empty": "У вас нет сохранённой годовщины."
+  "gc.anniversary.empty": "В этой сессии годовщина ещё не сохранена. После сохранения здесь появятся ваш месяц и день."
 }

@@ -560,5 +560,5 @@
   "gc.anniversary.save": "Salvar",
   "gc.anniversary.clear": "Limpar",
   "gc.anniversary.current": "Salvo: mês {{month}}, dia {{day}}.",
-  "gc.anniversary.empty": "Você não tem nenhum aniversário salvo."
+  "gc.anniversary.empty": "Nenhum aniversário está salvo nesta sessão ainda. Depois de salvar o seu, o mês e o dia aparecem aqui."
 }

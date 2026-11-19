@@ -551,5 +551,5 @@
   "gc.anniversary.save": "Speichern",
   "gc.anniversary.clear": "Löschen",
   "gc.anniversary.current": "Gespeichert: Monat {{month}}, Tag {{day}}.",
-  "gc.anniversary.empty": "Du hast keinen Jahrestag gespeichert."
+  "gc.anniversary.empty": "In dieser Sitzung ist noch kein Jahrestag gespeichert. Sobald du einen speicherst, erscheinen Monat und Tag hier."
 }

@@ -560,5 +560,5 @@
   "gc.anniversary.save": "Enregistrer",
   "gc.anniversary.clear": "Effacer",
   "gc.anniversary.current": "Enregistré : mois {{month}}, jour {{day}}.",
-  "gc.anniversary.empty": "Vous n'avez aucun anniversaire enregistré."
+  "gc.anniversary.empty": "Aucun anniversaire n'est encore enregistré dans cette session. Une fois le vôtre enregistré, son mois et son jour s'affichent ici."
 }

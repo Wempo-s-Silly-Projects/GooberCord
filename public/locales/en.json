@@ -551,5 +551,5 @@
   "gc.anniversary.save": "Save",
   "gc.anniversary.clear": "Clear",
   "gc.anniversary.current": "Saved: month {{month}}, day {{day}}.",
-  "gc.anniversary.empty": "You have no anniversary saved."
+  "gc.anniversary.empty": "No anniversary is saved in this session yet. Once you save one, its month and day appear here."
 }

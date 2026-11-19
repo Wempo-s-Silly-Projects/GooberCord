@@ -552,5 +552,5 @@
   "gc.anniversary.save": "Guardar",
   "gc.anniversary.clear": "Borrar",
   "gc.anniversary.current": "Guardado: mes {{month}}, día {{day}}.",
-  "gc.anniversary.empty": "No tienes ningún aniversario guardado."
+  "gc.anniversary.empty": "Todavía no hay ningún aniversario guardado en esta sesión. Cuando guardes uno, su mes y día aparecerán aquí."
 }

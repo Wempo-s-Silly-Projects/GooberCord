@@ -551,5 +551,5 @@
   "gc.anniversary.save": "保存",
   "gc.anniversary.clear": "クリア",
   "gc.anniversary.current": "保存済み:{{month}}月 {{day}}日。",
-  "gc.anniversary.empty": "記念日は保存されていません。"
+  "gc.anniversary.empty": "このセッションではまだ記念日が保存されていません。保存すると、月と日がここに表示されます。"
 }

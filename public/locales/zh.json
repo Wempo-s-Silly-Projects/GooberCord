@@ -551,5 +551,5 @@
   "gc.anniversary.save": "保存",
   "gc.anniversary.clear": "清除",
   "gc.anniversary.current": "已保存:{{month}} 月 {{day}} 日。",
-  "gc.anniversary.empty": "你还没有保存纪念日。"
+  "gc.anniversary.empty": "本次会话尚未保存纪念日。保存后，你的月份和日期会显示在这里。"
 }
