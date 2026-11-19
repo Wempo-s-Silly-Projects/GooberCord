@@ -571,6 +571,14 @@ function laneRefresh(column, channelId) {
     });
     column.prepend(more);
   }
+  for (const messageId of activeBursts) {
+    const row = column.querySelector(`[data-message-id="${messageId}"] .chat-row`);
+    if (!row) {
+      activeBursts.delete(messageId); // the row left this column — the one-shot is over
+      continue;
+    }
+    pinBurstOverlay(messageId, row); // the survivor: pinned onto the rebuilt row
+  }
 }
 
 function dayLabel(iso) {
@@ -763,8 +771,22 @@ function dropAndAdopt(channelId, message) {
 function fireBurst(message) {
   const row = columnNodeRef?.querySelector(`[data-message-id="${message.id}"] .chat-row`);
   if (!row) return; // the row's column is gone — nothing to burst
+  pinBurstOverlay(message.id, row);
+}
+
+// The live burst ids (GO-HAYWIRE cycle-2): a channel msg frame inside the
+// ~1s animation window rebuilds the column and orphans the overlay, so
+// laneRefresh re-pins each live id onto its rebuilt row; the id leaves the
+// Set at its own animationend (or the stale sweep when its row is gone).
+const activeBursts = new Set();
+
+function pinBurstOverlay(messageId, row) {
   const burst = h("span", { class: "fx-burst", "aria-hidden": "true" });
-  burst.addEventListener("animationend", () => burst.remove());
+  burst.addEventListener("animationend", () => {
+    activeBursts.delete(messageId);
+    burst.remove();
+  });
+  activeBursts.add(messageId);
   row.append(burst);
 }
 
@@ -781,6 +803,8 @@ function reactionPicker(message) {
           // rebuild's freshly laid-out row is the node the overlay pins to.
           refreshColumn(columnNodeRef, currentChannelId);
           if (payload?.reaction?.fxBurst) fireBurst(message);
+        } catch (error) {
+          grid.append(h("p", { class: "form-error", text: error.message })); // the 403 verbatim
         } finally {
           dialog.close();
         }
