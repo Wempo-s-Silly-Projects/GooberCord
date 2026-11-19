@@ -200,6 +200,21 @@ test("routes: the chat wave owns its seats — channel, conversation, pins, sear
 
 // --- the composer's laws (DOM halves pin by source) ----------------------------
 
+test("the edit seat owns focus (a11y wave-25): it focuses on open and returns focus to its button on Escape", () => {
+  // The keyboard user activates Edit and lands IN the textarea — focus drops
+  // to <body> once the seat append leaves it, and Escape must hand it back
+  // to the button that opened the seat.
+  assert.match(CHAT,
+    /append\(seat\);\s*\n\s*box\.focus\(\);/,
+    "opening the edit seat focuses the textarea — focus never falls to <body>");
+  assert.match(CHAT,
+    /onClick: \(event\) => editInline\(message, context, event\.currentTarget\)/,
+    "the edit button hands itself in as the escape's focus-return target");
+  assert.match(CHAT,
+    /seat\.remove\(\);\s*\n\s*returnFocus\?\.focus\?\.\(\);/,
+    "Escape removes the seat and returns focus to the button that opened it");
+});
+
 test("the composer: Enter sends, Shift+Enter breaks the line, drafts ride sessionStorage", () => {
   assert.match(CHAT, /draft:gc:\$\{channelId\}/);
   assert.match(CHAT, /sessionStorage\.setItem\(draftKey/);

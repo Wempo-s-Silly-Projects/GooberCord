@@ -768,7 +768,7 @@ function hoverControls(message, context) {
   }
   if (author) {
     controls.append(h("button", { class: "row-quiet-control", type: "button", text: t("gc.chat.row.edit"),
-      onClick: () => editInline(message, context) }));
+      onClick: (event) => editInline(message, context, event.currentTarget) }));
   }
   if (author || canModerateMessages(context.channelId)) {
     controls.append(h("button", { class: "row-quiet-control", type: "button", text: t("gc.chat.row.delete"),
@@ -804,7 +804,7 @@ function hoverControls(message, context) {
   return controls;
 }
 
-function editInline(message, context) {
+function editInline(message, context, returnFocus) {
   const lane = store.get(messagesKey(context.channelId));
   const box = h("textarea", { class: "edit-box", maxlength: String(message.isPlus
     ? UI_PLUS_MESSAGE_MAX : UI_FREE_MESSAGE_MAX), "aria-label": t("gc.chat.edit.heading") });
@@ -814,6 +814,7 @@ function editInline(message, context) {
     if (event.key === "Escape") {
       event.preventDefault();
       seat.remove();
+      returnFocus?.focus?.(); // the button that opened the seat owns focus again (a11y wave-25)
     }
     if (event.key === "Enter" && !event.shiftKey) {
       event.preventDefault();
@@ -828,6 +829,7 @@ function editInline(message, context) {
     }
   });
   columnNodeRef?.querySelector(`[data-message-id="${message.id}"]`)?.append(seat);
+  box.focus(); // the keyboard user lands IN the seat — focus never falls to <body> (a11y wave-25)
   void lane;
 }
 
