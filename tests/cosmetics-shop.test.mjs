@@ -497,8 +497,7 @@ test("buying the burst pack is ONE atomic batch: the guarded spend, then the fin
 test("re-buying the burst pack stacks the same row: the PK row grows by one pack", async () => {
   const db = shopDb(SEED_FUNDS);
   const { env } = envWithLimiters(db);
-  for (const [index, expectedQty] of [[0, GC_COSMETIC_FX_BURST_USES], [1, GC_COSMETIC_FX_BURST_USES * 2]]) {
-    void index;
+  for (const expectedQty of [GC_COSMETIC_FX_BURST_USES, GC_COSMETIC_FX_BURST_USES * 2]) {
     const { built } = await authed("/api/coins/cosmetics", {
       method: "POST", body: { item: "fx_burst_confetti" },
     });
@@ -508,6 +507,29 @@ test("re-buying the burst pack stacks the same row: the PK row grows by one pack
   }
   assert.equal(db.balanceOf(USER_ID), 600 - GC_COSMETIC_FX_BURST_PRICE * 2,
     "the recurring sink drains BOTH purchases");
+});
+
+test("a poor caller's consumable re-buy is the 400/insufficient arm, never the already-own 409", async () => {
+  // A stacking pack is never "already owned" — the owned probe skips the
+  // consumable kind entirely, so a failed balance arm is what the caller
+  // gets, with the standing qty untouched.
+  const db = shopDb({
+    ledger: [
+      { user_id: USER_ID, delta: 49, source: "daily", related_user_id: null, created_at: NOW - 60 },
+    ],
+    inventory: [
+      { user_id: USER_ID, item_key: "fx_burst_confetti", kind: "consumable", qty: GC_COSMETIC_FX_BURST_USES, equipped: 0, server_id: null },
+    ],
+  });
+  const { env } = envWithLimiters(db);
+  const { built } = await authed("/api/coins/cosmetics", {
+    method: "POST", body: { item: "fx_burst_confetti" },
+  });
+  const response = await dispatch(built, env);
+  assert.equal(response.status, 400);
+  assert.deepEqual(await bodyOf(response), { error: "Not enough Goober Coins for that." });
+  assert.equal(db.invRow(USER_ID, "fx_burst_confetti").qty, GC_COSMETIC_FX_BURST_USES,
+    "the pack never grew and never moved");
 });
 
 test("buying a frame lands one 'own' row at qty 1, and a re-buy is the 409 with no spent coin", async () => {
@@ -693,6 +715,20 @@ test("an equip body outside the catalog is a 400 with no write", async () => {
   assert.equal(db.calls.filter((entry) => entry.call === "batch" || entry.call === "run").length, 0);
 });
 
+test("equipping a CONSUMABLE is refused before the batch: slots carry 'own' items only", async () => {
+  const db = shopDb({ ...SEED_FUNDS, inventory: [
+    { user_id: USER_ID, item_key: "fx_burst_confetti", kind: "consumable", qty: GC_COSMETIC_FX_BURST_USES, equipped: 0, server_id: null },
+  ] });
+  const { env } = envWithLimiters(db);
+  const { built } = await authed("/api/coins/cosmetics/equip", {
+    method: "POST", body: { itemKey: "fx_burst_confetti" },
+  });
+  const response = await dispatch(built, env);
+  assert.equal(response.status, 400);
+  assert.equal(db.invRow(USER_ID, "fx_burst_confetti").equipped, 0, "the slot never moved");
+  assert.equal(db.calls.filter((entry) => entry.call === "batch").length, 0, "no clear, no set");
+});
+
 // --- the consumable use (the guarded claim, economy-skill law 3) -------------------
 
 test("using the burst pack decrements ONE use through the guarded UPDATE", async () => {
@@ -727,6 +763,8 @@ test("the use that loses the race is all-zero + 409 and the ORIGINAL ROW SURVIVE
   });
   const refused = await dispatch(again, env);
   assert.equal(refused.status, 409, "the empty pack is the same 409 the claim idiom rides");
+  assert.deepEqual(await bodyOf(refused), { error: "That pack is empty." },
+    "the kind-honest generic copy, pinned once");
   const stored = db.invRow(USER_ID, "fx_burst_confetti");
   assert.equal(stored.qty, 0, "the loser never minted a use");
   assert.ok(stored, "the original row survives (never deleted)");

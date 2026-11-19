@@ -836,11 +836,14 @@ function inventoryServerId(sku, body) {
 // The after-the-fact house classification for a refused purchase batch:
 // already-owned is the 409, a foreign server is the 403, everything else is
 // the insufficient-coins copy. Nothing persisted either way (the spend
-// itself was the refused claim).
+// itself was the refused claim). A CONSUMABLE skips the owned probe — its
+// re-buy stacks by design, so its only refusal is the balance arm.
 async function inventoryPurchaseRefusal(env, userId, sku, serverId) {
-  const owned = await env.GOOBER_DB.prepare(INVENTORY_OWNED_PROBE_SQL)
-    .bind(userId, sku.itemKey).first();
-  if (owned) throw new HttpError(409, "You already own that cosmetic.");
+  if (sku.kind !== "consumable") {
+    const owned = await env.GOOBER_DB.prepare(INVENTORY_OWNED_PROBE_SQL)
+      .bind(userId, sku.itemKey).first();
+    if (owned) throw new HttpError(409, "You already own that cosmetic.");
+  }
   if (serverId !== null) {
     const seated = await env.GOOBER_DB.prepare(INVENTORY_MEMBERSHIP_SQL)
       .bind(serverId, userId).first();
@@ -860,6 +863,11 @@ async function handleCosmeticEquipRoute(request, env) {
   const body = await readJson(request);
   const sku = typeof body?.itemKey === "string" ? inventoryShape(body.itemKey) : null;
   if (!sku) throw new HttpError(400, "That cosmetic is not in the shop.");
+  // The kind guard: slots carry 'own' items — a consumable is used, never
+  // equipped, and the refusal rides before the slot's clear can run.
+  if (sku.kind !== "own") {
+    throw new HttpError(400, "That cosmetic is a consumable pack.");
+  }
 
   const owned = await env.GOOBER_DB.prepare(INVENTORY_OWNED_PROBE_SQL)
     .bind(userId, sku.itemKey).first();
@@ -900,7 +908,7 @@ async function handleCosmeticConsumeRoute(request, env) {
     const owned = await env.GOOBER_DB.prepare(INVENTORY_OWNED_PROBE_SQL)
       .bind(userId, sku.itemKey).first();
     if (!owned) throw new HttpError(403, "Buy that cosmetic in the coin shop first.");
-    throw new HttpError(409, "That burst pack is empty.");
+    throw new HttpError(409, "That pack is empty.");
   }
   const inventoryRows = (await env.GOOBER_DB.prepare(INVENTORY_READ_SQL).bind(userId).all()).results || [];
   return json({ used: true, inventory: inventoryRows.map(publicInventoryRow) });

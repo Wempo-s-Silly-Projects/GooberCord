@@ -31,7 +31,10 @@
 -- runner is FK-enforcing; the DDL lands clean with FKs ON because it is
 -- CREATE-only against fresh rows.
 --
--- Shape notes (the slate's draft DDL, verbatim):
+-- Shape notes (the slate's draft TABLE DDL, verbatim; the equipped INDEX
+-- below is this file's ADDITION to the draft — the draft block shows only
+-- the table. The PK prefix already covers the read's user_id arm, the
+-- index serves the equipped arm):
 --   item_key / kind live in constants.mjs as the single source of truth
 --   (the CHECK lists mirror them; clients import, never re-declare).
 --   kind = 'own' rows hold qty = 1 forever (the CHECK floors at 0 and the
